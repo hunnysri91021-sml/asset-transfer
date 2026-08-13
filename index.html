@@ -331,7 +331,7 @@ function renderLogin(){
   function doLogin(){
     const username = document.getElementById('loginUsername').value.trim();
     const pw = document.getElementById('loginPw').value;
-    if(!pw){ toast('กรุณากรอกรหัสผ่าน','err'); return; }
+    if(!username || !pw){ toast('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน','err'); return; }
     const btn = document.getElementById('btnLogin');
     btn.disabled = true;
     apiPost({ action:'login', username, password: pw }).then(res=>{
@@ -2168,7 +2168,7 @@ function renderSettings(root){
     document.getElementById('userTableHost').innerHTML = `
       <div style="overflow-x:auto;"><table>
         <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th class="no-print">จัดการ</th></tr>
-        ${rowsHtml || '<tr><td colspan="4" class="empty">ยังไม่มีผู้ใช้ (เข้าระบบด้วยรหัสผ่านหลักได้เสมอ)</td></tr>'}
+        ${rowsHtml || '<tr><td colspan="4" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
       </table></div>
     `;
   }
