@@ -437,12 +437,24 @@ function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, asse
 // ============================================================
 // ADMIN — เชื่อมข้อมูลจาก Google Sheet ต้นทาง (เช่น AppSheet.ViewData ของทีมบัญชี)
 // ============================================================
-const SOURCE_SHEET_TAB_NAME = 'ViewData';
+// ทีมบัญชีอัปโหลดแท็บใหม่ทุกครั้งโดยตั้งชื่อแบบ "AppSheet.ViewData.<วันที่>" (เช่น AppSheet.ViewData.2026-08-13)
+// จึงจับคู่ด้วย prefix แล้วเลือกแท็บที่มีชื่อ (วันที่) ล่าสุดโดยอัตโนมัติ แทนชื่อคงที่
+const SOURCE_SHEET_TAB_PREFIX = 'AppSheet.ViewData';
 const SOURCE_SHEET_URL_PROP = 'SOURCE_SHEET_URL';
 const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ImageURL'];
 
 function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
+}
+
+function findSourceSheet_(srcSs) {
+  const sheets = srcSs.getSheets();
+  const matches = sheets.filter(function (s) { return s.getName().indexOf(SOURCE_SHEET_TAB_PREFIX) === 0; });
+  if (matches.length) {
+    matches.sort(function (a, b) { return b.getName().localeCompare(a.getName()); });
+    return matches[0];
+  }
+  return srcSs.getSheetByName('ViewData') || sheets[0];
 }
 
 function adminGetSettings_(body) {
@@ -461,8 +473,8 @@ function adminSaveSourceSheetLink_(body) {
   return { ok: true };
 }
 
-// ดึงข้อมูลจากชีตต้นทาง จับคู่คอลัมน์ตามชื่อหัวตาราง แล้วอัปเดตเฉพาะแถวที่มี AssetID ตรงกับที่มีอยู่แล้วในชีต Assets
-// (ไม่เพิ่มแถวใหม่ ไม่ลบแถวเดิม เพื่อไม่ทับรายการที่ Admin เพิ่ม/แก้ไขเองในระบบ)
+// ดึงข้อมูลจากชีตต้นทาง จับคู่คอลัมน์ตามชื่อหัวตาราง: อัปเดตแถวที่มี AssetID ตรงกับที่มีอยู่แล้ว
+// และเพิ่มแถวใหม่ให้กับ AssetID ที่ยังไม่มีในระบบ (ไม่ลบแถวเดิมที่ไม่พบในต้นทาง เพื่อไม่ทับรายการที่ Admin เพิ่ม/แก้ไขเองในระบบ)
 function adminSyncFromSource_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const url = getSourceSheetUrl_();
@@ -474,7 +486,7 @@ function adminSyncFromSource_(body) {
   } catch (err) {
     return { ok: false, error: 'เปิดลิงก์ Google Sheet ไม่สำเร็จ (ตรวจสอบลิงก์และสิทธิ์การเข้าถึง): ' + err };
   }
-  const srcSheet = srcSs.getSheetByName(SOURCE_SHEET_TAB_NAME) || srcSs.getSheets()[0];
+  const srcSheet = findSourceSheet_(srcSs);
   if (!srcSheet) return { ok: false, error: 'ไม่พบชีตข้อมูลในลิงก์ที่ระบุ' };
 
   const srcValues = srcSheet.getDataRange().getValues();
@@ -493,11 +505,22 @@ function adminSyncFromSource_(body) {
   }
 
   let updatedCount = 0;
+  const newRows = [];
   srcValues.forEach(srcRow => {
     const assetId = String(srcRow[srcIdx.AssetID] || '').trim();
     if (!assetId) return;
     const rowNum = localRowByAssetId[assetId];
-    if (!rowNum) return; // อัปเดตเฉพาะรายการที่ตรงกันเท่านั้น
+    if (!rowNum) {
+      const newRow = headers.map(() => '');
+      newRow[idx.AssetID] = assetId;
+      SOURCE_SYNC_FIELDS.forEach(f => {
+        if (srcIdx[f] === undefined || idx[f] === undefined) return;
+        newRow[idx[f]] = srcRow[srcIdx[f]];
+      });
+      newRow[idx.UpdatedAt] = new Date();
+      newRows.push(newRow);
+      return;
+    }
     let changed = false;
     SOURCE_SYNC_FIELDS.forEach(f => {
       if (srcIdx[f] === undefined) return;
@@ -510,9 +533,13 @@ function adminSyncFromSource_(body) {
     }
   });
 
-  logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง อัปเดต ' + updatedCount + ' รายการ');
+  if (newRows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+  }
 
-  return { ok: true, data: { updatedCount } };
+  logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง (' + srcSheet.getName() + ') อัปเดต ' + updatedCount + ' รายการ เพิ่มใหม่ ' + newRows.length + ' รายการ');
+
+  return { ok: true, data: { updatedCount, addedCount: newRows.length, sourceTabName: srcSheet.getName() } };
 }
 
 // ============================================================

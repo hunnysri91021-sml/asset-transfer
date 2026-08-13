@@ -1496,7 +1496,7 @@ function renderSettings(root){
     apiPost({ action:'adminSyncFromSource', password: STATE.adminPassword }).then(res=>{
       btn.disabled = false; btn.innerHTML = '↻ ดึงข้อมูลล่าสุด';
       if(!res.ok){ toast(res.error||'ดึงข้อมูลไม่สำเร็จ','err'); return; }
-      toast('ดึงข้อมูลสำเร็จ อัปเดต '+res.data.updatedCount+' รายการ','ok');
+      toast('ดึงข้อมูลจาก '+esc(res.data.sourceTabName||'')+' สำเร็จ อัปเดต '+res.data.updatedCount+' รายการ เพิ่มใหม่ '+res.data.addedCount+' รายการ','ok');
       loadAdminAssets();
     });
   }
