@@ -107,10 +107,17 @@
   .doc .doc-meta{display:flex;justify-content:flex-end;gap:24px;font-size:13px;margin-bottom:10px;}
   .doc .doc-field{margin:4px 0;font-size:13.5px;}
   .doc .doc-field b{display:inline-block;min-width:70px;}
-  .doc table.doc-table{margin-top:14px;font-size:12.5px;}
+  .doc table.doc-table{margin-top:14px;font-size:12.5px;table-layout:fixed;}
   .doc table.doc-table th{background:var(--navy-light);text-align:center;}
-  .doc table.doc-table td{text-align:center;}
+  .doc table.doc-table td{text-align:center;word-wrap:break-word;overflow-wrap:break-word;vertical-align:middle;}
   .doc table.doc-table td.left{text-align:left;}
+  .doc-img-gallery{display:flex;flex-wrap:wrap;gap:3px;justify-content:center;}
+  .doc-img-gallery img{width:26px;height:26px;object-fit:cover;border-radius:3px;border:1px solid #ddd;}
+  .item-img-gallery{display:flex;flex-wrap:wrap;gap:6px;}
+  .item-img-gallery .item-img-thumb{position:relative;width:60px;height:60px;}
+  .item-img-gallery .item-img-thumb img{width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
+  .item-img-gallery .item-img-thumb .del-img{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--red);color:#fff;border:none;font-size:11px;line-height:18px;text-align:center;cursor:pointer;padding:0;}
+  .item-img-add{width:60px;height:60px;border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);cursor:pointer;text-align:center;}
   .doc .doc-note{font-size:11.5px;color:#555;margin-top:16px;border-top:1px dashed #ccc;padding-top:10px;}
   .doc .doc-sign{display:flex;justify-content:space-between;margin-top:30px;font-size:13px;}
   .doc .doc-sign div{width:45%;text-align:center;}
@@ -261,6 +268,14 @@ function exportExcel(filename, sheetDefs){
     XLSX.utils.book_append_sheet(wb, ws, String(def.name).substring(0,31));
   });
   XLSX.writeFile(wb, filename);
+}
+
+/* ================= ITEM IMAGES (up to 5 images per asset line item) ================= */
+const ITEM_IMAGE_LIMIT = 5;
+function docImgGallery(images){
+  const list = (images||[]).filter(Boolean);
+  if(!list.length) return '-';
+  return '<div class="doc-img-gallery">' + list.map(u=>`<img src="${esc(u)}" onerror="this.style.visibility='hidden'">`).join('') + '</div>';
 }
 
 /* ================= AUTH (login gate: User / Admin, shared password) ================= */
@@ -573,17 +588,17 @@ function renderAssetList(root){
 
     if(targetView === 'create'){
       STATE.draftItems = selected.map(a => ({
-        assetId: a.AssetID, assetName: a.AssetName, imageUrl: a.DisplayImage||'',
+        assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
         remark: '', fromDeptName:'', toDeptName:'', fromSignName:'', toSignName:''
       }));
     } else if(targetView === 'saleCreate'){
       STATE.draftSaleItems = selected.map(a => ({
-        assetId: a.AssetID, assetName: a.AssetName, imageUrl: a.DisplayImage||'',
+        assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
         scrapPrice:'', auctionPrice:'', salePrice:'', remark:''
       }));
     } else if(targetView === 'writeOffCreate'){
       STATE.draftWriteOffItems = selected.map(a => ({
-        assetId: a.AssetID, assetName: a.AssetName, imageUrl: a.DisplayImage||'',
+        assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
         scrapPrice:'', remark:''
       }));
     }
@@ -986,7 +1001,7 @@ function renderCreate(root){
     STATE.draftItems.push({
       assetId: asset.AssetID,
       assetName: asset.AssetName,
-      imageUrl: asset.DisplayImage || '',
+      images: asset.DisplayImage ? [asset.DisplayImage] : [],
       remark: '',
       fromDeptName: document.getElementById('cFromDept').value,
       toDeptName: document.getElementById('cToDept').value,
@@ -1004,9 +1019,15 @@ function renderCreate(root){
       <div class="item-line">
         <button class="del" onclick="removeItem(${i})">✕</button>
         <div class="row">
-          <div style="flex:0 0 90px;">
-            <img class="thumb-lg" src="${esc(it.imageUrl||'')}" onerror="this.style.visibility='hidden'" id="itemImg${i}">
-            <div class="file-drop" style="margin-top:6px;font-size:10px;" onclick="document.getElementById('itemFile${i}').click()">เปลี่ยนรูป</div>
+          <div style="flex:0 0 auto;">
+            <div class="item-img-gallery">
+              ${(it.images||[]).map((url,gi)=>`
+                <div class="item-img-thumb">
+                  <img src="${esc(url)}" onerror="this.style.visibility='hidden'">
+                  <button type="button" class="del-img" onclick="removeItemImage(${i},${gi})">✕</button>
+                </div>`).join('')}
+              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `<div class="item-img-add" onclick="document.getElementById('itemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>` : ''}
+            </div>
             <input type="file" id="itemFile${i}" accept="image/*" style="display:none;" onchange="uploadItemImage(${i}, this)">
           </div>
           <div style="flex:2;">
@@ -1021,22 +1042,26 @@ function renderCreate(root){
 
   window.removeItem = (i)=>{ STATE.draftItems.splice(i,1); renderItems(); };
   window.updateItemField = (i, field, val)=>{ STATE.draftItems[i][field] = val; };
+  window.removeItemImage = (i, gi)=>{ STATE.draftItems[i].images.splice(gi,1); renderItems(); };
   window.uploadItemImage = (i, input)=>{
     const file = input.files[0];
     if(!file) return;
+    if(!STATE.draftItems[i].images) STATE.draftItems[i].images = [];
+    if(STATE.draftItems[i].images.length >= ITEM_IMAGE_LIMIT){ toast('เพิ่มรูปได้สูงสุด '+ITEM_IMAGE_LIMIT+' รูปต่อรายการ','err'); input.value=''; return; }
     const reader = new FileReader();
     reader.onload = ()=>{
       toast('กำลังอัปโหลดรูป...');
       apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftItems[i].assetId })
         .then(res=>{
           if(res.ok){
-            STATE.draftItems[i].imageUrl = res.data.url;
-            document.getElementById('itemImg'+i).src = res.data.url;
+            STATE.draftItems[i].images.push(res.data.url);
+            renderItems();
             toast('อัปโหลดรูปสำเร็จ','ok');
           } else toast(res.error||'อัปโหลดไม่สำเร็จ','err');
         });
     };
     reader.readAsDataURL(file);
+    input.value = '';
   };
 
 }
@@ -1049,7 +1074,7 @@ function renderCreatePreview(root){
     Subject: h.subject, SubjectOther: h.subjectOther, Purpose: h.purpose,
     FromDept: h.fromDept, ToDept: h.toDept, Status: 'Draft',
     Items: STATE.draftItems.map(it => ({
-      AssetID: it.assetId, AssetName: it.assetName, ImageURL: it.imageUrl,
+      AssetID: it.assetId, AssetName: it.assetName, Images: it.images,
       FromDeptName: it.fromDeptName || h.fromDept, FromSignName: it.fromSignName || h.fromSign,
       ToDeptName: it.toDeptName || h.toDept, ToSignName: it.toSignName || h.toSign,
       Remark: it.remark
@@ -1320,7 +1345,7 @@ function renderSaleCreate(root){
     STATE.draftSaleItems.push({
       assetId: asset.AssetID,
       assetName: asset.AssetName,
-      imageUrl: asset.DisplayImage || '',
+      images: asset.DisplayImage ? [asset.DisplayImage] : [],
       scrapPrice: '',
       auctionPrice: '',
       salePrice: '',
@@ -1337,8 +1362,16 @@ function renderSaleCreate(root){
       <div class="item-line">
         <button class="del" onclick="removeSaleItem(${i})">✕</button>
         <div class="row">
-          <div style="flex:0 0 90px;">
-            <img class="thumb-lg" src="${esc(it.imageUrl||'')}" onerror="this.style.visibility='hidden'">
+          <div style="flex:0 0 auto;">
+            <div class="item-img-gallery">
+              ${(it.images||[]).map((url,gi)=>`
+                <div class="item-img-thumb">
+                  <img src="${esc(url)}" onerror="this.style.visibility='hidden'">
+                  <button type="button" class="del-img" onclick="removeSaleItemImage(${i},${gi})">✕</button>
+                </div>`).join('')}
+              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `<div class="item-img-add" onclick="document.getElementById('saleItemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>` : ''}
+            </div>
+            <input type="file" id="saleItemFile${i}" accept="image/*" style="display:none;" onchange="uploadSaleItemImage(${i}, this)">
           </div>
           <div style="flex:2;">
             <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
@@ -1373,6 +1406,27 @@ function renderSaleCreate(root){
 
   window.removeSaleItem = (i)=>{ STATE.draftSaleItems.splice(i,1); renderSaleItems(); };
   window.updateSaleItemField = (i, field, val)=>{ STATE.draftSaleItems[i][field] = val; updateSaleTotal(); };
+  window.removeSaleItemImage = (i, gi)=>{ STATE.draftSaleItems[i].images.splice(gi,1); renderSaleItems(); };
+  window.uploadSaleItemImage = (i, input)=>{
+    const file = input.files[0];
+    if(!file) return;
+    if(!STATE.draftSaleItems[i].images) STATE.draftSaleItems[i].images = [];
+    if(STATE.draftSaleItems[i].images.length >= ITEM_IMAGE_LIMIT){ toast('เพิ่มรูปได้สูงสุด '+ITEM_IMAGE_LIMIT+' รูปต่อรายการ','err'); input.value=''; return; }
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      toast('กำลังอัปโหลดรูป...');
+      apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftSaleItems[i].assetId })
+        .then(res=>{
+          if(res.ok){
+            STATE.draftSaleItems[i].images.push(res.data.url);
+            renderSaleItems();
+            toast('อัปโหลดรูปสำเร็จ','ok');
+          } else toast(res.error||'อัปโหลดไม่สำเร็จ','err');
+        });
+    };
+    reader.readAsDataURL(file);
+    input.value = '';
+  };
 
 }
 
@@ -1383,7 +1437,7 @@ function renderSaleCreatePreview(root){
     CreatedAt: new Date().toISOString(),
     FromDept: h.fromDept, Buyer: h.buyer, Remark: h.remark, Status: 'Draft',
     Items: STATE.draftSaleItems.map(it => ({
-      AssetID: it.assetId, AssetName: it.assetName, ImageURL: it.imageUrl,
+      AssetID: it.assetId, AssetName: it.assetName, Images: it.images,
       ScrapPrice: it.scrapPrice, AuctionPrice: it.auctionPrice, SalePrice: it.salePrice, Remark: it.remark
     }))
   };
@@ -1642,7 +1696,7 @@ function renderWriteOffCreate(root){
 
   function addWoItem(asset){
     STATE.draftWriteOffItems.push({
-      assetId: asset.AssetID, assetName: asset.AssetName, imageUrl: asset.DisplayImage||'',
+      assetId: asset.AssetID, assetName: asset.AssetName, images: asset.DisplayImage ? [asset.DisplayImage] : [],
       scrapPrice: '', remark: ''
     });
     renderWoItems();
@@ -1656,8 +1710,16 @@ function renderWriteOffCreate(root){
       <div class="item-line">
         <button class="del" onclick="removeWoItem(${i})">✕</button>
         <div class="row">
-          <div style="flex:0 0 90px;">
-            <img class="thumb-lg" src="${esc(it.imageUrl||'')}" onerror="this.style.visibility='hidden'">
+          <div style="flex:0 0 auto;">
+            <div class="item-img-gallery">
+              ${(it.images||[]).map((url,gi)=>`
+                <div class="item-img-thumb">
+                  <img src="${esc(url)}" onerror="this.style.visibility='hidden'">
+                  <button type="button" class="del-img" onclick="removeWoItemImage(${i},${gi})">✕</button>
+                </div>`).join('')}
+              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `<div class="item-img-add" onclick="document.getElementById('woItemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>` : ''}
+            </div>
+            <input type="file" id="woItemFile${i}" accept="image/*" style="display:none;" onchange="uploadWoItemImage(${i}, this)">
           </div>
           <div style="flex:2;">
             <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
@@ -1673,6 +1735,27 @@ function renderWriteOffCreate(root){
 
   window.removeWoItem = (i)=>{ STATE.draftWriteOffItems.splice(i,1); renderWoItems(); };
   window.updateWoItemField = (i, field, val)=>{ STATE.draftWriteOffItems[i][field] = val; };
+  window.removeWoItemImage = (i, gi)=>{ STATE.draftWriteOffItems[i].images.splice(gi,1); renderWoItems(); };
+  window.uploadWoItemImage = (i, input)=>{
+    const file = input.files[0];
+    if(!file) return;
+    if(!STATE.draftWriteOffItems[i].images) STATE.draftWriteOffItems[i].images = [];
+    if(STATE.draftWriteOffItems[i].images.length >= ITEM_IMAGE_LIMIT){ toast('เพิ่มรูปได้สูงสุด '+ITEM_IMAGE_LIMIT+' รูปต่อรายการ','err'); input.value=''; return; }
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      toast('กำลังอัปโหลดรูป...');
+      apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftWriteOffItems[i].assetId })
+        .then(res=>{
+          if(res.ok){
+            STATE.draftWriteOffItems[i].images.push(res.data.url);
+            renderWoItems();
+            toast('อัปโหลดรูปสำเร็จ','ok');
+          } else toast(res.error||'อัปโหลดไม่สำเร็จ','err');
+        });
+    };
+    reader.readAsDataURL(file);
+    input.value = '';
+  };
 
 }
 
@@ -1683,7 +1766,7 @@ function renderWriteOffCreatePreview(root){
     CreatedAt: new Date().toISOString(),
     FromDept: h.fromDept, Reason: h.reason, Remark: h.remark, Status: 'Draft', CreatedBy: h.createdBy,
     Items: STATE.draftWriteOffItems.map(it => ({
-      AssetID: it.assetId, AssetName: it.assetName, ImageURL: it.imageUrl,
+      AssetID: it.assetId, AssetName: it.assetName, Images: it.images,
       ScrapPrice: it.scrapPrice, Remark: it.remark
     }))
   };
@@ -1946,8 +2029,9 @@ function buildDocHtml(t, withToolbar){
   const itemsRows = (t.Items||[]).map((it, i)=>`
     <tr>
       <td>${i+1}</td>
+      <td>${docImgGallery(it.Images)}</td>
       <td>${esc(it.AssetID)}</td>
-      <td class="left">${it.ImageURL?`<img src="${esc(it.ImageURL)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">`:''} ${esc(it.AssetName)}</td>
+      <td class="left">${esc(it.AssetName)}</td>
       <td>${esc(it.FromDeptName)}<br><span style="font-size:11px;color:#666;">${esc(it.FromSignName)}</span></td>
       <td>${esc(it.ToDeptName)}<br><span style="font-size:11px;color:#666;">${esc(it.ToSignName)}</span></td>
       <td>${esc(it.Remark)}</td>
@@ -1974,7 +2058,7 @@ function buildDocHtml(t, withToolbar){
         <div class="doc-field">ดังมีรายละเอียดดังนี้ &nbsp; <b>จาก</b> ${esc(t.FromDept)} &nbsp; <b>ไปยัง</b> ${esc(t.ToDept)}</div>
 
         <table class="doc-table">
-          <tr><th style="width:30px;">ลำดับ</th><th style="width:90px;">รหัส</th><th>รายการ</th><th>ผู้โอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th>ผู้รับโอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th>หมายเหตุ</th></tr>
+          <tr><th style="width:5%;">ลำดับ</th><th style="width:15%;">รูปภาพ</th><th style="width:10%;">รหัส</th><th style="width:25%;">รายการ</th><th style="width:15%;">ผู้โอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th style="width:15%;">ผู้รับโอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th style="width:15%;">หมายเหตุ</th></tr>
           ${itemsRows}
         </table>
 
@@ -2029,8 +2113,9 @@ function buildSaleDocHtml(s, withToolbar){
   const itemsRows = (s.Items||[]).map((it, i)=>`
     <tr>
       <td>${i+1}</td>
+      <td>${docImgGallery(it.Images)}</td>
       <td>${esc(it.AssetID)}</td>
-      <td class="left">${it.ImageURL?`<img src="${esc(it.ImageURL)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">`:''} ${esc(it.AssetName)}</td>
+      <td class="left">${esc(it.AssetName)}</td>
       <td class="money">${fmtMoney(it.ScrapPrice)}</td>
       <td class="money">${fmtMoney(it.AuctionPrice)}</td>
       <td class="money">${fmtMoney(it.SalePrice)}</td>
@@ -2058,9 +2143,9 @@ function buildSaleDocHtml(s, withToolbar){
         <div class="doc-field"><b>หมายเหตุ</b> ${esc(s.Remark||'-')}</div>
 
         <table class="doc-table">
-          <tr><th style="width:30px;">ลำดับ</th><th style="width:90px;">รหัส</th><th>รายการ</th><th>ราคาซาก</th><th>ราคาประมูล</th><th>ราคาขาย</th><th>หมายเหตุ</th></tr>
+          <tr><th style="width:5%;">ลำดับ</th><th style="width:15%;">รูปภาพ</th><th style="width:10%;">รหัส</th><th style="width:21%;">รายการ</th><th style="width:12%;">ราคาซาก</th><th style="width:12%;">ราคาประมูล</th><th style="width:12%;">ราคาขาย</th><th style="width:13%;">หมายเหตุ</th></tr>
           ${itemsRows}
-          <tr><td colspan="5" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">${fmtMoney(total)}</td><td></td></tr>
+          <tr><td colspan="6" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">${fmtMoney(total)}</td><td></td></tr>
         </table>
 
         <div class="doc-sign">
@@ -2103,8 +2188,9 @@ function buildWriteOffDocHtml(w, withToolbar){
   const itemsRows = (w.Items||[]).map((it, i)=>`
     <tr>
       <td>${i+1}</td>
+      <td>${docImgGallery(it.Images)}</td>
       <td>${esc(it.AssetID)}</td>
-      <td class="left">${it.ImageURL?`<img src="${esc(it.ImageURL)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">`:''} ${esc(it.AssetName)}</td>
+      <td class="left">${esc(it.AssetName)}</td>
       <td class="money">${fmtMoney(it.ScrapPrice)}</td>
       <td>${esc(it.Remark)}</td>
     </tr>`).join('');
@@ -2130,9 +2216,9 @@ function buildWriteOffDocHtml(w, withToolbar){
         <div class="doc-field"><b>หมายเหตุ</b> ${esc(w.Remark||'-')}</div>
 
         <table class="doc-table">
-          <tr><th style="width:30px;">ลำดับ</th><th style="width:90px;">รหัส</th><th>รายการ</th><th>ราคาซาก</th><th>หมายเหตุ</th></tr>
+          <tr><th style="width:6%;">ลำดับ</th><th style="width:16%;">รูปภาพ</th><th style="width:12%;">รหัส</th><th style="width:30%;">รายการ</th><th style="width:16%;">ราคาซาก</th><th style="width:20%;">หมายเหตุ</th></tr>
           ${itemsRows}
-          <tr><td colspan="3" style="text-align:right;font-weight:600;">รวมราคาซาก</td><td style="font-weight:700;">${fmtMoney(total)}</td><td></td></tr>
+          <tr><td colspan="4" style="text-align:right;font-weight:600;">รวมราคาซาก</td><td style="font-weight:700;">${fmtMoney(total)}</td><td></td></tr>
         </table>
 
         <div class="doc-sign">

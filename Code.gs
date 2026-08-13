@@ -656,7 +656,8 @@ function getTransferItems_(transferId) {
   return values
     .map(r => rowToObj_(r, idx))
     .filter(r => r.TransferID === transferId)
-    .sort((a, b) => a.LineNo - b.LineNo);
+    .sort((a, b) => a.LineNo - b.LineNo)
+    .map(r => { r.Images = cellToImages_(r.ImageURL); return r; });
 }
 
 function findTransferRow_(transferId) {
@@ -715,7 +716,7 @@ function createTransfer_(body) {
     it.toDeptName || body.toDept || '',
     it.toSignName || '',
     it.remark || '',
-    it.imageUrl || ''
+    imagesToCell_(it.images)
   ]);
   if (itemRows.length) {
     iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.ITEMS.length).setValues(itemRows);
@@ -884,7 +885,8 @@ function getSaleItems_(saleId) {
   return values
     .map(r => rowToObj_(r, idx))
     .filter(r => r.SaleID === saleId)
-    .sort((a, b) => a.LineNo - b.LineNo);
+    .sort((a, b) => a.LineNo - b.LineNo)
+    .map(r => { r.Images = cellToImages_(r.ImageURL); return r; });
 }
 
 function findSaleRow_(saleId) {
@@ -940,7 +942,7 @@ function createSale_(body) {
     it.auctionPrice || 0,
     it.salePrice || 0,
     it.remark || '',
-    it.imageUrl || ''
+    imagesToCell_(it.images)
   ]);
   if (itemRows.length) {
     iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.SALE_ITEMS.length).setValues(itemRows);
@@ -1050,7 +1052,8 @@ function getWriteOffItems_(writeOffId) {
   return values
     .map(r => rowToObj_(r, idx))
     .filter(r => r.WriteOffID === writeOffId)
-    .sort((a, b) => a.LineNo - b.LineNo);
+    .sort((a, b) => a.LineNo - b.LineNo)
+    .map(r => { r.Images = cellToImages_(r.ImageURL); return r; });
 }
 
 function findWriteOffRow_(writeOffId) {
@@ -1104,7 +1107,7 @@ function createWriteOff_(body) {
     it.assetName || '',
     it.scrapPrice || 0,
     it.remark || '',
-    it.imageUrl || ''
+    imagesToCell_(it.images)
   ]);
   if (itemRows.length) {
     iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.WRITEOFF_ITEMS.length).setValues(itemRows);
@@ -1193,7 +1196,7 @@ function sendApprovalEmail_(transferId, runningNo, body, items, token) {
     const itemsHtml = items.map((it, i) => (
       '<tr>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
-      '<td style="border:1px solid #ddd;padding:6px;">' + (it.imageUrl ? '<img src="' + it.imageUrl + '" width="60" style="border-radius:4px;">' : '-') + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + ((it.images || []).filter(Boolean).slice(0, ITEM_IMAGE_LIMIT).map(u => '<img src="' + u + '" width="34" style="border-radius:4px;margin:1px;">').join('') || '-') + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.assetId) + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.assetName) + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.remark || '') + '</td>' +
@@ -1399,6 +1402,15 @@ function rowToObj_(row, idx) {
     obj[key] = v;
   });
   return obj;
+}
+
+// รายการทรัพย์สินแต่ละรายการแนบรูปได้สูงสุด 5 รูป เก็บใน 1 คอลัมน์ ImageURL คั่นด้วยจุลภาค
+const ITEM_IMAGE_LIMIT = 5;
+function imagesToCell_(images) {
+  return (images || []).filter(Boolean).slice(0, ITEM_IMAGE_LIMIT).join(',');
+}
+function cellToImages_(cell) {
+  return String(cell || '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
 function escapeHtml_(str) {
