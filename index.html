@@ -465,6 +465,8 @@ function renderAssetList(root){
           <option value="Sold">ขายแล้ว</option>
           <option value="WrittenOff">ตัดชำรุด</option>
         </select>
+        <select id="alDivision" style="max-width:160px;"><option value="">ทุกฝ่าย</option></select>
+        <select id="alWorkGroup" style="max-width:160px;"><option value="">ทุกกลุ่มงาน</option></select>
         <button class="btn btn-secondary btn-sm" id="btnAlFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
@@ -489,13 +491,11 @@ function renderAssetList(root){
   document.getElementById('btnAlRestore').onclick = restoreSelected;
 
   function exportAssetList(){
-    const statusFilter = document.getElementById('alStatus').value;
-    let rows = STATE.assetsFull;
-    if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
+    const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','สถานะ','แท็กสถานะ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน']);
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','สถานะ','แท็กสถานะ'];
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน']);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
@@ -510,17 +510,39 @@ function renderAssetList(root){
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
       STATE.assetsFull = res.data;
       STATE.selectedAssetIds = [];
+      populateDeptFilterOptions();
       renderTable();
     });
   }
 
-  function renderTable(){
-    const host = document.getElementById('alTableHost');
+  function populateDeptFilterOptions(){
+    const divSel = document.getElementById('alDivision');
+    const wgSel = document.getElementById('alWorkGroup');
+    const curDiv = divSel.value, curWg = wgSel.value;
+    const divisions = [...new Set(STATE.assetsFull.map(a=>a.Division).filter(Boolean))].sort();
+    const workGroups = [...new Set(STATE.assetsFull.map(a=>a.WorkGroup).filter(Boolean))].sort();
+    divSel.innerHTML = '<option value="">ทุกฝ่าย</option>' + divisions.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
+    wgSel.innerHTML = '<option value="">ทุกกลุ่มงาน</option>' + workGroups.map(w=>`<option value="${esc(w)}">${esc(w)}</option>`).join('');
+    if(divisions.indexOf(curDiv)!==-1) divSel.value = curDiv;
+    if(workGroups.indexOf(curWg)!==-1) wgSel.value = curWg;
+  }
+
+  function filteredRows(){
     const statusFilter = document.getElementById('alStatus').value;
+    const divisionFilter = document.getElementById('alDivision').value;
+    const workGroupFilter = document.getElementById('alWorkGroup').value;
     let rows = STATE.assetsFull;
     if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
+    if(divisionFilter) rows = rows.filter(a => a.Division === divisionFilter);
+    if(workGroupFilter) rows = rows.filter(a => a.WorkGroup === workGroupFilter);
+    return rows;
+  }
+
+  function renderTable(){
+    const host = document.getElementById('alTableHost');
+    const rows = filteredRows();
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; updateSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th></tr>';
+    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ฝ่าย</th><th>กลุ่มงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th></tr>';
     rows.forEach(a=>{
       const checked = STATE.selectedAssetIds.indexOf(a.AssetID)!==-1 ? 'checked' : '';
       const curTag = a.Tag || 'ใช้งาน';
@@ -530,6 +552,8 @@ function renderAssetList(root){
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
+        <td>${esc(a.Division||'-')}</td>
+        <td>${esc(a.WorkGroup||'-')}</td>
         <td>${esc(a.Custodian||'-')}</td>
         <td>${esc(a.Location||'-')}</td>
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
@@ -1963,6 +1987,7 @@ function renderSettings(root){
 
   const ADMIN_FIELD_COLS = [
     ['AssetID','รหัสทรัพย์สิน'], ['AssetName','ชื่อทรัพย์สิน'], ['Department','หน่วยงาน'],
+    ['Division','ฝ่าย'], ['WorkGroup','กลุ่มงาน'],
     ['PurchaseDate','วันที่ซื้อ'], ['PurchasePrice','ราคาซื้อ'], ['BookValue','มูลค่าตามบัญชี'],
     ['Custodian','ผู้ดูแล'], ['Location','สถานที่'], ['Tag','แท็กสถานะ'],
     ['ScrapPrice','ราคาซาก'], ['MinSalePrice','ราคาขายขั้นต่ำ'], ['ImageURL','URL รูปภาพ']

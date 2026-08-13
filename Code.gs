@@ -38,7 +38,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
@@ -339,7 +339,7 @@ function adminVerify_(body) {
   return checkAdminPassword_(body.password) ? { ok: true } : { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
 }
 
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
@@ -447,7 +447,7 @@ function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, asse
 // จึงจับคู่ด้วย prefix แล้วเลือกแท็บที่มีชื่อ (วันที่) ล่าสุดโดยอัตโนมัติ แทนชื่อคงที่
 const SOURCE_SHEET_TAB_PREFIX = 'AppSheet.ViewData';
 const SOURCE_SHEET_URL_PROP = 'SOURCE_SHEET_URL';
-const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
 
 function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
