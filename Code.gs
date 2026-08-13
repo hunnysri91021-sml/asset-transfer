@@ -38,7 +38,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
@@ -333,7 +333,10 @@ function adminVerify_(body) {
   return checkAdminPassword_(body.password) ? { ok: true } : { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
 }
 
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ImageURL'];
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ImageURL'];
+
+// แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
+const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
 
 function adminSaveAsset_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };

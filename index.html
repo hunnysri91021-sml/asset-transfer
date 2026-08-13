@@ -14,15 +14,36 @@
   }
   *{box-sizing:border-box;}
   body{font-family:'Sarabun',sans-serif;background:var(--bg);color:var(--text);margin:0;}
-  #app{max-width:1180px;margin:0 auto;padding:16px;}
-  .topbar{display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:#fff;padding:14px 20px;border-radius:var(--radius);margin-bottom:16px;flex-wrap:wrap;gap:10px;box-shadow:0 2px 10px rgba(10,30,60,.18);}
-  .topbar h1{font-size:18px;margin:0;font-weight:600;}
-  .topbar .sub{font-size:12px;opacity:.8;font-weight:300;}
-  nav{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
-  nav button{background:rgba(255,255,255,.12);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;transition:.15s;}
-  nav button:hover{background:rgba(255,255,255,.25);}
-  nav button.active{background:#fff;color:var(--navy);font-weight:600;}
-  nav .nav-sep{width:1px;align-self:stretch;background:rgba(255,255,255,.2);margin:2px 2px;}
+
+  /* ===== APP SHELL / SIDEBAR LAYOUT ===== */
+  .app-shell{display:flex;min-height:100vh;}
+  .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(10,20,35,.45);z-index:99;}
+  .sidebar-backdrop.open{display:block;}
+  .sidebar{width:230px;flex:0 0 230px;background:var(--navy-dark);color:#fff;position:fixed;top:0;left:0;bottom:0;overflow-y:auto;z-index:100;transition:transform .2s ease;}
+  .sidebar-brand{padding:20px 18px;border-bottom:1px solid rgba(255,255,255,.12);}
+  .sidebar-brand h1{font-size:15px;margin:0;font-weight:700;line-height:1.35;}
+  .sidebar-brand .sub{font-size:11px;opacity:.65;margin-top:5px;font-weight:300;line-height:1.4;}
+  .sidebar-nav{padding:10px 0 24px;}
+  .sidebar-nav .nav-group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.42);padding:16px 18px 6px;}
+  .sidebar-nav button{display:block;width:100%;background:none;border:none;border-right:3px solid transparent;color:rgba(255,255,255,.82);padding:10px 18px;text-align:left;cursor:pointer;font-family:inherit;font-size:13.5px;transition:.15s;}
+  .sidebar-nav button:hover{background:rgba(255,255,255,.08);}
+  .sidebar-nav button.active{background:rgba(255,255,255,.13);color:#fff;font-weight:600;border-right-color:var(--gold);}
+  .main-area{flex:1;margin-left:230px;display:flex;flex-direction:column;min-width:0;}
+  .topheader{display:flex;align-items:center;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:50;}
+  .topheader .page-title{font-size:16px;font-weight:600;color:var(--navy);}
+  .sidebar-toggle{display:none;background:none;border:1px solid var(--border);border-radius:6px;padding:6px 11px;cursor:pointer;font-size:16px;line-height:1;color:var(--navy);}
+  .content{padding:20px 24px;max-width:1240px;width:100%;margin:0 auto;}
+  @media (max-width: 880px){
+    .sidebar{transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.25);}
+    .sidebar.open{transform:translateX(0);}
+    .main-area{margin-left:0;}
+    .sidebar-toggle{display:inline-block;}
+  }
+  @media print{
+    .sidebar, .topheader, .sidebar-backdrop{display:none !important;}
+    .main-area{margin-left:0;}
+  }
+
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(20,30,50,.05);}
   .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:500;}
@@ -97,29 +118,37 @@
 </style>
 </head>
 <body>
-<div id="app">
-  <div class="topbar no-print">
-    <div>
-      <h1>ระบบโอนย้ายทรัพย์สิน</h1>
-      <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด — SML Asset Transfer</div>
+<div class="app-shell">
+  <div class="sidebar-backdrop no-print" id="sidebarBackdrop"></div>
+  <aside class="sidebar no-print" id="sidebar">
+    <div class="sidebar-brand">
+      <h1>ระบบจัดการทรัพย์สิน</h1>
+      <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด</div>
     </div>
-    <nav id="mainNav">
-      <button data-view="assetList" class="active">รายการทรัพย์สิน</button>
+    <nav id="mainNav" class="sidebar-nav">
+      <div class="nav-group-label">ภาพรวม</div>
       <button data-view="dashboard">ข้อมูลรวม</button>
-      <span class="nav-sep"></span>
+      <button data-view="assetList">รายการทรัพย์สิน</button>
+      <div class="nav-group-label">โอนย้าย</div>
       <button data-view="list">รายการใบโอนย้าย</button>
       <button data-view="create">+ สร้างใบโอนย้าย</button>
-      <span class="nav-sep"></span>
+      <div class="nav-group-label">ขายออก</div>
       <button data-view="saleList">รายการขายออก</button>
       <button data-view="saleCreate">+ บันทึกขายออก</button>
-      <span class="nav-sep"></span>
+      <div class="nav-group-label">ตัดชำรุด</div>
       <button data-view="writeOffList">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
-      <span class="nav-sep"></span>
+      <div class="nav-group-label">ระบบ</div>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
+  </aside>
+  <div class="main-area">
+    <header class="topheader no-print">
+      <button class="sidebar-toggle" id="btnSidebarToggle">☰</button>
+      <span class="page-title" id="pageTitle">ข้อมูลรวม</span>
+    </header>
+    <div id="viewRoot" class="content"></div>
   </div>
-  <div id="viewRoot"></div>
 </div>
 <div id="toastHost"></div>
 
@@ -130,7 +159,7 @@ const COMPANY_NAME = '    บริษัท   สยามกลการโล
 
 /* ================= STATE ================= */
 let STATE = {
-  view: 'assetList',
+  view: 'dashboard',
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -231,18 +260,58 @@ function route(){
   render();
 }
 
+const VIEW_TITLES = {
+  dashboard: 'ข้อมูลรวม',
+  assetList: 'รายการทรัพย์สิน',
+  list: 'รายการใบโอนย้าย',
+  create: 'สร้างใบโอนย้าย',
+  print: 'ใบโอนย้ายทรัพย์สิน',
+  saleList: 'รายการขายออก',
+  saleCreate: 'บันทึกขายออก',
+  salePrint: 'ใบขายออกทรัพย์สิน',
+  writeOffList: 'รายการตัดชำรุด',
+  writeOffCreate: 'บันทึกตัดชำรุด',
+  writeOffPrint: 'ใบตัดชำรุดทรัพย์สิน',
+  settings: 'ตั้งค่า'
+};
+
+function closeSidebar(){
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('open');
+}
+document.getElementById('btnSidebarToggle').onclick = ()=>{
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarBackdrop').classList.toggle('open');
+};
+document.getElementById('sidebarBackdrop').onclick = closeSidebar;
+
+function showAppChrome(){
+  document.getElementById('sidebar').style.display = '';
+  document.querySelector('.topheader').style.display = '';
+  document.querySelector('.main-area').style.marginLeft = '';
+}
+function hideAppChrome(){
+  document.getElementById('sidebar').style.display = 'none';
+  document.querySelector('.topheader').style.display = 'none';
+  document.querySelector('.main-area').style.marginLeft = '0';
+}
+
 document.getElementById('mainNav').addEventListener('click', (e)=>{
-  if(e.target.tagName === 'BUTTON'){
-    STATE.view = e.target.dataset.view;
-    [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b===e.target));
+  const btn = e.target.closest('button');
+  if(btn){
+    STATE.view = btn.dataset.view;
+    closeSidebar();
     render();
   }
 });
 
 function render(){
+  showAppChrome();
   const root = document.getElementById('viewRoot');
-  document.querySelector('.topbar').classList.remove('no-print-hide');
-  document.getElementById('mainNav').style.display = 'flex';
+  const titleEl = document.getElementById('pageTitle');
+  if(titleEl) titleEl.textContent = VIEW_TITLES[STATE.view] || '';
+  [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===STATE.view));
+
   if(STATE.view === 'assetList') renderAssetList(root);
   else if(STATE.view === 'dashboard') renderDashboard(root);
   else if(STATE.view === 'list') renderList(root);
@@ -258,6 +327,8 @@ function render(){
 }
 
 /* ================= ASSET LIST VIEW (browse, select, and act on assets) ================= */
+const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
+
 function renderAssetList(root){
   root.innerHTML = `
     <div class="card">
@@ -312,9 +383,10 @@ function renderAssetList(root){
     let rows = STATE.assetsFull;
     if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; updateSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th></tr>';
+    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th></tr>';
     rows.forEach(a=>{
       const checked = STATE.selectedAssetIds.indexOf(a.AssetID)!==-1 ? 'checked' : '';
+      const curTag = a.Tag || 'ใช้งาน';
       html += `<tr>
         <td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
@@ -326,6 +398,7 @@ function renderAssetList(root){
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
         <td class="money">${fmtMoney(a.BookValue)}</td>
         <td>${assetStatusBadge(a.AssetStatus)}</td>
+        <td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="min-width:130px;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>
       </tr>`;
     });
     html += '</table></div>';
@@ -351,7 +424,31 @@ function renderAssetList(root){
         updateSelCount();
       };
     });
+    host.querySelectorAll('.alTagSelect').forEach(sel=>{
+      sel.onchange = ()=> updateTag(sel.dataset.id, sel.value);
+    });
     updateSelCount();
+  }
+
+  function updateTag(assetId, newTag){
+    const apply = (pw)=>{
+      apiPost({ action:'adminSaveAsset', password: pw, asset:{ AssetID: assetId, Tag: newTag } }).then(res=>{
+        if(!res.ok){
+          toast(res.error||'บันทึกแท็กสถานะไม่สำเร็จ','err');
+          if(String(res.error||'').indexOf('รหัสผ่าน')!==-1) STATE.adminPassword = null;
+          load();
+          return;
+        }
+        STATE.adminPassword = pw;
+        const a = STATE.assetsFull.find(x=>x.AssetID===assetId);
+        if(a) a.Tag = newTag;
+        toast('บันทึกแท็กสถานะสำเร็จ','ok');
+      });
+    };
+    if(STATE.adminPassword){ apply(STATE.adminPassword); return; }
+    const pw = prompt('กรอกรหัสผ่าน Admin เพื่อแก้ไขแท็กสถานะ');
+    if(!pw){ load(); return; }
+    apply(pw);
   }
 
   function updateSelCount(){
@@ -385,7 +482,6 @@ function renderAssetList(root){
       }));
     }
     STATE.view = targetView;
-    [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===targetView));
     render();
   }
 
@@ -468,13 +564,28 @@ function renderDashboard(root){
       return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoney(v.book)}</td></tr>`;
     }).join('');
 
+    const byTag = {};
+    assets.forEach(a=>{
+      const t = a.Tag || 'ใช้งาน';
+      byTag[t] = (byTag[t]||0) + 1;
+    });
+    const tagRows = ASSET_TAGS.map(t=>`<tr><td>${esc(t)}</td><td style="text-align:center;">${byTag[t]||0}</td></tr>`).join('');
+
     document.getElementById('dashHost').innerHTML = `
       ${tilesHtml}
-      <h2 style="margin-top:24px;">สรุปแยกตามหน่วยงาน</h2>
-      <div style="overflow-x:auto;">
-        <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งานอยู่</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
-        ${deptRows || '<tr><td colspan="5" class="empty">ไม่มีข้อมูล</td></tr>'}
-        </table>
+      <div class="row" style="margin-top:24px;align-items:flex-start;">
+        <div style="flex:2;min-width:280px;">
+          <h2>สรุปแยกตามหน่วยงาน</h2>
+          <div style="overflow-x:auto;">
+            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งานอยู่</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
+            ${deptRows || '<tr><td colspan="5" class="empty">ไม่มีข้อมูล</td></tr>'}
+            </table>
+          </div>
+        </div>
+        <div style="flex:1;min-width:200px;">
+          <h2>สรุปแยกตามแท็กสถานะ</h2>
+          <table><tr><th>แท็กสถานะ</th><th>จำนวน</th></tr>${tagRows}</table>
+        </div>
       </div>
     `;
   }
@@ -780,7 +891,6 @@ function renderCreate(root){
       STATE.draftItems = [];
       STATE.view = 'print';
       STATE.printId = res.data.transferId;
-      [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view==='list'));
       render();
     });
   }
@@ -1051,7 +1161,6 @@ function renderSaleCreate(root){
       STATE.draftSaleItems = [];
       STATE.view = 'salePrint';
       STATE.printSaleId = res.data.saleId;
-      [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view==='saleList'));
       render();
     });
   }
@@ -1291,7 +1400,6 @@ function renderWriteOffCreate(root){
       STATE.draftWriteOffItems = [];
       STATE.view = 'writeOffPrint';
       STATE.printWriteOffId = res.data.writeOffId;
-      [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view==='writeOffList'));
       render();
     });
   }
@@ -1406,7 +1514,7 @@ function renderSettings(root){
   const ADMIN_FIELD_COLS = [
     ['AssetID','รหัสทรัพย์สิน'], ['AssetName','ชื่อทรัพย์สิน'], ['Department','หน่วยงาน'],
     ['PurchaseDate','วันที่ซื้อ'], ['PurchasePrice','ราคาซื้อ'], ['BookValue','มูลค่าตามบัญชี'],
-    ['Custodian','ผู้ดูแล'], ['Location','สถานที่'], ['ImageURL','URL รูปภาพ']
+    ['Custodian','ผู้ดูแล'], ['Location','สถานที่'], ['Tag','แท็กสถานะ'], ['ImageURL','URL รูปภาพ']
   ];
 
   function renderAdminAssetsTable(){
@@ -1708,8 +1816,7 @@ function buildWriteOffDocHtml(w, withToolbar){
 
 /* ================= APPROVAL VIEW (from email link) ================= */
 function renderApprove(){
-  document.querySelector('.topbar').style.display='none';
-  document.getElementById('mainNav').style.display='none';
+  hideAppChrome();
   const root = document.getElementById('viewRoot');
   root.innerHTML = '<div class="empty">กำลังโหลดใบโอนย้าย...</div>';
   apiGet({action:'getApprovalView', id: STATE.approveCtx.id, token: STATE.approveCtx.token}).then(res=>{
@@ -1753,8 +1860,7 @@ function renderApprove(){
 
 /* ================= SALE APPROVAL VIEW (from email link) ================= */
 function renderApproveSale(){
-  document.querySelector('.topbar').style.display='none';
-  document.getElementById('mainNav').style.display='none';
+  hideAppChrome();
   const root = document.getElementById('viewRoot');
   root.innerHTML = '<div class="empty">กำลังโหลดใบขายออก...</div>';
   apiGet({action:'getSaleApprovalView', id: STATE.approveSaleCtx.id, token: STATE.approveSaleCtx.token}).then(res=>{
@@ -1797,8 +1903,7 @@ function renderApproveSale(){
 
 /* ================= WRITE-OFF APPROVAL VIEW (from email link) ================= */
 function renderApproveWriteOff(){
-  document.querySelector('.topbar').style.display='none';
-  document.getElementById('mainNav').style.display='none';
+  hideAppChrome();
   const root = document.getElementById('viewRoot');
   root.innerHTML = '<div class="empty">กำลังโหลดใบตัดชำรุด...</div>';
   apiGet({action:'getWriteOffApprovalView', id: STATE.approveWriteOffCtx.id, token: STATE.approveWriteOffCtx.token}).then(res=>{
