@@ -21,7 +21,8 @@ const CONFIG = {
   FRONTEND_URL: 'https://hunnysri91021-sml.github.io/asset-transfer', // TODO: แก้เป็น URL จริงหลัง deploy GitHub Pages
   COMPANY_NAME: 'บริษัท สยามกลการโลจิสติกส์ จำกัด',
   DRIVE_FOLDER_NAME: 'SML_Asset_Transfer_Images',
-  DEFAULT_TIMEOUT_MS: 15000
+  DEFAULT_TIMEOUT_MS: 15000,
+  ADMIN_PASSWORD: '' // TODO: ตั้งรหัสผ่าน Admin ก่อนใช้งานแถบ "ตั้งค่า" (เว้นว่าง = ปิดการแก้ไขข้อมูล Admin ทั้งหมด)
 };
 
 const SHEETS = {
@@ -155,6 +156,15 @@ function doPost(e) {
       case 'updateAssetImage':
         result = updateAssetImage_(body);
         break;
+      case 'adminVerify':
+        result = adminVerify_(body);
+        break;
+      case 'adminSaveAsset':
+        result = adminSaveAsset_(body);
+        break;
+      case 'adminDeleteAsset':
+        result = adminDeleteAsset_(body);
+        break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
     }
@@ -209,6 +219,72 @@ function updateAssetImage_(body) {
     }
   }
   return { ok: false, error: 'Asset not found: ' + assetId };
+}
+
+// ============================================================
+// ADMIN — แก้ไขข้อมูลทรัพย์สินหลัก (ชีต Assets ที่ทีมบัญชี upload เข้ามา)
+// ============================================================
+function checkAdminPassword_(pw) {
+  return !!CONFIG.ADMIN_PASSWORD && String(pw || '') === String(CONFIG.ADMIN_PASSWORD);
+}
+
+function adminVerify_(body) {
+  return checkAdminPassword_(body.password) ? { ok: true } : { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+}
+
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ImageURL'];
+
+function adminSaveAsset_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const asset = body.asset || {};
+  const assetId = String(asset.AssetID || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน (AssetID)' };
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const idx = indexMap_(headers);
+  let rowNum = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) { rowNum = i + 1; break; }
+  }
+
+  if (rowNum === -1) {
+    const newRow = HEADERS.ASSETS.map(h => {
+      if (h === 'AssetID') return assetId;
+      if (h === 'UpdatedAt') return new Date();
+      if (ADMIN_ASSET_EDITABLE_FIELDS.indexOf(h) !== -1) return asset[h] || '';
+      return '';
+    });
+    sh.appendRow(newRow);
+    logActivity_('', 'ADMIN_ASSET_CREATE', 'admin', 'เพิ่มทรัพย์สิน ' + assetId);
+    return { ok: true, data: { created: true } };
+  }
+
+  ADMIN_ASSET_EDITABLE_FIELDS.forEach(f => {
+    if (asset[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
+  });
+  sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
+  logActivity_('', 'ADMIN_ASSET_UPDATE', 'admin', 'แก้ไขทรัพย์สิน ' + assetId);
+  return { ok: true, data: { created: false } };
+}
+
+function adminDeleteAsset_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.deleteRow(i + 1);
+      logActivity_('', 'ADMIN_ASSET_DELETE', 'admin', 'ลบทรัพย์สิน ' + assetId);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สิน: ' + assetId };
 }
 
 // ============================================================
