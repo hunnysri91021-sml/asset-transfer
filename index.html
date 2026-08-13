@@ -53,6 +53,10 @@
   .badge-approved{background:#d4edda;color:var(--green);}
   .badge-rejected{background:#f8d7da;color:var(--red);}
   .badge-draft{background:#e2e3e5;color:#555;}
+  .stat-tile{background:#f7f9fc;border:1px solid var(--border);border-radius:8px;padding:14px 16px;flex:1;min-width:160px;}
+  .stat-tile .num{font-size:26px;font-weight:700;color:var(--navy);}
+  .stat-tile .label{font-size:13px;color:var(--muted);}
+  .stat-tile .sub{font-size:12px;color:var(--muted);margin-top:4px;}
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
   .autocomplete-wrap{position:relative;}
   .autocomplete-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;max-height:240px;overflow:auto;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.12);}
@@ -100,11 +104,17 @@
       <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด — SML Asset Transfer</div>
     </div>
     <nav id="mainNav">
-      <button data-view="list" class="active">รายการใบโอนย้าย</button>
+      <button data-view="assetList" class="active">รายการทรัพย์สิน</button>
+      <button data-view="dashboard">ข้อมูลรวม</button>
+      <span class="nav-sep"></span>
+      <button data-view="list">รายการใบโอนย้าย</button>
       <button data-view="create">+ สร้างใบโอนย้าย</button>
       <span class="nav-sep"></span>
       <button data-view="saleList">รายการขายออก</button>
       <button data-view="saleCreate">+ บันทึกขายออก</button>
+      <span class="nav-sep"></span>
+      <button data-view="writeOffList">รายการตัดชำรุด</button>
+      <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
       <span class="nav-sep"></span>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
@@ -120,7 +130,7 @@ const COMPANY_NAME = '    บริษัท   สยามกลการโล
 
 /* ================= STATE ================= */
 let STATE = {
-  view: 'list',
+  view: 'assetList',
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -132,7 +142,13 @@ let STATE = {
   sales: [],
   draftSaleItems: [],
   printSaleId: null,
-  approveSaleCtx: null
+  approveSaleCtx: null,
+  assetsFull: [],
+  selectedAssetIds: [],
+  writeOffs: [],
+  draftWriteOffItems: [],
+  printWriteOffId: null,
+  approveWriteOffCtx: null
 };
 
 /* ================= API HELPERS ================= */
@@ -174,9 +190,19 @@ function statusBadge(s){
     Draft: ['draft','ฉบับร่าง'],
     PendingApproval: ['pending','รออนุมัติ'],
     Approved: ['approved','อนุมัติแล้ว'],
-    Rejected: ['rejected','ไม่อนุมัติ']
+    Rejected: ['rejected','ไม่อนุมัติ'],
+    Voided: ['draft','ยกเลิกแล้ว']
   };
   const v = map[s] || ['draft', s];
+  return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
+}
+function assetStatusBadge(s){
+  const map = {
+    Active: ['approved','ใช้งาน'],
+    Sold: ['rejected','ขายแล้ว'],
+    WrittenOff: ['draft','ตัดชำรุด']
+  };
+  const v = map[s] || ['approved', 'ใช้งาน'];
   return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
@@ -196,6 +222,12 @@ function route(){
     renderApproveSale();
     return;
   }
+  if(params.get('view') === 'approveWriteOff'){
+    STATE.view = 'approveWriteOff';
+    STATE.approveWriteOffCtx = { id: params.get('id'), token: params.get('token') };
+    renderApproveWriteOff();
+    return;
+  }
   render();
 }
 
@@ -211,13 +243,241 @@ function render(){
   const root = document.getElementById('viewRoot');
   document.querySelector('.topbar').classList.remove('no-print-hide');
   document.getElementById('mainNav').style.display = 'flex';
-  if(STATE.view === 'list') renderList(root);
+  if(STATE.view === 'assetList') renderAssetList(root);
+  else if(STATE.view === 'dashboard') renderDashboard(root);
+  else if(STATE.view === 'list') renderList(root);
   else if(STATE.view === 'create') renderCreate(root);
   else if(STATE.view === 'saleList') renderSaleList(root);
   else if(STATE.view === 'saleCreate') renderSaleCreate(root);
   else if(STATE.view === 'salePrint') renderSalePrint(root);
+  else if(STATE.view === 'writeOffList') renderWriteOffList(root);
+  else if(STATE.view === 'writeOffCreate') renderWriteOffCreate(root);
+  else if(STATE.view === 'writeOffPrint') renderWriteOffPrint(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
+}
+
+/* ================= ASSET LIST VIEW (browse, select, and act on assets) ================= */
+function renderAssetList(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>รายการทรัพย์สิน</h2>
+      <div class="toolbar no-print">
+        <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        <select id="alStatus" style="max-width:160px;">
+          <option value="">ทุกสถานะ</option>
+          <option value="Active">ใช้งาน</option>
+          <option value="Sold">ขายแล้ว</option>
+          <option value="WrittenOff">ตัดชำรุด</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="btnAlFilter">กรอง</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
+      </div>
+      <div class="toolbar no-print" style="border-top:1px solid var(--border);padding-top:10px;">
+        <span id="alSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnAlTransfer">สร้างใบโอนย้าย</button>
+        <button class="btn btn-primary btn-sm" id="btnAlSale">สร้างใบขาย</button>
+        <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
+      </div>
+      <div id="alTableHost" style="margin-top:12px;"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+
+  document.getElementById('btnAlFilter').onclick = load;
+  document.getElementById('btnAlRefresh').onclick = load;
+  document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
+  document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
+  document.getElementById('btnAlWriteOff').onclick = ()=> startFromSelection('writeOffCreate');
+  document.getElementById('btnAlRestore').onclick = restoreSelected;
+
+  load();
+
+  function load(){
+    const q = document.getElementById('alSearch').value.trim();
+    const params = { action:'getAssetsFull' };
+    if(q) params.q = q;
+    document.getElementById('alTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet(params).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
+      STATE.assetsFull = res.data;
+      STATE.selectedAssetIds = [];
+      renderTable();
+    });
+  }
+
+  function renderTable(){
+    const host = document.getElementById('alTableHost');
+    const statusFilter = document.getElementById('alStatus').value;
+    let rows = STATE.assetsFull;
+    if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; updateSelCount(); return; }
+    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th></tr>';
+    rows.forEach(a=>{
+      const checked = STATE.selectedAssetIds.indexOf(a.AssetID)!==-1 ? 'checked' : '';
+      html += `<tr>
+        <td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td>${esc(a.Custodian||'-')}</td>
+        <td>${esc(a.Location||'-')}</td>
+        <td class="money">${fmtMoney(a.PurchasePrice)}</td>
+        <td class="money">${fmtMoney(a.BookValue)}</td>
+        <td>${assetStatusBadge(a.AssetStatus)}</td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    document.getElementById('alSelectAll').onchange = (e)=>{
+      const ids = rows.map(a=>a.AssetID);
+      if(e.target.checked){
+        ids.forEach(id=>{ if(STATE.selectedAssetIds.indexOf(id)===-1) STATE.selectedAssetIds.push(id); });
+      } else {
+        STATE.selectedAssetIds = STATE.selectedAssetIds.filter(id=>ids.indexOf(id)===-1);
+      }
+      renderTable();
+    };
+    host.querySelectorAll('.alRowChk').forEach(chk=>{
+      chk.onchange = ()=>{
+        const id = chk.dataset.id;
+        if(chk.checked){
+          if(STATE.selectedAssetIds.indexOf(id)===-1) STATE.selectedAssetIds.push(id);
+        } else {
+          STATE.selectedAssetIds = STATE.selectedAssetIds.filter(x=>x!==id);
+        }
+        updateSelCount();
+      };
+    });
+    updateSelCount();
+  }
+
+  function updateSelCount(){
+    document.getElementById('alSelCount').textContent = 'เลือกไว้ '+STATE.selectedAssetIds.length+' รายการ';
+  }
+
+  function selectedAssetObjs(){
+    return STATE.assetsFull.filter(a => STATE.selectedAssetIds.indexOf(a.AssetID)!==-1);
+  }
+
+  function startFromSelection(targetView){
+    const selected = selectedAssetObjs();
+    if(!selected.length){ toast('กรุณาเลือกทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
+    if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
+
+    if(targetView === 'create'){
+      STATE.draftItems = selected.map(a => ({
+        assetId: a.AssetID, assetName: a.AssetName, imageUrl: a.DisplayImage||'',
+        remark: '', fromDeptName:'', toDeptName:'', fromSignName:'', toSignName:''
+      }));
+    } else if(targetView === 'saleCreate'){
+      STATE.draftSaleItems = selected.map(a => ({
+        assetId: a.AssetID, assetName: a.AssetName, imageUrl: a.DisplayImage||'',
+        scrapPrice:'', auctionPrice:'', salePrice:'', remark:''
+      }));
+    } else if(targetView === 'writeOffCreate'){
+      STATE.draftWriteOffItems = selected.map(a => ({
+        assetId: a.AssetID, assetName: a.AssetName, imageUrl: a.DisplayImage||'',
+        scrapPrice:'', remark:''
+      }));
+    }
+    STATE.view = targetView;
+    [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===targetView));
+    render();
+  }
+
+  function restoreSelected(){
+    const selected = selectedAssetObjs().filter(a => (a.AssetStatus||'Active') !== 'Active');
+    if(!selected.length){ toast('กรุณาเลือกทรัพย์สินที่มีสถานะขายแล้ว/ตัดชำรุด','err'); return; }
+    const pw = prompt('กรอกรหัสผ่าน Admin เพื่อคืนสถานะใช้งาน ('+selected.length+' รายการ)');
+    if(!pw) return;
+    if(!confirm('ยืนยันคืนสถานะใช้งานทรัพย์สิน '+selected.length+' รายการ?')) return;
+    let done = 0, failed = 0;
+    const next = ()=>{
+      if(done+failed >= selected.length){
+        toast('คืนสถานะสำเร็จ '+done+' รายการ'+(failed?(' ผิดพลาด '+failed+' รายการ'):''), failed? 'err':'ok');
+        load();
+        return;
+      }
+      const a = selected[done+failed];
+      apiPost({action:'adminRestoreAsset', password: pw, assetId: a.AssetID}).then(res=>{
+        if(res.ok) done++; else failed++;
+        next();
+      });
+    };
+    next();
+  }
+}
+
+/* ================= DASHBOARD VIEW (ข้อมูลรวม) ================= */
+function renderDashboard(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>ข้อมูลรวมทรัพย์สิน</h2>
+      <div id="dashHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+  apiGet({action:'getAssetsFull'}).then(res=>{
+    if(!res.ok){ document.getElementById('dashHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
+    renderDashboardContent(res.data);
+  });
+
+  function renderDashboardContent(assets){
+    const statusLabels = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
+    const byStatus = {};
+    assets.forEach(a=>{
+      const st = a.AssetStatus || 'Active';
+      if(!byStatus[st]) byStatus[st] = { count:0, purchase:0, book:0 };
+      byStatus[st].count++;
+      byStatus[st].purchase += parseFloat(a.PurchasePrice)||0;
+      byStatus[st].book += parseFloat(a.BookValue)||0;
+    });
+
+    let tilesHtml = '<div class="row">';
+    ['Active','Sold','WrittenOff'].forEach(st=>{
+      const d = byStatus[st] || { count:0, purchase:0, book:0 };
+      tilesHtml += `
+        <div class="stat-tile">
+          <div class="label">${statusLabels[st]}</div>
+          <div class="num">${d.count}</div>
+          <div class="sub">มูลค่าตามบัญชีรวม ${fmtMoney(d.book)} บาท</div>
+        </div>`;
+    });
+    tilesHtml += `
+      <div class="stat-tile">
+        <div class="label">ทั้งหมด</div>
+        <div class="num">${assets.length}</div>
+        <div class="sub">ราคาซื้อรวม ${fmtMoney(assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0))} บาท</div>
+      </div>`;
+    tilesHtml += '</div>';
+
+    const byDept = {};
+    assets.forEach(a=>{
+      const d = a.Department || '-';
+      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0 };
+      byDept[d].count++;
+      byDept[d].purchase += parseFloat(a.PurchasePrice)||0;
+      byDept[d].book += parseFloat(a.BookValue)||0;
+      if((a.AssetStatus||'Active')==='Active') byDept[d].active++;
+    });
+    const deptRows = Object.keys(byDept).sort().map(d=>{
+      const v = byDept[d];
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoney(v.book)}</td></tr>`;
+    }).join('');
+
+    document.getElementById('dashHost').innerHTML = `
+      ${tilesHtml}
+      <h2 style="margin-top:24px;">สรุปแยกตามหน่วยงาน</h2>
+      <div style="overflow-x:auto;">
+        <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งานอยู่</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
+        ${deptRows || '<tr><td colspan="5" class="empty">ไม่มีข้อมูล</td></tr>'}
+        </table>
+      </div>
+    `;
+  }
 }
 
 /* ================= LIST VIEW ================= */
@@ -797,6 +1057,246 @@ function renderSaleCreate(root){
   }
 }
 
+/* ================= WRITE-OFF LIST VIEW ================= */
+function renderWriteOffList(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>รายการตัดชำรุดทรัพย์สิน</h2>
+      <div class="toolbar no-print">
+        <input type="text" id="fWoSearch" placeholder="ค้นหาเลขที่ / สาเหตุ..." style="max-width:220px;">
+        <select id="fWoStatus" style="max-width:160px;">
+          <option value="">ทุกสถานะ</option>
+          <option value="PendingApproval">รออนุมัติ</option>
+          <option value="Approved">อนุมัติแล้ว</option>
+          <option value="Rejected">ไม่อนุมัติ</option>
+        </select>
+        <input type="date" id="fWoFrom" style="max-width:150px;">
+        <input type="date" id="fWoTo" style="max-width:150px;">
+        <button class="btn btn-secondary btn-sm" id="btnWoFilter">กรอง</button>
+        <button class="btn btn-secondary btn-sm" id="btnWoRefresh">↻ รีเฟรช</button>
+      </div>
+      <div id="woListTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+  document.getElementById('btnWoFilter').onclick = loadWoList;
+  document.getElementById('btnWoRefresh').onclick = loadWoList;
+  loadWoList();
+
+  function loadWoList(){
+    const params = { action:'getWriteOffs' };
+    const q = document.getElementById('fWoSearch').value.trim();
+    const status = document.getElementById('fWoStatus').value;
+    const from = document.getElementById('fWoFrom').value;
+    const to = document.getElementById('fWoTo').value;
+    if(q) params.q = q;
+    if(status) params.status = status;
+    if(from) params.from = from;
+    if(to) params.to = to;
+    document.getElementById('woListTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet(params).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
+      STATE.writeOffs = res.data;
+      renderWoListTable();
+    });
+  }
+  function renderWoListTable(){
+    const host = document.getElementById('woListTableHost');
+    if(!STATE.writeOffs.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการตัดชำรุด</div>'; return; }
+    let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>สาเหตุ</th><th>จำนวนรายการ</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
+    STATE.writeOffs.forEach(w=>{
+      html += `<tr>
+        <td><b>${esc(w.RunningNo)}</b></td>
+        <td>${fmtDate(w.CreatedAt)}</td>
+        <td>${esc(w.FromDept)}</td>
+        <td>${esc(w.Reason||'-')}</td>
+        <td style="text-align:center;">${w.ItemCount}</td>
+        <td>${statusBadge(w.Status)}</td>
+        <td>${esc(w.ApproverName||w.ApproverEmail||'-')}</td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm" onclick="openWriteOffPrint('${w.WriteOffID}')">ดู/พิมพ์</button></td>
+      </tr>`;
+    });
+    html += '</table>';
+    host.innerHTML = html;
+  }
+}
+
+window.openWriteOffPrint = function(id){
+  STATE.view = 'writeOffPrint';
+  STATE.printWriteOffId = id;
+  render();
+};
+
+/* ================= WRITE-OFF CREATE VIEW ================= */
+function renderWriteOffCreate(root){
+  STATE.draftWriteOffItems = STATE.draftWriteOffItems && STATE.view==='writeOffCreate' ? STATE.draftWriteOffItems : [];
+  root.innerHTML = `
+    <div class="card">
+      <h2>บันทึกตัดชำรุดทรัพย์สิน</h2>
+      <div class="row">
+        <div>
+          <label>หน่วยงานเจ้าของทรัพย์สิน</label>
+          <select id="wFromDept"></select>
+        </div>
+        <div>
+          <label>สาเหตุชำรุด</label>
+          <input type="text" id="wReason" placeholder="เช่น เสื่อมสภาพจากการใช้งาน, อุบัติเหตุ, ชำรุดจนซ่อมไม่คุ้ม">
+        </div>
+      </div>
+      <label>หมายเหตุ</label>
+      <textarea id="wRemark" placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับการตัดชำรุด..."></textarea>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้บันทึก</label>
+          <input type="text" id="wCreatedBy">
+        </div>
+        <div>
+          <label>อีเมลผู้บันทึก (สำหรับรับผลอนุมัติ)</label>
+          <input type="email" id="wCreatedByEmail">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
+          <input type="text" id="wApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย">
+        </div>
+        <div>
+          <label>อีเมลผู้อนุมัติ *</label>
+          <input type="email" id="wApproverEmail" placeholder="approver@company.com">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>รายการทรัพย์สินที่ตัดชำรุด</h2>
+      <div class="autocomplete-wrap">
+        <input type="text" id="woAssetSearch" placeholder="ค้นหารหัส หรือ ชื่อทรัพย์สิน แล้วเลือกเพื่อเพิ่มรายการ...">
+        <div id="woAssetSuggest" class="autocomplete-list" style="display:none;"></div>
+      </div>
+      <div id="woItemsHost" style="margin-top:14px;"></div>
+      <div class="empty" id="woItemsEmpty">ยังไม่มีรายการทรัพย์สิน — ค้นหาด้านบนเพื่อเพิ่ม</div>
+    </div>
+
+    <div class="card no-print" style="text-align:right;">
+      <button class="btn btn-primary" id="btnSubmitWriteOff">บันทึกและส่งอีเมลขออนุมัติ</button>
+    </div>
+  `;
+
+  loadDeptOptions();
+  loadAssetsForSearch();
+  renderWoItems();
+
+  document.getElementById('btnSubmitWriteOff').onclick = submitWriteOff;
+
+  function loadDeptOptions(){
+    apiGet({action:'getDeptCodes'}).then(res=>{
+      if(!res.ok){ toast(res.error,'err'); return; }
+      STATE.deptCodes = res.data;
+      const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
+      document.getElementById('wFromDept').innerHTML = opts;
+    });
+  }
+
+  function loadAssetsForSearch(){
+    apiGet({action:'getAssets'}).then(res=>{ if(res.ok) STATE.assets = res.data; });
+  }
+
+  const searchInput = document.getElementById('woAssetSearch');
+  searchInput.addEventListener('input', ()=>{
+    const q = searchInput.value.trim().toLowerCase();
+    const suggestBox = document.getElementById('woAssetSuggest');
+    if(!q){ suggestBox.style.display='none'; return; }
+    const usedIds = STATE.draftWriteOffItems.map(x=>x.assetId);
+    const matches = STATE.assets.filter(a =>
+      (String(a.AssetID).toLowerCase().includes(q) || String(a.AssetName).toLowerCase().includes(q)) && usedIds.indexOf(a.AssetID)===-1
+    ).slice(0,15);
+    if(!matches.length){ suggestBox.innerHTML = '<div class="autocomplete-item">ไม่พบรายการ</div>'; suggestBox.style.display='block'; return; }
+    suggestBox.innerHTML = matches.map(a => `
+      <div class="autocomplete-item" data-id="${esc(a.AssetID)}">
+        <img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'">
+        <div><b>${esc(a.AssetID)}</b> — ${esc(a.AssetName)}<br><span style="color:var(--muted);font-size:11px;">${esc(a.Department)}</span></div>
+      </div>`).join('');
+    suggestBox.style.display='block';
+    suggestBox.querySelectorAll('.autocomplete-item').forEach(el=>{
+      el.onclick = ()=>{
+        const asset = STATE.assets.find(a=>a.AssetID===el.dataset.id);
+        addWoItem(asset);
+        searchInput.value=''; suggestBox.style.display='none';
+      };
+    });
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.autocomplete-wrap')) {
+      const box = document.getElementById('woAssetSuggest');
+      if(box) box.style.display='none';
+    }
+  });
+
+  function addWoItem(asset){
+    STATE.draftWriteOffItems.push({
+      assetId: asset.AssetID, assetName: asset.AssetName, imageUrl: asset.DisplayImage||'',
+      scrapPrice: '', remark: ''
+    });
+    renderWoItems();
+  }
+
+  function renderWoItems(){
+    const host = document.getElementById('woItemsHost');
+    const empty = document.getElementById('woItemsEmpty');
+    empty.style.display = STATE.draftWriteOffItems.length ? 'none':'block';
+    host.innerHTML = STATE.draftWriteOffItems.map((it,i)=>`
+      <div class="item-line">
+        <button class="del" onclick="removeWoItem(${i})">✕</button>
+        <div class="row">
+          <div style="flex:0 0 90px;">
+            <img class="thumb-lg" src="${esc(it.imageUrl||'')}" onerror="this.style.visibility='hidden'">
+          </div>
+          <div style="flex:2;">
+            <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
+            <label style="margin-top:6px;">ราคาซาก</label>
+            <input type="text" inputmode="decimal" value="${esc(it.scrapPrice)}" onchange="updateWoItemField(${i},'scrapPrice',this.value)">
+            <label style="margin-top:6px;">หมายเหตุ</label>
+            <input type="text" value="${esc(it.remark)}" onchange="updateWoItemField(${i},'remark',this.value)">
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  window.removeWoItem = (i)=>{ STATE.draftWriteOffItems.splice(i,1); renderWoItems(); };
+  window.updateWoItemField = (i, field, val)=>{ STATE.draftWriteOffItems[i][field] = val; };
+
+  function submitWriteOff(){
+    if(!STATE.draftWriteOffItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const approverEmail = document.getElementById('wApproverEmail').value.trim();
+    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    const fromDept = document.getElementById('wFromDept').value;
+
+    const payload = {
+      action:'createWriteOff',
+      fromDept,
+      reason: document.getElementById('wReason').value,
+      remark: document.getElementById('wRemark').value,
+      createdBy: document.getElementById('wCreatedBy').value,
+      createdByEmail: document.getElementById('wCreatedByEmail').value,
+      approverName: document.getElementById('wApproverName').value,
+      approverEmail,
+      items: STATE.draftWriteOffItems
+    };
+    const btn = document.getElementById('btnSubmitWriteOff');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+    apiPost(payload).then(res=>{
+      btn.disabled = false; btn.innerHTML = 'บันทึกและส่งอีเมลขออนุมัติ';
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('สร้างใบตัดชำรุด '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+      STATE.draftWriteOffItems = [];
+      STATE.view = 'writeOffPrint';
+      STATE.printWriteOffId = res.data.writeOffId;
+      [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view==='writeOffList'));
+      render();
+    });
+  }
+}
+
 /* ================= SETTINGS VIEW (Dept Codes + Admin Asset Data) ================= */
 function renderSettings(root){
   root.innerHTML = `
@@ -1134,6 +1634,78 @@ function buildSaleDocHtml(s, withToolbar){
   `;
 }
 
+/* ================= WRITE-OFF PRINT VIEW ================= */
+function renderWriteOffPrint(root){
+  root.innerHTML = `<div class="empty">กำลังโหลด...</div>`;
+  apiGet({action:'getWriteOff', id: STATE.printWriteOffId}).then(res=>{
+    if(!res.ok || !res.data){ root.innerHTML = '<div class="empty">ไม่พบใบตัดชำรุดนี้</div>'; return; }
+    root.innerHTML = buildWriteOffDocHtml(res.data, true);
+    const btn = document.getElementById('btnPrintWoNow');
+    if(btn) btn.onclick = ()=> window.print();
+  });
+}
+
+function buildWriteOffDocHtml(w, withToolbar){
+  const itemsRows = (w.Items||[]).map((it, i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td>${esc(it.AssetID)}</td>
+      <td class="left">${it.ImageURL?`<img src="${esc(it.ImageURL)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">`:''} ${esc(it.AssetName)}</td>
+      <td class="money">${fmtMoney(it.ScrapPrice)}</td>
+      <td>${esc(it.Remark)}</td>
+    </tr>`).join('');
+  const total = (w.Items||[]).reduce((sum,it)=> sum + (parseFloat(it.ScrapPrice)||0), 0);
+
+  return `
+    ${withToolbar ? `
+    <div class="toolbar no-print">
+      <button class="btn btn-secondary btn-sm" onclick="STATE.view='writeOffList';render();">← กลับรายการ</button>
+      <button class="btn btn-primary btn-sm" id="btnPrintWoNow">🖨️ พิมพ์ / บันทึก PDF</button>
+      <span style="margin-left:auto;">${statusBadge(w.Status)}</span>
+    </div>` : ''}
+    <div class="card" id="printArea">
+      <div class="doc">
+        <div class="doc-header">${esc(COMPANY_NAME)}</div>
+        <div class="doc-title">ใบตัดชำรุดทรัพย์สิน</div>
+        <div class="doc-meta">
+          <div><b>เลขที่</b> ${esc(w.RunningNo)}</div>
+          <div><b>วันที่</b> ${fmtDate(w.CreatedAt)}</div>
+        </div>
+        <div class="doc-field"><b>หน่วยงาน</b> ${esc(w.FromDept)}</div>
+        <div class="doc-field"><b>สาเหตุชำรุด</b> ${esc(w.Reason||'-')}</div>
+        <div class="doc-field"><b>หมายเหตุ</b> ${esc(w.Remark||'-')}</div>
+
+        <table class="doc-table">
+          <tr><th style="width:30px;">ลำดับ</th><th style="width:90px;">รหัส</th><th>รายการ</th><th>ราคาซาก</th><th>หมายเหตุ</th></tr>
+          ${itemsRows}
+          <tr><td colspan="3" style="text-align:right;font-weight:600;">รวมราคาซาก</td><td style="font-weight:700;">${fmtMoney(total)}</td><td></td></tr>
+        </table>
+
+        <div class="doc-sign">
+          <div>
+            <div class="line"></div>
+            (ผู้บันทึก) ${esc(w.CreatedBy||'')}<br>
+            วันที่..........................
+          </div>
+          <div>
+            <div class="line"></div>
+            (ผู้อนุมัติ) ${esc(w.ApproverName||'')}<br>
+            วันที่..........................
+          </div>
+        </div>
+
+        ${w.Status !== 'Draft' ? `
+        <div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">
+          <b>สถานะการอนุมัติ:</b> ${statusBadge(w.Status)} &nbsp;
+          ${w.ApproverName || w.ApproverEmail ? 'โดย '+esc(w.ApproverName||w.ApproverEmail) : ''}
+          ${w.ApprovedAt ? ' เมื่อ '+fmtDate(w.ApprovedAt) : ''}
+          ${w.ApproverComment ? '<br><b>ความเห็น:</b> '+esc(w.ApproverComment) : ''}
+        </div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
 /* ================= APPROVAL VIEW (from email link) ================= */
 function renderApprove(){
   document.querySelector('.topbar').style.display='none';
@@ -1219,6 +1791,50 @@ function renderApproveSale(){
         if(!res.ok){ toast(res.error||'ดำเนินการไม่สำเร็จ','err'); return; }
         toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
         renderApproveSale();
+      });
+  }
+}
+
+/* ================= WRITE-OFF APPROVAL VIEW (from email link) ================= */
+function renderApproveWriteOff(){
+  document.querySelector('.topbar').style.display='none';
+  document.getElementById('mainNav').style.display='none';
+  const root = document.getElementById('viewRoot');
+  root.innerHTML = '<div class="empty">กำลังโหลดใบตัดชำรุด...</div>';
+  apiGet({action:'getWriteOffApprovalView', id: STATE.approveWriteOffCtx.id, token: STATE.approveWriteOffCtx.token}).then(res=>{
+    if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
+    const w = res.data;
+    let actionHtml = '';
+    if(w.Status === 'PendingApproval'){
+      actionHtml = `
+        <div class="card no-print">
+          <h2>พิจารณาอนุมัติการตัดชำรุด</h2>
+          <label>ความเห็น (ถ้ามี)</label>
+          <textarea id="approveWoComment" placeholder="ระบุความเห็นเพิ่มเติม..."></textarea>
+          <div style="margin-top:14px;display:flex;gap:10px;">
+            <button class="btn btn-green" id="btnApproveWo">✓ อนุมัติ</button>
+            <button class="btn btn-red" id="btnRejectWo">✕ ไม่อนุมัติ</button>
+          </div>
+        </div>`;
+    } else {
+      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${statusBadge(w.Status)}</div></div>`;
+    }
+    root.innerHTML = buildWriteOffDocHtml(w, false) + actionHtml;
+
+    if(w.Status === 'PendingApproval'){
+      document.getElementById('btnApproveWo').onclick = ()=>decide('Approved');
+      document.getElementById('btnRejectWo').onclick = ()=>decide('Rejected');
+    }
+  });
+
+  function decide(decision){
+    const comment = document.getElementById('approveWoComment').value;
+    if(!confirm(decision==='Approved' ? 'ยืนยันการอนุมัติใบตัดชำรุดนี้?' : 'ยืนยันการไม่อนุมัติใบตัดชำรุดนี้?')) return;
+    apiPost({ action:'decideWriteOff', writeOffId: STATE.approveWriteOffCtx.id, token: STATE.approveWriteOffCtx.token, decision, comment })
+      .then(res=>{
+        if(!res.ok){ toast(res.error||'ดำเนินการไม่สำเร็จ','err'); return; }
+        toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
+        renderApproveWriteOff();
       });
   }
 }
