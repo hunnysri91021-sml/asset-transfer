@@ -22,7 +22,7 @@ const CONFIG = {
   COMPANY_NAME: 'บริษัท สยามกลการโลจิสติกส์ จำกัด',
   DRIVE_FOLDER_NAME: 'SML_Asset_Transfer_Images',
   DEFAULT_TIMEOUT_MS: 15000,
-  ADMIN_PASSWORD: '' // TODO: ตั้งรหัสผ่าน Admin ก่อนใช้งานแถบ "ตั้งค่า" (เว้นว่าง = ปิดการแก้ไขข้อมูล Admin ทั้งหมด)
+  ADMIN_PASSWORD: '' // TODO: ตั้งรหัสผ่านก่อนใช้งาน — ใช้เป็นรหัสผ่านเข้าระบบทั้งโหมด User และ Admin (เว้นว่าง = ระบบ login ปฏิเสธทุกคน)
 };
 
 const SHEETS = {
@@ -39,7 +39,7 @@ const SHEETS = {
 
 const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
-  DEPT_CODES: ['DeptName', 'Code'],
+  DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
@@ -222,6 +222,12 @@ function doPost(e) {
         break;
       case 'adminRestoreAsset':
         result = adminRestoreAsset_(body);
+        break;
+      case 'adminSaveDept':
+        result = adminSaveDept_(body);
+        break;
+      case 'adminDeleteDept':
+        result = adminDeleteDept_(body);
         break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
@@ -548,8 +554,50 @@ function adminSyncFromSource_(body) {
 function getDeptCodes_() {
   const sh = getSS_().getSheetByName(SHEETS.DEPT_CODES);
   const values = sh.getDataRange().getValues();
-  values.shift();
-  return values.filter(r => r[0]).map(r => ({ DeptName: r[0], Code: r[1] }));
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  return values.filter(r => r[idx.DeptName]).map(r => rowToObj_(r, idx));
+}
+
+function adminSaveDept_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const dept = body.dept || {};
+  const deptName = String(dept.DeptName || '').trim();
+  const code = String(dept.Code || '').trim();
+  if (!deptName || !code) return { ok: false, error: 'กรุณาระบุชื่อหน่วยงานและรหัส' };
+  const sh = getSS_().getSheetByName(SHEETS.DEPT_CODES);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let rowNum = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.DeptName]) === deptName) { rowNum = i + 1; break; }
+  }
+  const fields = { DeptName: deptName, Code: code, ApproverName: String(dept.ApproverName || ''), ApproverEmail: String(dept.ApproverEmail || '') };
+  if (rowNum === -1) {
+    sh.appendRow(HEADERS.DEPT_CODES.map(h => fields[h]));
+    logActivity_('', 'ADMIN_SAVE_DEPT', 'admin', 'เพิ่มหน่วยงาน ' + deptName);
+    return { ok: true, data: { created: true } };
+  }
+  Object.keys(fields).forEach(f => sh.getRange(rowNum, idx[f] + 1).setValue(fields[f]));
+  logActivity_('', 'ADMIN_SAVE_DEPT', 'admin', 'แก้ไขหน่วยงาน ' + deptName);
+  return { ok: true, data: { created: false } };
+}
+
+function adminDeleteDept_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const deptName = String(body.deptName || '').trim();
+  if (!deptName) return { ok: false, error: 'กรุณาระบุชื่อหน่วยงาน' };
+  const sh = getSS_().getSheetByName(SHEETS.DEPT_CODES);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.DeptName]) === deptName) {
+      sh.deleteRow(i + 1);
+      logActivity_('', 'ADMIN_DELETE_DEPT', 'admin', 'ลบหน่วยงาน ' + deptName);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบหน่วยงานนี้' };
 }
 
 // ============================================================
