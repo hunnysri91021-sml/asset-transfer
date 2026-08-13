@@ -1163,9 +1163,13 @@ function renderCreate(root){
                   <img src="${esc(url)}" onerror="this.style.visibility='hidden'">
                   <button type="button" class="del-img" onclick="removeItemImage(${i},${gi})">✕</button>
                 </div>`).join('')}
-              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `<div class="item-img-add" onclick="document.getElementById('itemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>` : ''}
+              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `
+                <div class="item-img-add" onclick="document.getElementById('itemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>
+                <div class="item-img-add" onclick="document.getElementById('itemCam${i}').click()">📷 ถ่ายรูป</div>
+              ` : ''}
             </div>
             <input type="file" id="itemFile${i}" accept="image/*" style="display:none;" onchange="uploadItemImage(${i}, this)">
+            <input type="file" id="itemCam${i}" accept="image/*" capture="environment" style="display:none;" onchange="uploadItemImage(${i}, this)">
           </div>
           <div style="flex:2;">
             <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
@@ -1507,9 +1511,13 @@ function renderSaleCreate(root){
                   <img src="${esc(url)}" onerror="this.style.visibility='hidden'">
                   <button type="button" class="del-img" onclick="removeSaleItemImage(${i},${gi})">✕</button>
                 </div>`).join('')}
-              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `<div class="item-img-add" onclick="document.getElementById('saleItemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>` : ''}
+              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `
+                <div class="item-img-add" onclick="document.getElementById('saleItemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>
+                <div class="item-img-add" onclick="document.getElementById('saleItemCam${i}').click()">📷 ถ่ายรูป</div>
+              ` : ''}
             </div>
             <input type="file" id="saleItemFile${i}" accept="image/*" style="display:none;" onchange="uploadSaleItemImage(${i}, this)">
+            <input type="file" id="saleItemCam${i}" accept="image/*" capture="environment" style="display:none;" onchange="uploadSaleItemImage(${i}, this)">
           </div>
           <div style="flex:2;">
             <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
@@ -1856,9 +1864,13 @@ function renderWriteOffCreate(root){
                   <img src="${esc(url)}" onerror="this.style.visibility='hidden'">
                   <button type="button" class="del-img" onclick="removeWoItemImage(${i},${gi})">✕</button>
                 </div>`).join('')}
-              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `<div class="item-img-add" onclick="document.getElementById('woItemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>` : ''}
+              ${(it.images||[]).length < ITEM_IMAGE_LIMIT ? `
+                <div class="item-img-add" onclick="document.getElementById('woItemFile${i}').click()">+ เพิ่มรูป<br>(${(it.images||[]).length}/${ITEM_IMAGE_LIMIT})</div>
+                <div class="item-img-add" onclick="document.getElementById('woItemCam${i}').click()">📷 ถ่ายรูป</div>
+              ` : ''}
             </div>
             <input type="file" id="woItemFile${i}" accept="image/*" style="display:none;" onchange="uploadWoItemImage(${i}, this)">
+            <input type="file" id="woItemCam${i}" accept="image/*" capture="environment" style="display:none;" onchange="uploadWoItemImage(${i}, this)">
           </div>
           <div style="flex:2;">
             <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
