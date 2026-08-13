@@ -28,6 +28,7 @@ const CONFIG = {
 const SHEETS = {
   ASSETS: 'Assets',
   DEPT_CODES: 'DeptCodes',
+  USERS: 'Users',
   TRANSFERS: 'Transfers',
   ITEMS: 'TransferItems',
   SALES: 'Sales',
@@ -40,6 +41,7 @@ const SHEETS = {
 const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
+  USERS: ['Username', 'Password', 'Role', 'CreatedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
@@ -83,6 +85,7 @@ function setup() {
   if (deptSheet.getLastRow() < 2) {
     deptSheet.getRange(2, 1, DEFAULT_DEPT_CODES.length, 2).setValues(DEFAULT_DEPT_CODES);
   }
+  ensureSheet_(ss, SHEETS.USERS, HEADERS.USERS);
   ensureSheet_(ss, SHEETS.TRANSFERS, HEADERS.TRANSFERS);
   ensureSheet_(ss, SHEETS.ITEMS, HEADERS.ITEMS);
   ensureSheet_(ss, SHEETS.SALES, HEADERS.SALES);
@@ -202,8 +205,17 @@ function doPost(e) {
       case 'updateAssetImage':
         result = updateAssetImage_(body);
         break;
-      case 'adminVerify':
-        result = adminVerify_(body);
+      case 'login':
+        result = login_(body);
+        break;
+      case 'adminGetUsers':
+        result = getUsers_(body);
+        break;
+      case 'adminSaveUser':
+        result = adminSaveUser_(body);
+        break;
+      case 'adminDeleteUser':
+        result = adminDeleteUser_(body);
         break;
       case 'adminSaveAsset':
         result = adminSaveAsset_(body);
@@ -331,12 +343,100 @@ function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, 
 // ============================================================
 // ADMIN — แก้ไขข้อมูลทรัพย์สินหลัก (ชีต Assets ที่ทีมบัญชี upload เข้ามา)
 // ============================================================
+// รหัสผ่าน Admin ที่ใช้ได้: รหัสผ่านหลัก (bootstrap, กันล็อกตัวเองออกจากระบบ) หรือรหัสผ่านของผู้ใช้ที่มีสิทธิ์ admin ในชีต Users
 function checkAdminPassword_(pw) {
-  return !!CONFIG.ADMIN_PASSWORD && String(pw || '') === String(CONFIG.ADMIN_PASSWORD);
+  const p = String(pw || '');
+  if (!p) return false;
+  if (CONFIG.ADMIN_PASSWORD && p === String(CONFIG.ADMIN_PASSWORD)) return true;
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.Password]) === p && String(values[i][idx.Role]) === 'admin') return true;
+  }
+  return false;
 }
 
-function adminVerify_(body) {
-  return checkAdminPassword_(body.password) ? { ok: true } : { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+// เข้าสู่ระบบด้วยชื่อผู้ใช้ + รหัสผ่านที่ Admin ตั้งไว้ในชีต Users
+// หรือใช้รหัสผ่านหลัก (CONFIG.ADMIN_PASSWORD) เป็นทางสำรองเข้าเป็น admin ได้เสมอ กันกรณีล็อกตัวเองออกจากระบบ
+function login_(body) {
+  const username = String(body.username || '').trim();
+  const password = String(body.password || '');
+  if (!password) return { ok: false, error: 'กรุณากรอกรหัสผ่าน' };
+
+  if (username) {
+    const sh = getSS_().getSheetByName(SHEETS.USERS);
+    const values = sh.getDataRange().getValues();
+    const idx = indexMap_(values[0]);
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
+        return { ok: true, data: { username, role: values[i][idx.Role] === 'admin' ? 'admin' : 'user' } };
+      }
+    }
+  }
+  if (CONFIG.ADMIN_PASSWORD && password === String(CONFIG.ADMIN_PASSWORD)) {
+    return { ok: true, data: { username: username || 'admin', role: 'admin' } };
+  }
+  return { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
+}
+
+function getUsers_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  const users = values.filter(r => r[idx.Username]).map(r => ({
+    Username: r[idx.Username],
+    Role: r[idx.Role],
+    CreatedAt: r[idx.CreatedAt] instanceof Date ? r[idx.CreatedAt].toISOString() : r[idx.CreatedAt]
+  }));
+  return { ok: true, data: users };
+}
+
+function adminSaveUser_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const u = body.user || {};
+  const username = String(u.Username || '').trim();
+  if (!username) return { ok: false, error: 'กรุณาระบุชื่อผู้ใช้' };
+  const role = u.Role === 'admin' ? 'admin' : 'user';
+  const newPassword = String(u.Password || '').trim();
+
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let rowNum = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.Username]) === username) { rowNum = i + 1; break; }
+  }
+
+  if (rowNum === -1) {
+    if (!newPassword) return { ok: false, error: 'กรุณาระบุรหัสผ่านสำหรับผู้ใช้ใหม่' };
+    sh.appendRow([username, newPassword, role, new Date()]);
+    logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
+    return { ok: true, data: { created: true } };
+  }
+  sh.getRange(rowNum, idx.Role + 1).setValue(role);
+  if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
+  logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
+  return { ok: true, data: { created: false } };
+}
+
+function adminDeleteUser_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const username = String(body.username || '').trim();
+  if (!username) return { ok: false, error: 'กรุณาระบุชื่อผู้ใช้' };
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.Username]) === username) {
+      sh.deleteRow(i + 1);
+      logActivity_('', 'ADMIN_DELETE_USER', 'admin', 'ลบผู้ใช้ ' + username);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบผู้ใช้นี้' };
 }
 
 const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
