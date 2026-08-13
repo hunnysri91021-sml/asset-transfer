@@ -44,10 +44,15 @@
     .main-area{margin-left:0;}
   }
 
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(160deg,var(--navy-dark),var(--navy));}
+  .login-card{max-width:380px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.25);}
+  .login-card h1{margin:0 0 4px;font-size:20px;color:var(--navy);text-align:center;}
+  .login-card .sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:22px;}
+
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(20,30,50,.05);}
   .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:500;}
-  input[type=text], input[type=date], input[type=email], select, textarea{
+  input[type=text], input[type=date], input[type=email], input[type=password], select, textarea{
     width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:7px;font-family:inherit;font-size:14px;background:#fff;
   }
   textarea{resize:vertical;min-height:60px;}
@@ -138,7 +143,7 @@
       <div class="nav-group-label">ตัดชำรุด</div>
       <button data-view="writeOffList">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
-      <div class="nav-group-label">ระบบ</div>
+      <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
   </aside>
@@ -146,6 +151,8 @@
     <header class="topheader no-print">
       <button class="sidebar-toggle" id="btnSidebarToggle">☰</button>
       <span class="page-title" id="pageTitle">ข้อมูลรวม</span>
+      <span id="roleBadge" style="margin-left:auto;font-size:12px;color:var(--muted);"></span>
+      <button class="btn btn-secondary btn-sm" id="btnLogout">ออกจากระบบ</button>
     </header>
     <div id="viewRoot" class="content"></div>
   </div>
@@ -160,22 +167,29 @@ const COMPANY_NAME = '    บริษัท   สยามกลการโล
 /* ================= STATE ================= */
 let STATE = {
   view: 'dashboard',
+  role: null,
   assets: [],
   deptCodes: [],
   transfers: [],
   currentTransfer: null,
   draftItems: [],
+  createStep: 'form',
+  transferHeader: null,
   approveCtx: null,
   adminPassword: null,
   adminAssets: [],
   sales: [],
   draftSaleItems: [],
+  saleCreateStep: 'form',
+  saleHeader: null,
   printSaleId: null,
   approveSaleCtx: null,
   assetsFull: [],
   selectedAssetIds: [],
   writeOffs: [],
   draftWriteOffItems: [],
+  writeOffCreateStep: 'form',
+  writeOffHeader: null,
   printWriteOffId: null,
   approveWriteOffCtx: null
 };
@@ -235,6 +249,76 @@ function assetStatusBadge(s){
   return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* ================= AUTH (login gate: User / Admin, shared password) ================= */
+const AUTH_SESSION_KEY = 'assetTransferAuthSession';
+
+function checkAuth(){
+  const saved = sessionStorage.getItem(AUTH_SESSION_KEY);
+  if(!saved) return false;
+  try{
+    const obj = JSON.parse(saved);
+    if(obj && obj.password && obj.role){
+      STATE.adminPassword = obj.password;
+      STATE.role = obj.role;
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+function renderLogin(){
+  hideAppChrome();
+  const root = document.getElementById('viewRoot');
+  root.innerHTML = `
+    <div class="login-wrap">
+      <div class="card login-card">
+        <h1>ระบบจัดการทรัพย์สิน</h1>
+        <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด</div>
+        <label>รหัสผ่านเข้าระบบ</label>
+        <input type="password" id="loginPw" placeholder="กรอกรหัสผ่าน">
+        <div class="row" style="margin-top:16px;">
+          <button class="btn btn-secondary" id="btnLoginUser" style="flex:1;">เข้าใช้งาน (User)</button>
+          <button class="btn btn-primary" id="btnLoginAdmin" style="flex:1;">เข้าสู่ระบบ Admin</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('loginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin('user'); });
+  document.getElementById('btnLoginUser').onclick = ()=> doLogin('user');
+  document.getElementById('btnLoginAdmin').onclick = ()=> doLogin('admin');
+
+  function doLogin(role){
+    const pw = document.getElementById('loginPw').value;
+    if(!pw){ toast('กรุณากรอกรหัสผ่าน','err'); return; }
+    const btns = [document.getElementById('btnLoginUser'), document.getElementById('btnLoginAdmin')];
+    btns.forEach(b=>b.disabled = true);
+    apiPost({ action:'adminVerify', password: pw }).then(res=>{
+      btns.forEach(b=>b.disabled = false);
+      if(!res.ok){ toast(res.error||'รหัสผ่านไม่ถูกต้อง','err'); return; }
+      STATE.adminPassword = pw;
+      STATE.role = role;
+      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role }));
+      STATE.view = 'dashboard';
+      enterApp();
+    });
+  }
+}
+
+function logout(){
+  sessionStorage.removeItem(AUTH_SESSION_KEY);
+  STATE.adminPassword = null;
+  STATE.role = null;
+  STATE.view = 'dashboard';
+  enterApp();
+}
+
+function enterApp(){
+  const params = new URLSearchParams(location.search);
+  const av = params.get('view');
+  if(av==='approve' || av==='approveSale' || av==='approveWriteOff'){ route(); return; }
+  if(checkAuth()) route(); else renderLogin();
+}
 
 /* ================= ROUTER ================= */
 function route(){
@@ -304,12 +388,20 @@ document.getElementById('mainNav').addEventListener('click', (e)=>{
     render();
   }
 });
+document.getElementById('btnLogout').onclick = logout;
 
 function render(){
   showAppChrome();
   const root = document.getElementById('viewRoot');
   const titleEl = document.getElementById('pageTitle');
   if(titleEl) titleEl.textContent = VIEW_TITLES[STATE.view] || '';
+  const roleBadgeEl = document.getElementById('roleBadge');
+  if(roleBadgeEl) roleBadgeEl.textContent = STATE.role==='admin' ? 'โหมด: Admin' : 'โหมด: User';
+  const settingsNavBtn = document.querySelector('#mainNav button[data-view="settings"]');
+  if(settingsNavBtn) settingsNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
+  const navGroupSystem = document.getElementById('navGroupSystem');
+  if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
+  if(STATE.view === 'settings' && STATE.role !== 'admin') STATE.view = 'dashboard';
   [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===STATE.view));
 
   if(STATE.view === 'assetList') renderAssetList(root);
@@ -431,24 +523,12 @@ function renderAssetList(root){
   }
 
   function updateTag(assetId, newTag){
-    const apply = (pw)=>{
-      apiPost({ action:'adminSaveAsset', password: pw, asset:{ AssetID: assetId, Tag: newTag } }).then(res=>{
-        if(!res.ok){
-          toast(res.error||'บันทึกแท็กสถานะไม่สำเร็จ','err');
-          if(String(res.error||'').indexOf('รหัสผ่าน')!==-1) STATE.adminPassword = null;
-          load();
-          return;
-        }
-        STATE.adminPassword = pw;
-        const a = STATE.assetsFull.find(x=>x.AssetID===assetId);
-        if(a) a.Tag = newTag;
-        toast('บันทึกแท็กสถานะสำเร็จ','ok');
-      });
-    };
-    if(STATE.adminPassword){ apply(STATE.adminPassword); return; }
-    const pw = prompt('กรอกรหัสผ่าน Admin เพื่อแก้ไขแท็กสถานะ');
-    if(!pw){ load(); return; }
-    apply(pw);
+    apiPost({ action:'adminSaveAsset', password: STATE.adminPassword, asset:{ AssetID: assetId, Tag: newTag } }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกแท็กสถานะไม่สำเร็จ','err'); load(); return; }
+      const a = STATE.assetsFull.find(x=>x.AssetID===assetId);
+      if(a) a.Tag = newTag;
+      toast('บันทึกแท็กสถานะสำเร็จ','ok');
+    });
   }
 
   function updateSelCount(){
@@ -488,8 +568,6 @@ function renderAssetList(root){
   function restoreSelected(){
     const selected = selectedAssetObjs().filter(a => (a.AssetStatus||'Active') !== 'Active');
     if(!selected.length){ toast('กรุณาเลือกทรัพย์สินที่มีสถานะขายแล้ว/ตัดชำรุด','err'); return; }
-    const pw = prompt('กรอกรหัสผ่าน Admin เพื่อคืนสถานะใช้งาน ('+selected.length+' รายการ)');
-    if(!pw) return;
     if(!confirm('ยืนยันคืนสถานะใช้งานทรัพย์สิน '+selected.length+' รายการ?')) return;
     let done = 0, failed = 0;
     const next = ()=>{
@@ -499,7 +577,7 @@ function renderAssetList(root){
         return;
       }
       const a = selected[done+failed];
-      apiPost({action:'adminRestoreAsset', password: pw, assetId: a.AssetID}).then(res=>{
+      apiPost({action:'adminRestoreAsset', password: STATE.adminPassword, assetId: a.AssetID}).then(res=>{
         if(res.ok) done++; else failed++;
         next();
       });
@@ -663,6 +741,8 @@ window.openPrint = function(id){
 /* ================= CREATE VIEW ================= */
 function renderCreate(root){
   STATE.draftItems = STATE.draftItems && STATE.view==='create' ? STATE.draftItems : [];
+  if(STATE.createStep === 'preview'){ renderCreatePreview(root); return; }
+  const h = STATE.transferHeader || {};
   root.innerHTML = `
     <div class="card">
       <h2>สร้างใบโอนย้ายทรัพย์สินใหม่</h2>
@@ -670,17 +750,17 @@ function renderCreate(root){
         <div>
           <label>เรื่อง</label>
           <select id="cSubject">
-            <option value="โอนย้าย">โอนย้าย</option>
-            <option value="อื่นๆ">อื่นๆ (ระบุ)</option>
+            <option value="โอนย้าย" ${h.subject!=='อื่นๆ'?'selected':''}>โอนย้าย</option>
+            <option value="อื่นๆ" ${h.subject==='อื่นๆ'?'selected':''}>อื่นๆ (ระบุ)</option>
           </select>
         </div>
-        <div id="cSubjectOtherWrap" style="display:none;">
+        <div id="cSubjectOtherWrap" style="display:${h.subject==='อื่นๆ'?'block':'none'};">
           <label>ระบุเรื่อง</label>
-          <input type="text" id="cSubjectOther">
+          <input type="text" id="cSubjectOther" value="${esc(h.subjectOther||'')}">
         </div>
       </div>
       <label>เพื่อ (วัตถุประสงค์)</label>
-      <textarea id="cPurpose" placeholder="เช่น เพื่อใช้งานในหน่วยงานใหม่..."></textarea>
+      <textarea id="cPurpose" placeholder="เช่น เพื่อใช้งานในหน่วยงานใหม่...">${esc(h.purpose||'')}</textarea>
       <div class="row">
         <div>
           <label>หน่วยงานผู้โอน (ต้นทาง)</label>
@@ -694,31 +774,31 @@ function renderCreate(root){
       <div class="row">
         <div>
           <label>ชื่อผู้โอน (ตัวบรรจง)</label>
-          <input type="text" id="cFromSign" placeholder="ชื่อ-นามสกุล ผู้โอน">
+          <input type="text" id="cFromSign" placeholder="ชื่อ-นามสกุล ผู้โอน" value="${esc(h.fromSign||'')}">
         </div>
         <div>
           <label>ชื่อผู้รับโอน (ตัวบรรจง)</label>
-          <input type="text" id="cToSign" placeholder="ชื่อ-นามสกุล ผู้รับโอน">
+          <input type="text" id="cToSign" placeholder="ชื่อ-นามสกุล ผู้รับโอน" value="${esc(h.toSign||'')}">
         </div>
       </div>
       <div class="row">
         <div>
           <label>ชื่อผู้ขอ (ผู้บันทึกรายการ)</label>
-          <input type="text" id="cCreatedBy">
+          <input type="text" id="cCreatedBy" value="${esc(h.createdBy||'')}">
         </div>
         <div>
           <label>อีเมลผู้ขอ (สำหรับรับผลอนุมัติ)</label>
-          <input type="email" id="cCreatedByEmail">
+          <input type="email" id="cCreatedByEmail" value="${esc(h.createdByEmail||'')}">
         </div>
       </div>
       <div class="row">
         <div>
           <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
-          <input type="text" id="cApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย">
+          <input type="text" id="cApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย" value="${esc(h.approverName||'')}">
         </div>
         <div>
           <label>อีเมลผู้อนุมัติ *</label>
-          <input type="email" id="cApproverEmail" placeholder="approver@company.com">
+          <input type="email" id="cApproverEmail" placeholder="approver@company.com" value="${esc(h.approverEmail||'')}">
         </div>
       </div>
     </div>
@@ -734,7 +814,7 @@ function renderCreate(root){
     </div>
 
     <div class="card no-print" style="text-align:right;">
-      <button class="btn btn-primary" id="btnSubmit">บันทึกและส่งอีเมลขออนุมัติ</button>
+      <button class="btn btn-primary" id="btnSubmit">ดูตัวอย่างก่อนบันทึก →</button>
     </div>
   `;
 
@@ -746,7 +826,38 @@ function renderCreate(root){
   loadAssetsForSearch();
   renderItems();
 
-  document.getElementById('btnSubmit').onclick = submitTransfer;
+  document.getElementById('btnSubmit').onclick = goToPreview;
+
+  function goToPreview(){
+    if(!STATE.draftItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const approverEmail = document.getElementById('cApproverEmail').value.trim();
+    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    const fromDept = document.getElementById('cFromDept').value;
+    const toDept = document.getElementById('cToDept').value;
+    const fromSign = document.getElementById('cFromSign').value;
+    const toSign = document.getElementById('cToSign').value;
+
+    // sync per-item dept/signer with header selections in case changed after adding
+    STATE.draftItems.forEach(it=>{
+      it.fromDeptName = it.fromDeptName || fromDept;
+      it.toDeptName = it.toDeptName || toDept;
+      it.fromSignName = it.fromSignName || fromSign;
+      it.toSignName = it.toSignName || toSign;
+    });
+
+    STATE.transferHeader = {
+      subject: document.getElementById('cSubject').value,
+      subjectOther: document.getElementById('cSubjectOther').value,
+      purpose: document.getElementById('cPurpose').value,
+      fromDept, toDept, fromSign, toSign,
+      createdBy: document.getElementById('cCreatedBy').value,
+      createdByEmail: document.getElementById('cCreatedByEmail').value,
+      approverName: document.getElementById('cApproverName').value,
+      approverEmail
+    };
+    STATE.createStep = 'preview';
+    render();
+  }
 
   function loadDeptOptions(){
     apiGet({action:'getDeptCodes'}).then(res=>{
@@ -755,6 +866,15 @@ function renderCreate(root){
       const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
       document.getElementById('cFromDept').innerHTML = opts;
       document.getElementById('cToDept').innerHTML = opts;
+      document.getElementById('cFromDept').value = h.fromDept || '';
+      document.getElementById('cToDept').value = h.toDept || '';
+      document.getElementById('cFromDept').addEventListener('change', ()=>{
+        const d = STATE.deptCodes.find(x=>x.DeptName===document.getElementById('cFromDept').value);
+        if(d){
+          if(d.ApproverName) document.getElementById('cApproverName').value = d.ApproverName;
+          if(d.ApproverEmail) document.getElementById('cApproverEmail').value = d.ApproverEmail;
+        }
+      });
     });
   }
 
@@ -853,47 +973,61 @@ function renderCreate(root){
     reader.readAsDataURL(file);
   };
 
-  function submitTransfer(){
-    if(!STATE.draftItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
-    const approverEmail = document.getElementById('cApproverEmail').value.trim();
-    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
-    const fromDept = document.getElementById('cFromDept').value;
-    const toDept = document.getElementById('cToDept').value;
-    const fromSign = document.getElementById('cFromSign').value;
-    const toSign = document.getElementById('cToSign').value;
+}
 
-    // sync per-item dept/signer with header selections in case changed after adding
-    STATE.draftItems.forEach(it=>{
-      it.fromDeptName = it.fromDeptName || fromDept;
-      it.toDeptName = it.toDeptName || toDept;
-      it.fromSignName = it.fromSignName || fromSign;
-      it.toSignName = it.toSignName || toSign;
-    });
+function renderCreatePreview(root){
+  const h = STATE.transferHeader || {};
+  const draftDoc = {
+    RunningNo: '(จะออกเลขที่อัตโนมัติเมื่อบันทึก)',
+    CreatedAt: new Date().toISOString(),
+    Subject: h.subject, SubjectOther: h.subjectOther, Purpose: h.purpose,
+    FromDept: h.fromDept, ToDept: h.toDept, Status: 'Draft',
+    Items: STATE.draftItems.map(it => ({
+      AssetID: it.assetId, AssetName: it.assetName, ImageURL: it.imageUrl,
+      FromDeptName: it.fromDeptName || h.fromDept, FromSignName: it.fromSignName || h.fromSign,
+      ToDeptName: it.toDeptName || h.toDept, ToSignName: it.toSignName || h.toSign,
+      Remark: it.remark
+    }))
+  };
+  root.innerHTML = `
+    <div class="toolbar no-print">
+      <button class="btn btn-secondary btn-sm" id="btnPreviewBack">← กลับไปแก้ไข</button>
+      <button class="btn btn-secondary btn-sm" id="btnPreviewPrint">🖨️ พิมพ์ตัวอย่าง</button>
+      <button class="btn btn-primary btn-sm" id="btnPreviewConfirm" style="margin-left:auto;">✔ ยืนยันบันทึกและส่งอีเมลขออนุมัติ</button>
+    </div>
+    ${buildDocHtml(draftDoc, false)}
+  `;
+  document.getElementById('btnPreviewBack').onclick = ()=>{ STATE.createStep='form'; render(); };
+  document.getElementById('btnPreviewPrint').onclick = ()=> window.print();
+  document.getElementById('btnPreviewConfirm').onclick = doSubmitTransfer;
+}
 
-    const payload = {
-      action:'createTransfer',
-      subject: document.getElementById('cSubject').value,
-      subjectOther: document.getElementById('cSubjectOther').value,
-      purpose: document.getElementById('cPurpose').value,
-      fromDept, toDept,
-      createdBy: document.getElementById('cCreatedBy').value,
-      createdByEmail: document.getElementById('cCreatedByEmail').value,
-      approverName: document.getElementById('cApproverName').value,
-      approverEmail,
-      items: STATE.draftItems
-    };
-    const btn = document.getElementById('btnSubmit');
-    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
-    apiPost(payload).then(res=>{
-      btn.disabled = false; btn.innerHTML = 'บันทึกและส่งอีเมลขออนุมัติ';
-      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
-      toast('สร้างใบโอนย้าย '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
-      STATE.draftItems = [];
-      STATE.view = 'print';
-      STATE.printId = res.data.transferId;
-      render();
-    });
-  }
+function doSubmitTransfer(){
+  const h = STATE.transferHeader;
+  const payload = {
+    action:'createTransfer',
+    subject: h.subject, subjectOther: h.subjectOther, purpose: h.purpose,
+    fromDept: h.fromDept, toDept: h.toDept,
+    createdBy: h.createdBy, createdByEmail: h.createdByEmail,
+    approverName: h.approverName, approverEmail: h.approverEmail,
+    items: STATE.draftItems
+  };
+  const btn = document.getElementById('btnPreviewConfirm');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+  apiPost(payload).then(res=>{
+    if(!res.ok){
+      btn.disabled = false; btn.innerHTML = '✔ ยืนยันบันทึกและส่งอีเมลขออนุมัติ';
+      toast(res.error||'บันทึกไม่สำเร็จ','err');
+      return;
+    }
+    toast('สร้างใบโอนย้าย '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+    STATE.draftItems = [];
+    STATE.transferHeader = null;
+    STATE.createStep = 'form';
+    STATE.view = 'print';
+    STATE.printId = res.data.transferId;
+    render();
+  });
 }
 
 /* ================= SALE LIST VIEW ================= */
@@ -969,6 +1103,8 @@ window.openSalePrint = function(id){
 /* ================= SALE CREATE VIEW ================= */
 function renderSaleCreate(root){
   STATE.draftSaleItems = STATE.draftSaleItems && STATE.view==='saleCreate' ? STATE.draftSaleItems : [];
+  if(STATE.saleCreateStep === 'preview'){ renderSaleCreatePreview(root); return; }
+  const h = STATE.saleHeader || {};
   root.innerHTML = `
     <div class="card">
       <h2>บันทึกขายออกทรัพย์สิน</h2>
@@ -979,29 +1115,29 @@ function renderSaleCreate(root){
         </div>
         <div>
           <label>ผู้ซื้อ / ผู้ประมูลได้</label>
-          <input type="text" id="sBuyer" placeholder="ชื่อผู้ซื้อ หรือ บริษัทผู้ประมูล">
+          <input type="text" id="sBuyer" placeholder="ชื่อผู้ซื้อ หรือ บริษัทผู้ประมูล" value="${esc(h.buyer||'')}">
         </div>
       </div>
       <label>หมายเหตุ</label>
-      <textarea id="sRemark" placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับการขายออก..."></textarea>
+      <textarea id="sRemark" placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับการขายออก...">${esc(h.remark||'')}</textarea>
       <div class="row">
         <div>
           <label>ชื่อผู้บันทึก</label>
-          <input type="text" id="sCreatedBy">
+          <input type="text" id="sCreatedBy" value="${esc(h.createdBy||'')}">
         </div>
         <div>
           <label>อีเมลผู้บันทึก (สำหรับรับผลอนุมัติ)</label>
-          <input type="email" id="sCreatedByEmail">
+          <input type="email" id="sCreatedByEmail" value="${esc(h.createdByEmail||'')}">
         </div>
       </div>
       <div class="row">
         <div>
           <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
-          <input type="text" id="sApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย">
+          <input type="text" id="sApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย" value="${esc(h.approverName||'')}">
         </div>
         <div>
           <label>อีเมลผู้อนุมัติ *</label>
-          <input type="email" id="sApproverEmail" placeholder="approver@company.com">
+          <input type="email" id="sApproverEmail" placeholder="approver@company.com" value="${esc(h.approverEmail||'')}">
         </div>
       </div>
     </div>
@@ -1022,7 +1158,7 @@ function renderSaleCreate(root){
     </div>
 
     <div class="card no-print" style="text-align:right;">
-      <button class="btn btn-primary" id="btnSubmitSale">บันทึกและส่งอีเมลขออนุมัติ</button>
+      <button class="btn btn-primary" id="btnSubmitSale">ดูตัวอย่างก่อนบันทึก →</button>
     </div>
   `;
 
@@ -1030,7 +1166,24 @@ function renderSaleCreate(root){
   loadAssetsForSearch();
   renderSaleItems();
 
-  document.getElementById('btnSubmitSale').onclick = submitSale;
+  document.getElementById('btnSubmitSale').onclick = goToSalePreview;
+
+  function goToSalePreview(){
+    if(!STATE.draftSaleItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const approverEmail = document.getElementById('sApproverEmail').value.trim();
+    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    STATE.saleHeader = {
+      fromDept: document.getElementById('sFromDept').value,
+      buyer: document.getElementById('sBuyer').value,
+      remark: document.getElementById('sRemark').value,
+      createdBy: document.getElementById('sCreatedBy').value,
+      createdByEmail: document.getElementById('sCreatedByEmail').value,
+      approverName: document.getElementById('sApproverName').value,
+      approverEmail
+    };
+    STATE.saleCreateStep = 'preview';
+    render();
+  }
 
   function loadDeptOptions(){
     apiGet({action:'getDeptCodes'}).then(res=>{
@@ -1038,6 +1191,14 @@ function renderSaleCreate(root){
       STATE.deptCodes = res.data;
       const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
       document.getElementById('sFromDept').innerHTML = opts;
+      document.getElementById('sFromDept').value = h.fromDept || '';
+      document.getElementById('sFromDept').addEventListener('change', ()=>{
+        const d = STATE.deptCodes.find(x=>x.DeptName===document.getElementById('sFromDept').value);
+        if(d){
+          if(d.ApproverName) document.getElementById('sApproverName').value = d.ApproverName;
+          if(d.ApproverEmail) document.getElementById('sApproverEmail').value = d.ApproverEmail;
+        }
+      });
     });
   }
 
@@ -1135,35 +1296,57 @@ function renderSaleCreate(root){
   window.removeSaleItem = (i)=>{ STATE.draftSaleItems.splice(i,1); renderSaleItems(); };
   window.updateSaleItemField = (i, field, val)=>{ STATE.draftSaleItems[i][field] = val; updateSaleTotal(); };
 
-  function submitSale(){
-    if(!STATE.draftSaleItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
-    const approverEmail = document.getElementById('sApproverEmail').value.trim();
-    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
-    const fromDept = document.getElementById('sFromDept').value;
+}
 
-    const payload = {
-      action:'createSale',
-      fromDept,
-      buyer: document.getElementById('sBuyer').value,
-      remark: document.getElementById('sRemark').value,
-      createdBy: document.getElementById('sCreatedBy').value,
-      createdByEmail: document.getElementById('sCreatedByEmail').value,
-      approverName: document.getElementById('sApproverName').value,
-      approverEmail,
-      items: STATE.draftSaleItems
-    };
-    const btn = document.getElementById('btnSubmitSale');
-    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
-    apiPost(payload).then(res=>{
-      btn.disabled = false; btn.innerHTML = 'บันทึกและส่งอีเมลขออนุมัติ';
-      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
-      toast('สร้างใบขายออก '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
-      STATE.draftSaleItems = [];
-      STATE.view = 'salePrint';
-      STATE.printSaleId = res.data.saleId;
-      render();
-    });
-  }
+function renderSaleCreatePreview(root){
+  const h = STATE.saleHeader || {};
+  const draftDoc = {
+    RunningNo: '(จะออกเลขที่อัตโนมัติเมื่อบันทึก)',
+    CreatedAt: new Date().toISOString(),
+    FromDept: h.fromDept, Buyer: h.buyer, Remark: h.remark, Status: 'Draft',
+    Items: STATE.draftSaleItems.map(it => ({
+      AssetID: it.assetId, AssetName: it.assetName, ImageURL: it.imageUrl,
+      ScrapPrice: it.scrapPrice, AuctionPrice: it.auctionPrice, SalePrice: it.salePrice, Remark: it.remark
+    }))
+  };
+  root.innerHTML = `
+    <div class="toolbar no-print">
+      <button class="btn btn-secondary btn-sm" id="btnSalePreviewBack">← กลับไปแก้ไข</button>
+      <button class="btn btn-secondary btn-sm" id="btnSalePreviewPrint">🖨️ พิมพ์ตัวอย่าง</button>
+      <button class="btn btn-primary btn-sm" id="btnSalePreviewConfirm" style="margin-left:auto;">✔ ยืนยันบันทึกและส่งอีเมลขออนุมัติ</button>
+    </div>
+    ${buildSaleDocHtml(draftDoc, false)}
+  `;
+  document.getElementById('btnSalePreviewBack').onclick = ()=>{ STATE.saleCreateStep='form'; render(); };
+  document.getElementById('btnSalePreviewPrint').onclick = ()=> window.print();
+  document.getElementById('btnSalePreviewConfirm').onclick = doSubmitSale;
+}
+
+function doSubmitSale(){
+  const h = STATE.saleHeader;
+  const payload = {
+    action:'createSale',
+    fromDept: h.fromDept, buyer: h.buyer, remark: h.remark,
+    createdBy: h.createdBy, createdByEmail: h.createdByEmail,
+    approverName: h.approverName, approverEmail: h.approverEmail,
+    items: STATE.draftSaleItems
+  };
+  const btn = document.getElementById('btnSalePreviewConfirm');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+  apiPost(payload).then(res=>{
+    if(!res.ok){
+      btn.disabled = false; btn.innerHTML = '✔ ยืนยันบันทึกและส่งอีเมลขออนุมัติ';
+      toast(res.error||'บันทึกไม่สำเร็จ','err');
+      return;
+    }
+    toast('สร้างใบขายออก '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+    STATE.draftSaleItems = [];
+    STATE.saleHeader = null;
+    STATE.saleCreateStep = 'form';
+    STATE.view = 'salePrint';
+    STATE.printSaleId = res.data.saleId;
+    render();
+  });
 }
 
 /* ================= WRITE-OFF LIST VIEW ================= */
@@ -1238,6 +1421,8 @@ window.openWriteOffPrint = function(id){
 /* ================= WRITE-OFF CREATE VIEW ================= */
 function renderWriteOffCreate(root){
   STATE.draftWriteOffItems = STATE.draftWriteOffItems && STATE.view==='writeOffCreate' ? STATE.draftWriteOffItems : [];
+  if(STATE.writeOffCreateStep === 'preview'){ renderWriteOffCreatePreview(root); return; }
+  const h = STATE.writeOffHeader || {};
   root.innerHTML = `
     <div class="card">
       <h2>บันทึกตัดชำรุดทรัพย์สิน</h2>
@@ -1248,29 +1433,29 @@ function renderWriteOffCreate(root){
         </div>
         <div>
           <label>สาเหตุชำรุด</label>
-          <input type="text" id="wReason" placeholder="เช่น เสื่อมสภาพจากการใช้งาน, อุบัติเหตุ, ชำรุดจนซ่อมไม่คุ้ม">
+          <input type="text" id="wReason" placeholder="เช่น เสื่อมสภาพจากการใช้งาน, อุบัติเหตุ, ชำรุดจนซ่อมไม่คุ้ม" value="${esc(h.reason||'')}">
         </div>
       </div>
       <label>หมายเหตุ</label>
-      <textarea id="wRemark" placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับการตัดชำรุด..."></textarea>
+      <textarea id="wRemark" placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับการตัดชำรุด...">${esc(h.remark||'')}</textarea>
       <div class="row">
         <div>
           <label>ชื่อผู้บันทึก</label>
-          <input type="text" id="wCreatedBy">
+          <input type="text" id="wCreatedBy" value="${esc(h.createdBy||'')}">
         </div>
         <div>
           <label>อีเมลผู้บันทึก (สำหรับรับผลอนุมัติ)</label>
-          <input type="email" id="wCreatedByEmail">
+          <input type="email" id="wCreatedByEmail" value="${esc(h.createdByEmail||'')}">
         </div>
       </div>
       <div class="row">
         <div>
           <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
-          <input type="text" id="wApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย">
+          <input type="text" id="wApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย" value="${esc(h.approverName||'')}">
         </div>
         <div>
           <label>อีเมลผู้อนุมัติ *</label>
-          <input type="email" id="wApproverEmail" placeholder="approver@company.com">
+          <input type="email" id="wApproverEmail" placeholder="approver@company.com" value="${esc(h.approverEmail||'')}">
         </div>
       </div>
     </div>
@@ -1286,7 +1471,7 @@ function renderWriteOffCreate(root){
     </div>
 
     <div class="card no-print" style="text-align:right;">
-      <button class="btn btn-primary" id="btnSubmitWriteOff">บันทึกและส่งอีเมลขออนุมัติ</button>
+      <button class="btn btn-primary" id="btnSubmitWriteOff">ดูตัวอย่างก่อนบันทึก →</button>
     </div>
   `;
 
@@ -1294,7 +1479,24 @@ function renderWriteOffCreate(root){
   loadAssetsForSearch();
   renderWoItems();
 
-  document.getElementById('btnSubmitWriteOff').onclick = submitWriteOff;
+  document.getElementById('btnSubmitWriteOff').onclick = goToWriteOffPreview;
+
+  function goToWriteOffPreview(){
+    if(!STATE.draftWriteOffItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const approverEmail = document.getElementById('wApproverEmail').value.trim();
+    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    STATE.writeOffHeader = {
+      fromDept: document.getElementById('wFromDept').value,
+      reason: document.getElementById('wReason').value,
+      remark: document.getElementById('wRemark').value,
+      createdBy: document.getElementById('wCreatedBy').value,
+      createdByEmail: document.getElementById('wCreatedByEmail').value,
+      approverName: document.getElementById('wApproverName').value,
+      approverEmail
+    };
+    STATE.writeOffCreateStep = 'preview';
+    render();
+  }
 
   function loadDeptOptions(){
     apiGet({action:'getDeptCodes'}).then(res=>{
@@ -1302,6 +1504,14 @@ function renderWriteOffCreate(root){
       STATE.deptCodes = res.data;
       const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
       document.getElementById('wFromDept').innerHTML = opts;
+      document.getElementById('wFromDept').value = h.fromDept || '';
+      document.getElementById('wFromDept').addEventListener('change', ()=>{
+        const d = STATE.deptCodes.find(x=>x.DeptName===document.getElementById('wFromDept').value);
+        if(d){
+          if(d.ApproverName) document.getElementById('wApproverName').value = d.ApproverName;
+          if(d.ApproverEmail) document.getElementById('wApproverEmail').value = d.ApproverEmail;
+        }
+      });
     });
   }
 
@@ -1374,104 +1584,150 @@ function renderWriteOffCreate(root){
   window.removeWoItem = (i)=>{ STATE.draftWriteOffItems.splice(i,1); renderWoItems(); };
   window.updateWoItemField = (i, field, val)=>{ STATE.draftWriteOffItems[i][field] = val; };
 
-  function submitWriteOff(){
-    if(!STATE.draftWriteOffItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
-    const approverEmail = document.getElementById('wApproverEmail').value.trim();
-    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
-    const fromDept = document.getElementById('wFromDept').value;
+}
 
-    const payload = {
-      action:'createWriteOff',
-      fromDept,
-      reason: document.getElementById('wReason').value,
-      remark: document.getElementById('wRemark').value,
-      createdBy: document.getElementById('wCreatedBy').value,
-      createdByEmail: document.getElementById('wCreatedByEmail').value,
-      approverName: document.getElementById('wApproverName').value,
-      approverEmail,
-      items: STATE.draftWriteOffItems
-    };
-    const btn = document.getElementById('btnSubmitWriteOff');
-    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
-    apiPost(payload).then(res=>{
-      btn.disabled = false; btn.innerHTML = 'บันทึกและส่งอีเมลขออนุมัติ';
-      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
-      toast('สร้างใบตัดชำรุด '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
-      STATE.draftWriteOffItems = [];
-      STATE.view = 'writeOffPrint';
-      STATE.printWriteOffId = res.data.writeOffId;
-      render();
-    });
-  }
+function renderWriteOffCreatePreview(root){
+  const h = STATE.writeOffHeader || {};
+  const draftDoc = {
+    RunningNo: '(จะออกเลขที่อัตโนมัติเมื่อบันทึก)',
+    CreatedAt: new Date().toISOString(),
+    FromDept: h.fromDept, Reason: h.reason, Remark: h.remark, Status: 'Draft', CreatedBy: h.createdBy,
+    Items: STATE.draftWriteOffItems.map(it => ({
+      AssetID: it.assetId, AssetName: it.assetName, ImageURL: it.imageUrl,
+      ScrapPrice: it.scrapPrice, Remark: it.remark
+    }))
+  };
+  root.innerHTML = `
+    <div class="toolbar no-print">
+      <button class="btn btn-secondary btn-sm" id="btnWoPreviewBack">← กลับไปแก้ไข</button>
+      <button class="btn btn-secondary btn-sm" id="btnWoPreviewPrint">🖨️ พิมพ์ตัวอย่าง</button>
+      <button class="btn btn-primary btn-sm" id="btnWoPreviewConfirm" style="margin-left:auto;">✔ ยืนยันบันทึกและส่งอีเมลขออนุมัติ</button>
+    </div>
+    ${buildWriteOffDocHtml(draftDoc, false)}
+  `;
+  document.getElementById('btnWoPreviewBack').onclick = ()=>{ STATE.writeOffCreateStep='form'; render(); };
+  document.getElementById('btnWoPreviewPrint').onclick = ()=> window.print();
+  document.getElementById('btnWoPreviewConfirm').onclick = doSubmitWriteOff;
+}
+
+function doSubmitWriteOff(){
+  const h = STATE.writeOffHeader;
+  const payload = {
+    action:'createWriteOff',
+    fromDept: h.fromDept, reason: h.reason, remark: h.remark,
+    createdBy: h.createdBy, createdByEmail: h.createdByEmail,
+    approverName: h.approverName, approverEmail: h.approverEmail,
+    items: STATE.draftWriteOffItems
+  };
+  const btn = document.getElementById('btnWoPreviewConfirm');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+  apiPost(payload).then(res=>{
+    if(!res.ok){
+      btn.disabled = false; btn.innerHTML = '✔ ยืนยันบันทึกและส่งอีเมลขออนุมัติ';
+      toast(res.error||'บันทึกไม่สำเร็จ','err');
+      return;
+    }
+    toast('สร้างใบตัดชำรุด '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+    STATE.draftWriteOffItems = [];
+    STATE.writeOffHeader = null;
+    STATE.writeOffCreateStep = 'form';
+    STATE.view = 'writeOffPrint';
+    STATE.printWriteOffId = res.data.writeOffId;
+    render();
+  });
 }
 
 /* ================= SETTINGS VIEW (Dept Codes + Admin Asset Data) ================= */
 function renderSettings(root){
   root.innerHTML = `
     <div class="card">
-      <h2>รหัสหน่วยงาน (สำหรับเลขที่เอกสาร)</h2>
-      <p style="color:var(--muted);font-size:13px;">แก้ไขได้โดยตรงในชีต <b>DeptCodes</b> บน Google Sheets (แก้ที่นี่แล้ว refresh หน้านี้เพื่อดูผล) รูปแบบเลขที่: <b>รหัส/ลำดับ/ปีพ.ศ.2หลัก</b> เช่น ACC/001/69</p>
+      <h2>หน่วยงาน และอีเมลผู้อนุมัติ</h2>
+      <p style="color:var(--muted);font-size:13px;">กำหนดรหัสหน่วยงาน (ใช้ออกเลขที่เอกสาร รูปแบบ <b>รหัส/ลำดับ/ปีพ.ศ.2หลัก</b> เช่น ACC/001/69) และอีเมลผู้อนุมัติประจำหน่วยงาน — ระบบจะเติมชื่อ/อีเมลผู้อนุมัติให้อัตโนมัติเมื่อเลือกหน่วยงานตอนสร้างใบโอนย้าย/ขายออก/ตัดชำรุด</p>
+      <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnDeptAddNew">+ เพิ่มหน่วยงานใหม่</button></div>
       <div id="deptTableHost">กำลังโหลด...</div>
     </div>
 
     <div class="card" id="adminCard">
       <h2>จัดการข้อมูลทรัพย์สินหลัก (Admin)</h2>
       <p style="color:var(--muted);font-size:13px;">ข้อมูลหลักในชีต <b>Assets</b> ถูกอัปโหลดเข้ามาเป็นระยะโดยทีมบัญชี (จาก AppSheet) หากต้องแก้ไข/เพิ่ม/ลบรายการระหว่างรอบอัปโหลด Admin สามารถทำได้ที่นี่</p>
-      <div id="adminGate">
-        <div class="row">
-          <div style="max-width:260px;">
-            <label>รหัสผ่าน Admin</label>
-            <input type="password" id="adminPw" placeholder="กรอกรหัสผ่าน Admin">
-          </div>
-        </div>
-        <button class="btn btn-primary btn-sm" id="btnAdminUnlock" style="margin-top:8px;">ปลดล็อกเพื่อแก้ไข</button>
-      </div>
-      <div id="adminSourceLinkHost" style="display:none;margin-bottom:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+      <div id="adminSourceLinkHost" style="margin-bottom:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ลิงก์ Google Sheet เชื่อมข้อมูล (ต้นทางจากทีมบัญชี)</label>
         <input type="text" id="sourceSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/....">
-        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ระบบจะอ่านจากชีตชื่อ <b>ViewData</b> ในลิงก์นี้ (ถ้าไม่พบจะใช้ชีตแรก) โดยจับคู่คอลัมน์ตามชื่อหัวตาราง เช่น AssetID, AssetName, Department, PurchasePrice ฯลฯ แล้ว<b>อัปเดตเฉพาะรายการที่มี AssetID ตรงกับที่มีอยู่แล้ว</b> ไม่เพิ่ม/ลบรายการ</p>
+        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ระบบจะอ่านจากแท็บที่ชื่อขึ้นต้นด้วย <b>AppSheet.ViewData</b> ในลิงก์นี้ (เลือกแท็บวันที่ล่าสุดให้อัตโนมัติ) โดยจับคู่คอลัมน์ตามชื่อหัวตาราง เช่น AssetID, AssetName, Department, PurchasePrice ฯลฯ แล้วอัปเดตรายการที่มี AssetID ตรงกับที่มีอยู่แล้ว และเพิ่มรายการใหม่ให้กับ AssetID ที่ยังไม่มีในระบบ</p>
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-secondary btn-sm" id="btnSaveSourceLink">บันทึกลิงก์</button>
           <button class="btn btn-primary btn-sm" id="btnSyncSource">↻ ดึงข้อมูลล่าสุด</button>
         </div>
       </div>
-      <div id="adminAssetsHost" style="display:none;"></div>
+      <div id="adminAssetsHost"></div>
     </div>
   `;
 
   loadDeptCodes();
+  loadSourceLink();
+  loadAdminAssets();
 
-  document.getElementById('btnAdminUnlock').onclick = unlockAdmin;
-  document.getElementById('adminPw').addEventListener('keydown', e=>{ if(e.key==='Enter') unlockAdmin(); });
+  document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
 
   function loadDeptCodes(){
     apiGet({action:'getDeptCodes'}).then(res=>{
       if(!res.ok){ document.getElementById('deptTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
-      let html = '<table><tr><th>หน่วยงาน</th><th>รหัส</th></tr>';
-      res.data.forEach(d=>{ html += `<tr><td>${esc(d.DeptName)}</td><td><b>${esc(d.Code)}</b></td></tr>`; });
-      html += '</table>';
-      document.getElementById('deptTableHost').innerHTML = html;
+      STATE.deptCodes = res.data;
+      renderDeptTable();
     });
   }
 
-  function unlockAdmin(){
-    const pw = document.getElementById('adminPw').value;
-    if(!pw){ toast('กรุณากรอกรหัสผ่าน','err'); return; }
-    const btn = document.getElementById('btnAdminUnlock');
-    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังตรวจสอบ...';
-    apiPost({ action:'adminVerify', password: pw }).then(res=>{
-      btn.disabled = false; btn.innerHTML = 'ปลดล็อกเพื่อแก้ไข';
-      if(!res.ok){ toast(res.error||'รหัสผ่านไม่ถูกต้อง','err'); return; }
-      STATE.adminPassword = pw;
-      document.getElementById('adminGate').style.display = 'none';
-      document.getElementById('adminSourceLinkHost').style.display = 'block';
-      document.getElementById('adminAssetsHost').style.display = 'block';
-      loadSourceLink();
-      loadAdminAssets();
-    });
+  function renderDeptTable(){
+    const rowsHtml = STATE.deptCodes.map((d,i)=>`
+      <tr>
+        <td><input type="text" data-dfield="DeptName" data-di="${i}" value="${esc(d.DeptName)}" ${d.__isNew ? '' : 'readonly style="background:#f4f6f9;"'}></td>
+        <td><input type="text" data-dfield="Code" data-di="${i}" value="${esc(d.Code)}" style="max-width:90px;"></td>
+        <td><input type="text" data-dfield="ApproverName" data-di="${i}" value="${esc(d.ApproverName||'')}" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย"></td>
+        <td><input type="email" data-dfield="ApproverEmail" data-di="${i}" value="${esc(d.ApproverEmail||'')}" placeholder="approver@company.com"></td>
+        <td class="no-print" style="white-space:nowrap;">
+          <button class="btn btn-secondary btn-sm" onclick="saveDeptRow(${i})">บันทึก</button>
+          <button class="btn btn-red btn-sm" onclick="deleteDeptRow(${i})">ลบ</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('deptTableHost').innerHTML = `
+      <div style="overflow-x:auto;"><table>
+        <tr><th>หน่วยงาน</th><th>รหัส</th><th>ชื่อผู้อนุมัติ</th><th>อีเมลผู้อนุมัติ</th><th class="no-print">จัดการ</th></tr>
+        ${rowsHtml || '<tr><td colspan="5" class="empty">ยังไม่มีหน่วยงาน</td></tr>'}
+      </table></div>
+    `;
   }
+
+  function addBlankDeptRow(){
+    STATE.deptCodes.push({ DeptName:'', Code:'', ApproverName:'', ApproverEmail:'', __isNew:true });
+    renderDeptTable();
+  }
+
+  window.saveDeptRow = (i)=>{
+    const d = STATE.deptCodes[i];
+    ['DeptName','Code','ApproverName','ApproverEmail'].forEach(f=>{
+      const el = document.querySelector(`[data-dfield="${f}"][data-di="${i}"]`);
+      if(el) d[f] = el.value.trim();
+    });
+    if(!d.DeptName || !d.Code){ toast('กรุณาระบุชื่อหน่วยงานและรหัส','err'); return; }
+    apiPost({ action:'adminSaveDept', password: STATE.adminPassword, dept: d }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกหน่วยงานไม่สำเร็จ','err'); return; }
+      toast('บันทึกหน่วยงานสำเร็จ','ok');
+      loadDeptCodes();
+    });
+  };
+
+  window.deleteDeptRow = (i)=>{
+    const d = STATE.deptCodes[i];
+    if(d.__isNew){ STATE.deptCodes.splice(i,1); renderDeptTable(); return; }
+    if(!confirm('ยืนยันลบหน่วยงาน "'+d.DeptName+'" ?')) return;
+    apiPost({ action:'adminDeleteDept', password: STATE.adminPassword, deptName: d.DeptName }).then(res=>{
+      if(!res.ok){ toast(res.error||'ลบหน่วยงานไม่สำเร็จ','err'); return; }
+      toast('ลบหน่วยงานสำเร็จ','ok');
+      loadDeptCodes();
+    });
+  };
 
   function loadSourceLink(){
     apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
@@ -1945,7 +2201,7 @@ function renderApproveWriteOff(){
 }
 
 /* ================= INIT ================= */
-route();
+enterApp();
 </script>
 </body>
 </html>
