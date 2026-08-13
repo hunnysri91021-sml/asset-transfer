@@ -50,6 +50,11 @@
   .login-card h1{margin:0 0 4px;font-size:20px;color:var(--navy);text-align:center;}
   .login-card .sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:22px;}
 
+  .modal-overlay{position:fixed;inset:0;background:rgba(10,20,35,.55);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .modal-box{background:#fff;border-radius:10px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;padding:20px 24px;box-shadow:0 10px 30px rgba(0,0,0,.3);}
+  .modal-box h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
+  .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);}
+
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(20,30,50,.05);}
   .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:500;}
@@ -166,6 +171,7 @@
   </div>
 </div>
 <div id="toastHost"></div>
+<div id="modalHost"></div>
 
 <script>
 /* ================= CONFIG ================= */
@@ -453,6 +459,85 @@ function render(){
 /* ================= ASSET LIST VIEW (browse, select, and act on assets) ================= */
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
 
+function closeAssetModal(){
+  document.getElementById('modalHost').innerHTML = '';
+}
+
+function openAssetEditModal(asset, onSaved){
+  const a = asset || {};
+  const isNew = !asset;
+  const host = document.getElementById('modalHost');
+  host.innerHTML = `
+    <div class="modal-overlay no-print" id="assetModalOverlay">
+      <div class="modal-box">
+        <h2>${isNew ? 'เพิ่มทรัพย์สินใหม่' : 'แก้ไขทรัพย์สิน '+esc(a.AssetID)}</h2>
+        <label>รหัสทรัพย์สิน *</label>
+        <input type="text" id="amAssetID" value="${esc(a.AssetID||'')}" ${isNew ? '' : 'readonly style="background:#f4f6f9;"'}>
+        <label>ชื่อทรัพย์สิน</label>
+        <input type="text" id="amAssetName" value="${esc(a.AssetName||'')}">
+        <div class="row">
+          <div><label>หน่วยงาน</label><input type="text" id="amDepartment" value="${esc(a.Department||'')}"></div>
+          <div><label>ผู้ดูแล</label><input type="text" id="amCustodian" value="${esc(a.Custodian||'')}"></div>
+        </div>
+        <div class="row">
+          <div><label>ฝ่าย</label><input type="text" id="amDivision" value="${esc(a.Division||'')}"></div>
+          <div><label>กลุ่มงาน</label><input type="text" id="amWorkGroup" value="${esc(a.WorkGroup||'')}"></div>
+        </div>
+        <div class="row">
+          <div><label>สถานที่</label><input type="text" id="amLocation" value="${esc(a.Location||'')}"></div>
+          <div><label>วันที่ซื้อ</label><input type="date" id="amPurchaseDate" value="${esc(a.PurchaseDate ? String(a.PurchaseDate).substring(0,10) : '')}"></div>
+        </div>
+        <div class="row">
+          <div><label>ราคาซื้อ</label><input type="text" inputmode="decimal" id="amPurchasePrice" value="${esc(a.PurchasePrice||'')}"></div>
+          <div><label>มูลค่าตามบัญชี</label><input type="text" inputmode="decimal" id="amBookValue" value="${esc(a.BookValue||'')}"></div>
+        </div>
+        <div class="row">
+          <div><label>ราคาซาก</label><input type="text" inputmode="decimal" id="amScrapPrice" value="${esc(a.ScrapPrice||'')}"></div>
+          <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
+        </div>
+        <label>แท็กสถานะ</label>
+        <select id="amTag">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${(a.Tag||'ใช้งาน')===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
+        <label>URL รูปภาพ</label>
+        <input type="text" id="amImageURL" value="${esc(a.ImageURL||'')}" placeholder="https://...">
+        <div class="modal-actions">
+          <button class="btn btn-secondary btn-sm" id="btnAssetModalCancel">ยกเลิก</button>
+          <button class="btn btn-primary btn-sm" id="btnAssetModalSave">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('btnAssetModalCancel').onclick = closeAssetModal;
+  document.getElementById('assetModalOverlay').onclick = (e)=>{ if(e.target.id==='assetModalOverlay') closeAssetModal(); };
+  document.getElementById('btnAssetModalSave').onclick = ()=>{
+    const assetId = document.getElementById('amAssetID').value.trim();
+    if(!assetId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
+    const payload = {
+      AssetID: assetId,
+      AssetName: document.getElementById('amAssetName').value.trim(),
+      Department: document.getElementById('amDepartment').value.trim(),
+      Division: document.getElementById('amDivision').value.trim(),
+      WorkGroup: document.getElementById('amWorkGroup').value.trim(),
+      PurchaseDate: document.getElementById('amPurchaseDate').value,
+      PurchasePrice: document.getElementById('amPurchasePrice').value.trim(),
+      BookValue: document.getElementById('amBookValue').value.trim(),
+      Custodian: document.getElementById('amCustodian').value.trim(),
+      Location: document.getElementById('amLocation').value.trim(),
+      Tag: document.getElementById('amTag').value,
+      ScrapPrice: document.getElementById('amScrapPrice').value.trim(),
+      MinSalePrice: document.getElementById('amMinSalePrice').value.trim(),
+      ImageURL: document.getElementById('amImageURL').value.trim()
+    };
+    const btn = document.getElementById('btnAssetModalSave');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+    apiPost({ action:'adminSaveAsset', password: STATE.adminPassword, asset: payload }).then(res=>{
+      if(!res.ok){ btn.disabled = false; btn.innerHTML = 'บันทึก'; toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('บันทึกทรัพย์สินสำเร็จ','ok');
+      closeAssetModal();
+      if(onSaved) onSaved();
+    });
+  };
+}
+
 function renderAssetList(root){
   root.innerHTML = `
     <div class="card">
@@ -477,6 +562,7 @@ function renderAssetList(root){
         <button class="btn btn-primary btn-sm" id="btnAlSale">สร้างใบขาย</button>
         <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
       </div>
       <div id="alTableHost" style="margin-top:12px;"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -489,13 +575,14 @@ function renderAssetList(root){
   document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
   document.getElementById('btnAlWriteOff').onclick = ()=> startFromSelection('writeOffCreate');
   document.getElementById('btnAlRestore').onclick = restoreSelected;
+  document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
 
   function exportAssetList(){
     const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','สถานะ','แท็กสถานะ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน']);
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','สถานะ','แท็กสถานะ','ลิงก์รูปภาพ'];
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน', a.DisplayImage||'']);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
@@ -542,7 +629,7 @@ function renderAssetList(root){
     const host = document.getElementById('alTableHost');
     const rows = filteredRows();
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; updateSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ฝ่าย</th><th>กลุ่มงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th></tr>';
+    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ฝ่าย</th><th>กลุ่มงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th><th class="no-print">จัดการ</th></tr>';
     rows.forEach(a=>{
       const checked = STATE.selectedAssetIds.indexOf(a.AssetID)!==-1 ? 'checked' : '';
       const curTag = a.Tag || 'ใช้งาน';
@@ -560,10 +647,32 @@ function renderAssetList(root){
         <td class="money">${fmtMoney(a.BookValue)}</td>
         <td>${assetStatusBadge(a.AssetStatus)}</td>
         <td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="min-width:130px;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>
+        <td class="no-print" style="white-space:nowrap;">
+          <button class="btn btn-secondary btn-sm" data-editid="${esc(a.AssetID)}">แก้ไข</button>
+          <button class="btn btn-red btn-sm" data-delid="${esc(a.AssetID)}">ลบ</button>
+        </td>
       </tr>`;
     });
     html += '</table></div>';
     host.innerHTML = html;
+
+    host.querySelectorAll('[data-editid]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const asset = STATE.assetsFull.find(x=>x.AssetID===btn.dataset.editid);
+        openAssetEditModal(asset, load);
+      };
+    });
+    host.querySelectorAll('[data-delid]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const assetId = btn.dataset.delid;
+        if(!confirm('ยืนยันลบทรัพย์สิน '+assetId+' ? การลบไม่สามารถย้อนกลับได้')) return;
+        apiPost({ action:'adminDeleteAsset', password: STATE.adminPassword, assetId }).then(res=>{
+          if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
+          toast('ลบทรัพย์สินสำเร็จ','ok');
+          load();
+        });
+      };
+    });
 
     document.getElementById('alSelectAll').onchange = (e)=>{
       const ids = rows.map(a=>a.AssetID);
@@ -795,10 +904,10 @@ function renderList(root){
 
   function exportTransferList(){
     if(!STATE.transfers.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['เลขที่','วันที่','เรื่อง','จาก','ไป','จำนวนรายการ','สถานะ','ผู้อนุมัติ'];
+    const header = ['เลขที่','วันที่','เรื่อง','จาก','ไป','จำนวนรายการ','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
     const dataRows = STATE.transfers.map(t => [
       t.RunningNo, fmtDate(t.CreatedAt), t.Subject==='อื่นๆ'?t.SubjectOther:t.Subject,
-      t.FromDept, t.ToDept, t.ItemCount, STATUS_LABELS[t.Status]||t.Status, t.ApproverName||t.ApproverEmail||''
+      t.FromDept, t.ToDept, t.ItemCount, STATUS_LABELS[t.Status]||t.Status, t.ApproverName||t.ApproverEmail||'', t.AllImages||''
     ]);
     exportExcel('รายการใบโอนย้าย.xlsx', [{ name:'ใบโอนย้าย', header, rows: dataRows }]);
   }
@@ -1178,10 +1287,10 @@ function renderSaleList(root){
 
   function exportSaleList(){
     if(!STATE.sales.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['เลขที่','วันที่','หน่วยงาน','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ'];
+    const header = ['เลขที่','วันที่','หน่วยงาน','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
     const dataRows = STATE.sales.map(s => [
       s.RunningNo, fmtDate(s.CreatedAt), s.FromDept, s.Buyer||'', s.ItemCount,
-      Number(s.TotalSalePrice)||0, STATUS_LABELS[s.Status]||s.Status, s.ApproverName||s.ApproverEmail||''
+      Number(s.TotalSalePrice)||0, STATUS_LABELS[s.Status]||s.Status, s.ApproverName||s.ApproverEmail||'', s.AllImages||''
     ]);
     exportExcel('รายการขายออก.xlsx', [{ name:'ขายออก', header, rows: dataRows }]);
   }
@@ -1539,10 +1648,10 @@ function renderWriteOffList(root){
 
   function exportWoList(){
     if(!STATE.writeOffs.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['เลขที่','วันที่','หน่วยงาน','สาเหตุ','จำนวนรายการ','สถานะ','ผู้อนุมัติ'];
+    const header = ['เลขที่','วันที่','หน่วยงาน','สาเหตุ','จำนวนรายการ','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
     const dataRows = STATE.writeOffs.map(w => [
       w.RunningNo, fmtDate(w.CreatedAt), w.FromDept, w.Reason||'', w.ItemCount,
-      STATUS_LABELS[w.Status]||w.Status, w.ApproverName||w.ApproverEmail||''
+      STATUS_LABELS[w.Status]||w.Status, w.ApproverName||w.ApproverEmail||'', w.AllImages||''
     ]);
     exportExcel('รายการตัดชำรุด.xlsx', [{ name:'ตัดชำรุด', header, rows: dataRows }]);
   }

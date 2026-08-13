@@ -629,17 +629,20 @@ function getTransfers_(params) {
   }
   rows.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
 
-  // attach item count
+  // attach item count + รวมลิงก์รูปภาพของทุกรายการในเอกสารนี้ (สำหรับ export)
   const itemSh = getSS_().getSheetByName(SHEETS.ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemHeaders = itemValues.shift();
   const itemIdx = indexMap_(itemHeaders);
   const counts = {};
+  const images = {};
   itemValues.forEach(r => {
     const tid = r[itemIdx.TransferID];
     counts[tid] = (counts[tid] || 0) + 1;
+    const imgs = cellToImages_(r[itemIdx.ImageURL]);
+    if (imgs.length) images[tid] = (images[tid] || []).concat(imgs);
   });
-  rows.forEach(r => { r.ItemCount = counts[r.TransferID] || 0; });
+  rows.forEach(r => { r.ItemCount = counts[r.TransferID] || 0; r.AllImages = (images[r.TransferID] || []).join(', '); });
 
   return rows;
 }
@@ -879,12 +882,15 @@ function getSales_(params) {
   const itemIdx = indexMap_(itemHeaders);
   const counts = {};
   const totals = {};
+  const images = {};
   itemValues.forEach(r => {
     const sid = r[itemIdx.SaleID];
     counts[sid] = (counts[sid] || 0) + 1;
     totals[sid] = (totals[sid] || 0) + (parseFloat(r[itemIdx.SalePrice]) || 0);
+    const imgs = cellToImages_(r[itemIdx.ImageURL]);
+    if (imgs.length) images[sid] = (images[sid] || []).concat(imgs);
   });
-  rows.forEach(r => { r.ItemCount = counts[r.SaleID] || 0; r.TotalSalePrice = totals[r.SaleID] || 0; });
+  rows.forEach(r => { r.ItemCount = counts[r.SaleID] || 0; r.TotalSalePrice = totals[r.SaleID] || 0; r.AllImages = (images[r.SaleID] || []).join(', '); });
 
   return rows;
 }
@@ -1055,11 +1061,14 @@ function getWriteOffs_(params) {
   const itemHeaders = itemValues.shift();
   const itemIdx = indexMap_(itemHeaders);
   const counts = {};
+  const images = {};
   itemValues.forEach(r => {
     const wid = r[itemIdx.WriteOffID];
     counts[wid] = (counts[wid] || 0) + 1;
+    const imgs = cellToImages_(r[itemIdx.ImageURL]);
+    if (imgs.length) images[wid] = (images[wid] || []).concat(imgs);
   });
-  rows.forEach(r => { r.ItemCount = counts[r.WriteOffID] || 0; });
+  rows.forEach(r => { r.ItemCount = counts[r.WriteOffID] || 0; r.AllImages = (images[r.WriteOffID] || []).join(', '); });
 
   return rows;
 }
