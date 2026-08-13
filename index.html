@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ระบบโอนย้ายทรัพย์สิน — SML</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
+    --gold:#b8892f; --green:#1a7d3c; --red:#c0392b; --amber:#b8860b;
+    --bg:#f4f6f9; --card:#ffffff; --border:#dde3ec; --text:#22303f; --muted:#697586;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'Sarabun',sans-serif;background:var(--bg);color:var(--text);margin:0;}
+  #app{max-width:1180px;margin:0 auto;padding:16px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:#fff;padding:14px 20px;border-radius:var(--radius);margin-bottom:16px;flex-wrap:wrap;gap:10px;}
+  .topbar h1{font-size:18px;margin:0;font-weight:600;}
+  .topbar .sub{font-size:12px;opacity:.8;font-weight:300;}
+  nav{display:flex;gap:6px;flex-wrap:wrap;}
+  nav button{background:rgba(255,255,255,.12);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;transition:.15s;}
+  nav button:hover{background:rgba(255,255,255,.25);}
+  nav button.active{background:#fff;color:var(--navy);font-weight:600;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
+  .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:500;}
+  input[type=text], input[type=date], input[type=email], select, textarea{
+    width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:7px;font-family:inherit;font-size:14px;background:#fff;
+  }
+  textarea{resize:vertical;min-height:60px;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;}
+  .row > div{flex:1;min-width:200px;}
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-size:14px;font-weight:600;transition:.15s;}
+  .btn-primary{background:var(--navy);color:#fff;}
+  .btn-primary:hover{background:var(--navy-dark);}
+  .btn-secondary{background:#eef1f6;color:var(--text);}
+  .btn-secondary:hover{background:#e0e5ec;}
+  .btn-green{background:var(--green);color:#fff;}
+  .btn-red{background:var(--red);color:#fff;}
+  .btn-sm{padding:6px 12px;font-size:12px;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{border:1px solid var(--border);padding:8px;text-align:left;vertical-align:middle;}
+  th{background:var(--navy-light);color:var(--navy);font-weight:600;}
+  .thumb{width:44px;height:44px;object-fit:cover;border-radius:6px;background:#eee;}
+  .thumb-lg{width:100px;height:100px;object-fit:cover;border-radius:8px;background:#eee;border:1px solid var(--border);}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}
+  .badge-pending{background:#fff3cd;color:var(--amber);}
+  .badge-approved{background:#d4edda;color:var(--green);}
+  .badge-rejected{background:#f8d7da;color:var(--red);}
+  .badge-draft{background:#e2e3e5;color:#555;}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
+  .autocomplete-wrap{position:relative;}
+  .autocomplete-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;max-height:240px;overflow:auto;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.12);}
+  .autocomplete-item{padding:8px 10px;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:13px;}
+  .autocomplete-item:hover{background:var(--navy-light);}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--navy-dark);color:#fff;padding:12px 20px;border-radius:8px;z-index:999;box-shadow:0 6px 20px rgba(0,0,0,.2);}
+  .toast.err{background:var(--red);}
+  .toast.ok{background:var(--green);}
+  .empty{text-align:center;color:var(--muted);padding:40px;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+  .item-line{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:#fafbfc;position:relative;}
+  .item-line .del{position:absolute;top:8px;right:8px;background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;}
+  .file-drop{border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:12px;color:var(--muted);cursor:pointer;}
+  .file-drop:hover{border-color:var(--navy);}
+
+  /* ===== PRINT / DOCUMENT LAYOUT (matches original ใบโอนย้ายทรัพย์สิน template) ===== */
+  .doc{background:#fff;padding:28px 34px;font-size:14px;line-height:1.6;}
+  .doc .doc-header{text-align:center;font-weight:700;font-size:18px;margin-bottom:2px;}
+  .doc .doc-title{text-align:center;font-weight:700;font-size:17px;margin:10px 0 16px;text-decoration:underline;}
+  .doc .doc-meta{display:flex;justify-content:flex-end;gap:24px;font-size:13px;margin-bottom:10px;}
+  .doc .doc-field{margin:4px 0;font-size:13.5px;}
+  .doc .doc-field b{display:inline-block;min-width:70px;}
+  .doc table.doc-table{margin-top:14px;font-size:12.5px;}
+  .doc table.doc-table th{background:var(--navy-light);text-align:center;}
+  .doc table.doc-table td{text-align:center;}
+  .doc table.doc-table td.left{text-align:left;}
+  .doc .doc-note{font-size:11.5px;color:#555;margin-top:16px;border-top:1px dashed #ccc;padding-top:10px;}
+  .doc .doc-sign{display:flex;justify-content:space-between;margin-top:30px;font-size:13px;}
+  .doc .doc-sign div{width:45%;text-align:center;}
+  .doc .doc-sign .line{border-bottom:1px dotted #333;height:40px;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea, #printArea *{visibility:visible;}
+    #printArea{position:absolute;top:0;left:0;width:100%;}
+    .no-print{display:none !important;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar no-print">
+    <div>
+      <h1>ระบบโอนย้ายทรัพย์สิน</h1>
+      <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด — SML Asset Transfer</div>
+    </div>
+    <nav id="mainNav">
+      <button data-view="list" class="active">รายการใบโอนย้าย</button>
+      <button data-view="create">+ สร้างใบโอนย้าย</button>
+      <button data-view="settings">ตั้งค่ารหัสหน่วยงาน</button>
+    </nav>
+  </div>
+  <div id="viewRoot"></div>
+</div>
+<div id="toastHost"></div>
+
+<script>
+/* ================= CONFIG ================= */
+const GAS_URL = 'PASTE_YOUR_GAS_WEB_APP_URL_HERE'; // TODO: ใส่ URL จาก Deploy > Web app
+const COMPANY_NAME = '    บริษัท   สยามกลการโลจิสติกส์   จำกัด';
+
+/* ================= STATE ================= */
+let STATE = {
+  view: 'list',
+  assets: [],
+  deptCodes: [],
+  transfers: [],
+  currentTransfer: null,
+  draftItems: [],
+  approveCtx: null
+};
+
+/* ================= API HELPERS ================= */
+function apiGet(params){
+  const url = GAS_URL + '?' + new URLSearchParams(params).toString();
+  return fetch(url, { method:'GET' })
+    .then(r => r.json())
+    .catch(err => ({ ok:false, error:'เชื่อมต่อ GAS ไม่สำเร็จ: '+err }));
+}
+function apiPost(payload){
+  return fetch(GAS_URL, {
+    method:'POST',
+    body: JSON.stringify(payload) // text/plain by default -> avoids CORS preflight on GAS
+  }).then(r => r.json())
+    .catch(err => ({ ok:false, error:'เชื่อมต่อ GAS ไม่สำเร็จ: '+err }));
+}
+
+function toast(msg, type){
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type||'');
+  t.textContent = msg;
+  document.getElementById('toastHost').appendChild(t);
+  setTimeout(()=>t.remove(), 3500);
+}
+
+function fmtMoney(n){
+  n = parseFloat(String(n).replace(/,/g,'')) || 0;
+  return n.toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function fmtDate(d){
+  if(!d) return '-';
+  const dt = new Date(d);
+  if(isNaN(dt)) return d;
+  const buddhistYear = dt.getFullYear()+543;
+  return ('0'+dt.getDate()).slice(-2)+'/'+('0'+(dt.getMonth()+1)).slice(-2)+'/'+buddhistYear;
+}
+function statusBadge(s){
+  const map = {
+    Draft: ['draft','ฉบับร่าง'],
+    PendingApproval: ['pending','รออนุมัติ'],
+    Approved: ['approved','อนุมัติแล้ว'],
+    Rejected: ['rejected','ไม่อนุมัติ']
+  };
+  const v = map[s] || ['draft', s];
+  return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* ================= ROUTER ================= */
+function route(){
+  const params = new URLSearchParams(location.search);
+  if(params.get('view') === 'approve'){
+    STATE.view = 'approve';
+    STATE.approveCtx = { id: params.get('id'), token: params.get('token') };
+    renderApprove();
+    return;
+  }
+  render();
+}
+
+document.getElementById('mainNav').addEventListener('click', (e)=>{
+  if(e.target.tagName === 'BUTTON'){
+    STATE.view = e.target.dataset.view;
+    [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b===e.target));
+    render();
+  }
+});
+
+function render(){
+  const root = document.getElementById('viewRoot');
+  document.querySelector('.topbar').classList.remove('no-print-hide');
+  document.getElementById('mainNav').style.display = 'flex';
+  if(STATE.view === 'list') renderList(root);
+  else if(STATE.view === 'create') renderCreate(root);
+  else if(STATE.view === 'settings') renderSettings(root);
+  else if(STATE.view === 'print') renderPrint(root);
+}
+
+/* ================= LIST VIEW ================= */
+function renderList(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>รายการใบโอนย้ายทรัพย์สิน</h2>
+      <div class="toolbar no-print">
+        <input type="text" id="fSearch" placeholder="ค้นหาเลขที่ / เรื่อง..." style="max-width:220px;">
+        <select id="fStatus" style="max-width:160px;">
+          <option value="">ทุกสถานะ</option>
+          <option value="PendingApproval">รออนุมัติ</option>
+          <option value="Approved">อนุมัติแล้ว</option>
+          <option value="Rejected">ไม่อนุมัติ</option>
+        </select>
+        <input type="date" id="fFrom" style="max-width:150px;">
+        <input type="date" id="fTo" style="max-width:150px;">
+        <button class="btn btn-secondary btn-sm" id="btnFilter">กรอง</button>
+        <button class="btn btn-secondary btn-sm" id="btnRefresh">↻ รีเฟรช</button>
+      </div>
+      <div id="listTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+  document.getElementById('btnFilter').onclick = loadList;
+  document.getElementById('btnRefresh').onclick = loadList;
+  loadList();
+
+  function loadList(){
+    const params = { action:'getTransfers' };
+    const q = document.getElementById('fSearch').value.trim();
+    const status = document.getElementById('fStatus').value;
+    const from = document.getElementById('fFrom').value;
+    const to = document.getElementById('fTo').value;
+    if(q) params.q = q;
+    if(status) params.status = status;
+    if(from) params.from = from;
+    if(to) params.to = to;
+    document.getElementById('listTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet(params).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
+      STATE.transfers = res.data;
+      renderListTable();
+    });
+  }
+  function renderListTable(){
+    const host = document.getElementById('listTableHost');
+    if(!STATE.transfers.length){ host.innerHTML = '<div class="empty">ยังไม่มีใบโอนย้าย</div>'; return; }
+    let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>เรื่อง</th><th>จาก → ไป</th><th>จำนวนรายการ</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
+    STATE.transfers.forEach(t=>{
+      html += `<tr>
+        <td><b>${esc(t.RunningNo)}</b></td>
+        <td>${fmtDate(t.CreatedAt)}</td>
+        <td>${esc(t.Subject==='อื่นๆ'?t.SubjectOther:t.Subject)}</td>
+        <td>${esc(t.FromDept)} → ${esc(t.ToDept)}</td>
+        <td style="text-align:center;">${t.ItemCount}</td>
+        <td>${statusBadge(t.Status)}</td>
+        <td>${esc(t.ApproverName||t.ApproverEmail||'-')}</td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm" onclick="openPrint('${t.TransferID}')">ดู/พิมพ์</button></td>
+      </tr>`;
+    });
+    html += '</table>';
+    host.innerHTML = html;
+  }
+}
+
+window.openPrint = function(id){
+  STATE.view = 'print';
+  STATE.printId = id;
+  render();
+};
+
+/* ================= CREATE VIEW ================= */
+function renderCreate(root){
+  STATE.draftItems = STATE.draftItems && STATE.view==='create' ? STATE.draftItems : [];
+  root.innerHTML = `
+    <div class="card">
+      <h2>สร้างใบโอนย้ายทรัพย์สินใหม่</h2>
+      <div class="row">
+        <div>
+          <label>เรื่อง</label>
+          <select id="cSubject">
+            <option value="โอนย้าย">โอนย้าย</option>
+            <option value="อื่นๆ">อื่นๆ (ระบุ)</option>
+          </select>
+        </div>
+        <div id="cSubjectOtherWrap" style="display:none;">
+          <label>ระบุเรื่อง</label>
+          <input type="text" id="cSubjectOther">
+        </div>
+      </div>
+      <label>เพื่อ (วัตถุประสงค์)</label>
+      <textarea id="cPurpose" placeholder="เช่น เพื่อใช้งานในหน่วยงานใหม่..."></textarea>
+      <div class="row">
+        <div>
+          <label>หน่วยงานผู้โอน (ต้นทาง)</label>
+          <select id="cFromDept"></select>
+        </div>
+        <div>
+          <label>หน่วยงานผู้รับโอน (ปลายทาง)</label>
+          <select id="cToDept"></select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้โอน (ตัวบรรจง)</label>
+          <input type="text" id="cFromSign" placeholder="ชื่อ-นามสกุล ผู้โอน">
+        </div>
+        <div>
+          <label>ชื่อผู้รับโอน (ตัวบรรจง)</label>
+          <input type="text" id="cToSign" placeholder="ชื่อ-นามสกุล ผู้รับโอน">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้ขอ (ผู้บันทึกรายการ)</label>
+          <input type="text" id="cCreatedBy">
+        </div>
+        <div>
+          <label>อีเมลผู้ขอ (สำหรับรับผลอนุมัติ)</label>
+          <input type="email" id="cCreatedByEmail">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
+          <input type="text" id="cApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย">
+        </div>
+        <div>
+          <label>อีเมลผู้อนุมัติ *</label>
+          <input type="email" id="cApproverEmail" placeholder="approver@company.com">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>รายการทรัพย์สินที่โอนย้าย</h2>
+      <div class="autocomplete-wrap">
+        <input type="text" id="assetSearch" placeholder="ค้นหารหัส หรือ ชื่อทรัพย์สิน แล้วเลือกเพื่อเพิ่มรายการ...">
+        <div id="assetSuggest" class="autocomplete-list" style="display:none;"></div>
+      </div>
+      <div id="itemsHost" style="margin-top:14px;"></div>
+      <div class="empty" id="itemsEmpty">ยังไม่มีรายการทรัพย์สิน — ค้นหาด้านบนเพื่อเพิ่ม</div>
+    </div>
+
+    <div class="card no-print" style="text-align:right;">
+      <button class="btn btn-primary" id="btnSubmit">บันทึกและส่งอีเมลขออนุมัติ</button>
+    </div>
+  `;
+
+  document.getElementById('cSubject').onchange = (e)=>{
+    document.getElementById('cSubjectOtherWrap').style.display = e.target.value==='อื่นๆ' ? 'block':'none';
+  };
+
+  loadDeptOptions();
+  loadAssetsForSearch();
+  renderItems();
+
+  document.getElementById('btnSubmit').onclick = submitTransfer;
+
+  function loadDeptOptions(){
+    apiGet({action:'getDeptCodes'}).then(res=>{
+      if(!res.ok){ toast(res.error,'err'); return; }
+      STATE.deptCodes = res.data;
+      const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
+      document.getElementById('cFromDept').innerHTML = opts;
+      document.getElementById('cToDept').innerHTML = opts;
+    });
+  }
+
+  function loadAssetsForSearch(){
+    if(STATE.assets.length) return;
+    apiGet({action:'getAssets'}).then(res=>{
+      if(res.ok) STATE.assets = res.data;
+    });
+  }
+
+  const searchInput = document.getElementById('assetSearch');
+  searchInput.addEventListener('input', ()=>{
+    const q = searchInput.value.trim().toLowerCase();
+    const suggestBox = document.getElementById('assetSuggest');
+    if(!q){ suggestBox.style.display='none'; return; }
+    const matches = STATE.assets.filter(a =>
+      String(a.AssetID).toLowerCase().includes(q) || String(a.AssetName).toLowerCase().includes(q)
+    ).slice(0,15);
+    if(!matches.length){ suggestBox.innerHTML = '<div class="autocomplete-item">ไม่พบรายการ</div>'; suggestBox.style.display='block'; return; }
+    suggestBox.innerHTML = matches.map(a => `
+      <div class="autocomplete-item" data-id="${esc(a.AssetID)}">
+        <img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'">
+        <div><b>${esc(a.AssetID)}</b> — ${esc(a.AssetName)}<br><span style="color:var(--muted);font-size:11px;">${esc(a.Department)}</span></div>
+      </div>`).join('');
+    suggestBox.style.display='block';
+    suggestBox.querySelectorAll('.autocomplete-item').forEach(el=>{
+      el.onclick = ()=>{
+        const asset = STATE.assets.find(a=>a.AssetID===el.dataset.id);
+        addItem(asset);
+        searchInput.value='';
+        suggestBox.style.display='none';
+      };
+    });
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.autocomplete-wrap')) {
+      const box = document.getElementById('assetSuggest');
+      if(box) box.style.display='none';
+    }
+  });
+
+  function addItem(asset){
+    STATE.draftItems.push({
+      assetId: asset.AssetID,
+      assetName: asset.AssetName,
+      imageUrl: asset.DisplayImage || '',
+      remark: '',
+      fromDeptName: document.getElementById('cFromDept').value,
+      toDeptName: document.getElementById('cToDept').value,
+      fromSignName: document.getElementById('cFromSign').value,
+      toSignName: document.getElementById('cToSign').value
+    });
+    renderItems();
+  }
+
+  function renderItems(){
+    const host = document.getElementById('itemsHost');
+    const empty = document.getElementById('itemsEmpty');
+    empty.style.display = STATE.draftItems.length ? 'none':'block';
+    host.innerHTML = STATE.draftItems.map((it, i) => `
+      <div class="item-line">
+        <button class="del" onclick="removeItem(${i})">✕</button>
+        <div class="row">
+          <div style="flex:0 0 90px;">
+            <img class="thumb-lg" src="${esc(it.imageUrl||'')}" onerror="this.style.visibility='hidden'" id="itemImg${i}">
+            <div class="file-drop" style="margin-top:6px;font-size:10px;" onclick="document.getElementById('itemFile${i}').click()">เปลี่ยนรูป</div>
+            <input type="file" id="itemFile${i}" accept="image/*" style="display:none;" onchange="uploadItemImage(${i}, this)">
+          </div>
+          <div style="flex:2;">
+            <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
+            <label style="margin-top:6px;">หมายเหตุ</label>
+            <input type="text" value="${esc(it.remark)}" onchange="updateItemField(${i},'remark',this.value)">
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  window.removeItem = (i)=>{ STATE.draftItems.splice(i,1); renderItems(); };
+  window.updateItemField = (i, field, val)=>{ STATE.draftItems[i][field] = val; };
+  window.uploadItemImage = (i, input)=>{
+    const file = input.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      toast('กำลังอัปโหลดรูป...');
+      apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftItems[i].assetId })
+        .then(res=>{
+          if(res.ok){
+            STATE.draftItems[i].imageUrl = res.data.url;
+            document.getElementById('itemImg'+i).src = res.data.url;
+            toast('อัปโหลดรูปสำเร็จ','ok');
+          } else toast(res.error||'อัปโหลดไม่สำเร็จ','err');
+        });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  function submitTransfer(){
+    if(!STATE.draftItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const approverEmail = document.getElementById('cApproverEmail').value.trim();
+    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    const fromDept = document.getElementById('cFromDept').value;
+    const toDept = document.getElementById('cToDept').value;
+    const fromSign = document.getElementById('cFromSign').value;
+    const toSign = document.getElementById('cToSign').value;
+
+    // sync per-item dept/signer with header selections in case changed after adding
+    STATE.draftItems.forEach(it=>{
+      it.fromDeptName = it.fromDeptName || fromDept;
+      it.toDeptName = it.toDeptName || toDept;
+      it.fromSignName = it.fromSignName || fromSign;
+      it.toSignName = it.toSignName || toSign;
+    });
+
+    const payload = {
+      action:'createTransfer',
+      subject: document.getElementById('cSubject').value,
+      subjectOther: document.getElementById('cSubjectOther').value,
+      purpose: document.getElementById('cPurpose').value,
+      fromDept, toDept,
+      createdBy: document.getElementById('cCreatedBy').value,
+      createdByEmail: document.getElementById('cCreatedByEmail').value,
+      approverName: document.getElementById('cApproverName').value,
+      approverEmail,
+      items: STATE.draftItems
+    };
+    const btn = document.getElementById('btnSubmit');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+    apiPost(payload).then(res=>{
+      btn.disabled = false; btn.innerHTML = 'บันทึกและส่งอีเมลขออนุมัติ';
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('สร้างใบโอนย้าย '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+      STATE.draftItems = [];
+      STATE.view = 'print';
+      STATE.printId = res.data.transferId;
+      [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view==='list'));
+      render();
+    });
+  }
+}
+
+/* ================= SETTINGS VIEW (Dept Codes) ================= */
+function renderSettings(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>รหัสหน่วยงาน (สำหรับเลขที่เอกสาร)</h2>
+      <p style="color:var(--muted);font-size:13px;">แก้ไขได้โดยตรงในชีต <b>DeptCodes</b> บน Google Sheets (แก้ที่นี่แล้ว refresh หน้านี้เพื่อดูผล) รูปแบบเลขที่: <b>รหัส/ลำดับ/ปีพ.ศ.2หลัก</b> เช่น ACC/001/69</p>
+      <div id="deptTableHost">กำลังโหลด...</div>
+    </div>
+  `;
+  apiGet({action:'getDeptCodes'}).then(res=>{
+    if(!res.ok){ document.getElementById('deptTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
+    let html = '<table><tr><th>หน่วยงาน</th><th>รหัส</th></tr>';
+    res.data.forEach(d=>{ html += `<tr><td>${esc(d.DeptName)}</td><td><b>${esc(d.Code)}</b></td></tr>`; });
+    html += '</table>';
+    document.getElementById('deptTableHost').innerHTML = html;
+  });
+}
+
+/* ================= PRINT VIEW ================= */
+function renderPrint(root){
+  root.innerHTML = `<div class="empty">กำลังโหลด...</div>`;
+  apiGet({action:'getTransfer', id: STATE.printId}).then(res=>{
+    if(!res.ok || !res.data){ root.innerHTML = '<div class="empty">ไม่พบใบโอนย้ายนี้</div>'; return; }
+    STATE.currentTransfer = res.data;
+    root.innerHTML = buildDocHtml(res.data, true);
+    const btn = document.getElementById('btnPrintNow');
+    if(btn) btn.onclick = ()=> window.print();
+  });
+}
+
+function buildDocHtml(t, withToolbar){
+  const itemsRows = (t.Items||[]).map((it, i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td>${esc(it.AssetID)}</td>
+      <td class="left">${it.ImageURL?`<img src="${esc(it.ImageURL)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">`:''} ${esc(it.AssetName)}</td>
+      <td>${esc(it.FromDeptName)}<br><span style="font-size:11px;color:#666;">${esc(it.FromSignName)}</span></td>
+      <td>${esc(it.ToDeptName)}<br><span style="font-size:11px;color:#666;">${esc(it.ToSignName)}</span></td>
+      <td>${esc(it.Remark)}</td>
+    </tr>`).join('');
+
+  return `
+    ${withToolbar ? `
+    <div class="toolbar no-print">
+      <button class="btn btn-secondary btn-sm" onclick="STATE.view='list';render();">← กลับรายการ</button>
+      <button class="btn btn-primary btn-sm" id="btnPrintNow">🖨️ พิมพ์ / บันทึก PDF</button>
+      <span style="margin-left:auto;">${statusBadge(t.Status)}</span>
+    </div>` : ''}
+    <div class="card" id="printArea">
+      <div class="doc">
+        <div class="doc-header">${esc(COMPANY_NAME)}</div>
+        <div class="doc-title">ใบโอนย้ายทรัพย์สิน</div>
+        <div class="doc-meta">
+          <div><b>เลขที่</b> ${esc(t.RunningNo)}</div>
+          <div><b>วันที่</b> ${fmtDate(t.CreatedAt)}</div>
+        </div>
+        <div class="doc-field"><b>เรียน</b> ผช.ผู้จัดการส่วนบัญชีและการเงิน ทราบ</div>
+        <div class="doc-field"><b>เรื่อง</b> ${t.Subject==='อื่นๆ' ? 'อื่นๆ ('+esc(t.SubjectOther)+')' : 'โอนย้าย'}</div>
+        <div class="doc-field"><b>เพื่อ</b> ${esc(t.Purpose||'-')}</div>
+        <div class="doc-field">ดังมีรายละเอียดดังนี้ &nbsp; <b>จาก</b> ${esc(t.FromDept)} &nbsp; <b>ไปยัง</b> ${esc(t.ToDept)}</div>
+
+        <table class="doc-table">
+          <tr><th style="width:30px;">ลำดับ</th><th style="width:90px;">รหัส</th><th>รายการ</th><th>ผู้โอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th>ผู้รับโอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th>หมายเหตุ</th></tr>
+          ${itemsRows}
+        </table>
+
+        <div class="doc-note">
+          หมายเหตุ : กรุณากำหนดเลขที่ running number ดังนี้ xxx/001/yy<br>
+          xxx หมายถึง หน่วยงาน (ดูรหัสได้ที่เมนู "ตั้งค่ารหัสหน่วยงาน") &nbsp; 001 หมายถึง ลำดับเลขที่เอกสาร &nbsp; yy หมายถึง ปี พ.ศ. 2 หลัก
+        </div>
+
+        <div class="doc-sign">
+          <div>
+            <div class="line"></div>
+            (ผู้โอน) ${esc((t.Items&&t.Items[0]&&t.Items[0].FromSignName)||'')}<br>
+            วันที่..........................
+          </div>
+          <div>
+            <div class="line"></div>
+            (ผู้รับโอน) ${esc((t.Items&&t.Items[0]&&t.Items[0].ToSignName)||'')}<br>
+            วันที่..........................
+          </div>
+        </div>
+
+        <div style="margin-top:26px;font-size:13px;">
+          <b>รับทราบโดย</b><br>
+          1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่..........................<br>
+          2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่..........................
+        </div>
+
+        ${t.Status !== 'Draft' ? `
+        <div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">
+          <b>สถานะการอนุมัติ:</b> ${statusBadge(t.Status)} &nbsp;
+          ${t.ApproverName || t.ApproverEmail ? 'โดย '+esc(t.ApproverName||t.ApproverEmail) : ''}
+          ${t.ApprovedAt ? ' เมื่อ '+fmtDate(t.ApprovedAt) : ''}
+          ${t.ApproverComment ? '<br><b>ความเห็น:</b> '+esc(t.ApproverComment) : ''}
+        </div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+/* ================= APPROVAL VIEW (from email link) ================= */
+function renderApprove(){
+  document.querySelector('.topbar').style.display='none';
+  document.getElementById('mainNav').style.display='none';
+  const root = document.getElementById('viewRoot');
+  root.innerHTML = '<div class="empty">กำลังโหลดใบโอนย้าย...</div>';
+  apiGet({action:'getApprovalView', id: STATE.approveCtx.id, token: STATE.approveCtx.token}).then(res=>{
+    if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
+    const t = res.data;
+    STATE.currentTransfer = t;
+    let actionHtml = '';
+    if(t.Status === 'PendingApproval'){
+      actionHtml = `
+        <div class="card no-print">
+          <h2>พิจารณาอนุมัติ</h2>
+          <label>ความเห็น (ถ้ามี)</label>
+          <textarea id="approveComment" placeholder="ระบุความเห็นเพิ่มเติม..."></textarea>
+          <div style="margin-top:14px;display:flex;gap:10px;">
+            <button class="btn btn-green" id="btnApprove">✓ อนุมัติ</button>
+            <button class="btn btn-red" id="btnReject">✕ ไม่อนุมัติ</button>
+          </div>
+        </div>`;
+    } else {
+      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${statusBadge(t.Status)}</div></div>`;
+    }
+    root.innerHTML = buildDocHtml(t, false) + actionHtml;
+
+    if(t.Status === 'PendingApproval'){
+      document.getElementById('btnApprove').onclick = ()=>decide('Approved');
+      document.getElementById('btnReject').onclick = ()=>decide('Rejected');
+    }
+  });
+
+  function decide(decision){
+    const comment = document.getElementById('approveComment').value;
+    if(!confirm(decision==='Approved' ? 'ยืนยันการอนุมัติใบโอนย้ายนี้?' : 'ยืนยันการไม่อนุมัติใบโอนย้ายนี้?')) return;
+    apiPost({ action:'decideTransfer', transferId: STATE.approveCtx.id, token: STATE.approveCtx.token, decision, comment })
+      .then(res=>{
+        if(!res.ok){ toast(res.error||'ดำเนินการไม่สำเร็จ','err'); return; }
+        toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
+        renderApprove();
+      });
+  }
+}
+
+/* ================= INIT ================= */
+route();
+</script>
+</body>
+</html>
