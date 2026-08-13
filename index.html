@@ -115,7 +115,7 @@
 
 <script>
 /* ================= CONFIG ================= */
-const GAS_URL = 'PASTE_YOUR_GAS_WEB_APP_URL_HERE'; // TODO: ใส่ URL จาก Deploy > Web app
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyiAvjkIoyvuWJ8eCyMho01tENIUR--1HjMEzOigVQn-IVevZido9dXKcmUSdPbXQjIxw/exec';
 const COMPANY_NAME = '    บริษัท   สยามกลการโลจิสติกส์   จำกัด';
 
 /* ================= STATE ================= */
@@ -818,6 +818,15 @@ function renderSettings(root){
         </div>
         <button class="btn btn-primary btn-sm" id="btnAdminUnlock" style="margin-top:8px;">ปลดล็อกเพื่อแก้ไข</button>
       </div>
+      <div id="adminSourceLinkHost" style="display:none;margin-bottom:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ลิงก์ Google Sheet เชื่อมข้อมูล (ต้นทางจากทีมบัญชี)</label>
+        <input type="text" id="sourceSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/....">
+        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ระบบจะอ่านจากชีตชื่อ <b>ViewData</b> ในลิงก์นี้ (ถ้าไม่พบจะใช้ชีตแรก) โดยจับคู่คอลัมน์ตามชื่อหัวตาราง เช่น AssetID, AssetName, Department, PurchasePrice ฯลฯ แล้ว<b>อัปเดตเฉพาะรายการที่มี AssetID ตรงกับที่มีอยู่แล้ว</b> ไม่เพิ่ม/ลบรายการ</p>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" id="btnSaveSourceLink">บันทึกลิงก์</button>
+          <button class="btn btn-primary btn-sm" id="btnSyncSource">↻ ดึงข้อมูลล่าสุด</button>
+        </div>
+      </div>
       <div id="adminAssetsHost" style="display:none;"></div>
     </div>
   `;
@@ -826,6 +835,8 @@ function renderSettings(root){
 
   document.getElementById('btnAdminUnlock').onclick = unlockAdmin;
   document.getElementById('adminPw').addEventListener('keydown', e=>{ if(e.key==='Enter') unlockAdmin(); });
+  document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
+  document.getElementById('btnSyncSource').onclick = syncSource;
 
   function loadDeptCodes(){
     apiGet({action:'getDeptCodes'}).then(res=>{
@@ -847,7 +858,37 @@ function renderSettings(root){
       if(!res.ok){ toast(res.error||'รหัสผ่านไม่ถูกต้อง','err'); return; }
       STATE.adminPassword = pw;
       document.getElementById('adminGate').style.display = 'none';
+      document.getElementById('adminSourceLinkHost').style.display = 'block';
       document.getElementById('adminAssetsHost').style.display = 'block';
+      loadSourceLink();
+      loadAdminAssets();
+    });
+  }
+
+  function loadSourceLink(){
+    apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
+      if(res.ok) document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
+    });
+  }
+
+  function saveSourceLink(){
+    const url = document.getElementById('sourceSheetUrl').value.trim();
+    const btn = document.getElementById('btnSaveSourceLink');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveSourceSheetLink', password: STATE.adminPassword, url }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกลิงก์ไม่สำเร็จ','err'); return; }
+      toast('บันทึกลิงก์สำเร็จ','ok');
+    });
+  }
+
+  function syncSource(){
+    const btn = document.getElementById('btnSyncSource');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังดึงข้อมูล...';
+    apiPost({ action:'adminSyncFromSource', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '↻ ดึงข้อมูลล่าสุด';
+      if(!res.ok){ toast(res.error||'ดึงข้อมูลไม่สำเร็จ','err'); return; }
+      toast('ดึงข้อมูลสำเร็จ อัปเดต '+res.data.updatedCount+' รายการ','ok');
       loadAdminAssets();
     });
   }
