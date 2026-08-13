@@ -32,6 +32,8 @@ const SHEETS = {
   ITEMS: 'TransferItems',
   SALES: 'Sales',
   SALE_ITEMS: 'SaleItems',
+  WRITEOFFS: 'WriteOffs',
+  WRITEOFF_ITEMS: 'WriteOffItems',
   LOG: 'ActivityLog'
 };
 
@@ -42,6 +44,8 @@ const HEADERS = {
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL'],
+  WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
+  WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
 };
 
@@ -65,7 +69,8 @@ const STATUS = {
   DRAFT: 'Draft',
   PENDING: 'PendingApproval',
   APPROVED: 'Approved',
-  REJECTED: 'Rejected'
+  REJECTED: 'Rejected',
+  VOIDED: 'Voided' // ใช้เมื่อ Admin กด "คืนสถานะใช้งาน" ยกเลิกผลของใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว
 };
 
 // ============================================================
@@ -82,6 +87,8 @@ function setup() {
   ensureSheet_(ss, SHEETS.ITEMS, HEADERS.ITEMS);
   ensureSheet_(ss, SHEETS.SALES, HEADERS.SALES);
   ensureSheet_(ss, SHEETS.SALE_ITEMS, HEADERS.SALE_ITEMS);
+  ensureSheet_(ss, SHEETS.WRITEOFFS, HEADERS.WRITEOFFS);
+  ensureSheet_(ss, SHEETS.WRITEOFF_ITEMS, HEADERS.WRITEOFF_ITEMS);
   ensureSheet_(ss, SHEETS.LOG, HEADERS.LOG);
   Logger.log('Setup complete. Sheets ready: ' + Object.values(SHEETS).join(', '));
 }
@@ -123,6 +130,9 @@ function doGet(e) {
       case 'getAssets':
         result = { ok: true, data: getAssets_(e.parameter.q || '') };
         break;
+      case 'getAssetsFull':
+        result = { ok: true, data: getAssetsFull_(e.parameter.q || '') };
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -143,6 +153,15 @@ function doGet(e) {
         break;
       case 'getSaleApprovalView':
         result = getSaleApprovalView_(e.parameter.id, e.parameter.token);
+        break;
+      case 'getWriteOffs':
+        result = { ok: true, data: getWriteOffs_(e.parameter) };
+        break;
+      case 'getWriteOff':
+        result = { ok: true, data: getWriteOffFull_(e.parameter.id) };
+        break;
+      case 'getWriteOffApprovalView':
+        result = getWriteOffApprovalView_(e.parameter.id, e.parameter.token);
         break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
@@ -171,6 +190,12 @@ function doPost(e) {
       case 'decideSale':
         result = decideSale_(body);
         break;
+      case 'createWriteOff':
+        result = createWriteOff_(body);
+        break;
+      case 'decideWriteOff':
+        result = decideWriteOff_(body);
+        break;
       case 'uploadImage':
         result = uploadImage_(body);
         break;
@@ -195,6 +220,9 @@ function doPost(e) {
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
         break;
+      case 'adminRestoreAsset':
+        result = adminRestoreAsset_(body);
+        break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
     }
@@ -217,13 +245,26 @@ function respond_(obj, callback) {
 // ASSETS
 // ============================================================
 function getAssets_(q) {
+  const disposed = getDisposedAssetStatus_();
+  let rows = getAssetsRaw_(q);
+  rows = rows.filter(r => !disposed[String(r.AssetID)]);
+  return rows;
+}
+
+// รายการทรัพย์สินทั้งหมด (ไม่ซ่อนรายการที่ขาย/ตัดชำรุดแล้ว) พร้อมสถานะปัจจุบัน — ใช้กับแถบ "รายการทรัพย์สิน" และ "ข้อมูลรวม"
+function getAssetsFull_(q) {
+  const disposed = getDisposedAssetStatus_();
+  const rows = getAssetsRaw_(q);
+  rows.forEach(r => { r.AssetStatus = disposed[String(r.AssetID)] || 'Active'; });
+  return rows;
+}
+
+function getAssetsRaw_(q) {
   const sh = getSS_().getSheetByName(SHEETS.ASSETS);
   const values = sh.getDataRange().getValues();
   const headers = values.shift();
   const idx = indexMap_(headers);
   let rows = values.map(r => rowToObj_(r, idx));
-  const soldIds = getSoldAssetIds_();
-  rows = rows.filter(r => !soldIds[String(r.AssetID)]);
   if (q) {
     const qq = q.toString().toLowerCase();
     rows = rows.filter(r =>
@@ -253,26 +294,32 @@ function updateAssetImage_(body) {
   return { ok: false, error: 'Asset not found: ' + assetId };
 }
 
-// ทรัพย์สินที่มีใบขายออกซึ่งอนุมัติแล้ว ถือว่าขายออกจริง จึงซ่อนจากรายการหลัก
-function getSoldAssetIds_() {
-  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
-  const saleValues = saleSh.getDataRange().getValues();
-  const saleHeaders = saleValues.shift();
-  const saleIdx = indexMap_(saleHeaders);
-  const approvedSaleIds = {};
-  saleValues.forEach(r => {
-    if (r[saleIdx.Status] === STATUS.APPROVED) approvedSaleIds[String(r[saleIdx.SaleID])] = true;
+// ทรัพย์สินที่มีใบขายออก หรือใบตัดชำรุด ซึ่งอนุมัติแล้ว ถือว่าสิ้นสภาพการใช้งานจริง จึงซ่อนจากรายการหลัก
+// คืนค่า map ของ AssetID -> 'Sold' | 'WrittenOff' (เฉพาะรายการที่สิ้นสภาพแล้ว)
+function getDisposedAssetStatus_() {
+  const status = {};
+  markDisposedFromDocs_(status, SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', 'Sold');
+  markDisposedFromDocs_(status, SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', 'WrittenOff');
+  return status;
+}
+
+function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
+  const docSh = getSS_().getSheetByName(docSheetName);
+  const docValues = docSh.getDataRange().getValues();
+  const docHeaders = docValues.shift();
+  const docIdx = indexMap_(docHeaders);
+  const approvedDocIds = {};
+  docValues.forEach(r => {
+    if (r[docIdx.Status] === STATUS.APPROVED) approvedDocIds[String(r[docIdx[docIdField]])] = true;
   });
 
-  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemSh = getSS_().getSheetByName(itemSheetName);
   const itemValues = itemSh.getDataRange().getValues();
   const itemHeaders = itemValues.shift();
   const itemIdx = indexMap_(itemHeaders);
-  const soldIds = {};
   itemValues.forEach(r => {
-    if (approvedSaleIds[String(r[itemIdx.SaleID])]) soldIds[String(r[itemIdx.AssetID])] = true;
+    if (approvedDocIds[String(r[itemIdx[docIdField]])]) status[String(r[itemIdx.AssetID])] = label;
   });
-  return soldIds;
 }
 
 // ============================================================
@@ -339,6 +386,49 @@ function adminDeleteAsset_(body) {
     }
   }
   return { ok: false, error: 'ไม่พบทรัพย์สิน: ' + assetId };
+}
+
+// คืนสถานะทรัพย์สินที่เคยขาย/ตัดชำรุด (อนุมัติแล้ว) กลับมาเป็น "ใช้งาน" — โดยยกเลิก (Voided)
+// ใบขาย/ใบตัดชำรุดที่เกี่ยวข้องทั้งหมด แทนการลบประวัติ เพื่อให้ยังตรวจสอบย้อนหลังได้
+function adminRestoreAsset_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const voidedCount =
+    voidApprovedDocsForAsset_(SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', assetId) +
+    voidApprovedDocsForAsset_(SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', assetId);
+
+  if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
+
+  logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะใช้งานทรัพย์สิน ' + assetId);
+  return { ok: true, data: { voidedCount } };
+}
+
+function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, assetId) {
+  const itemSh = getSS_().getSheetByName(itemSheetName);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+  const docIds = {};
+  itemValues.forEach(r => {
+    if (String(r[itemIdx.AssetID]) === assetId) docIds[String(r[itemIdx[docIdField]])] = true;
+  });
+  if (!Object.keys(docIds).length) return 0;
+
+  const docSh = getSS_().getSheetByName(docSheetName);
+  const docValues = docSh.getDataRange().getValues();
+  const docHeaders = docValues[0];
+  const docIdx = indexMap_(docHeaders);
+  let count = 0;
+  for (let i = 1; i < docValues.length; i++) {
+    const id = String(docValues[i][docIdx[docIdField]]);
+    if (docIds[id] && docValues[i][docIdx.Status] === STATUS.APPROVED) {
+      docSh.getRange(i + 1, docIdx.Status + 1).setValue(STATUS.VOIDED);
+      count++;
+    }
+  }
+  return count;
 }
 
 // ============================================================
@@ -628,11 +718,36 @@ function decideTransfer_(body) {
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
   sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
 
+  if (decision === STATUS.APPROVED) {
+    applyTransferToAssets_(transferId);
+  }
+
   logActivity_(transferId, decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
 
   sendDecisionNotification_(found.obj, decision, body.comment || '');
 
   return { ok: true, data: { transferId, status: decision } };
+}
+
+// เมื่อใบโอนย้ายได้รับอนุมัติแล้ว ปรับหน่วยงาน/ผู้ดูแลของทรัพย์สินแต่ละรายการในชีต Assets ให้ตรงกับปลายทาง
+function applyTransferToAssets_(transferId) {
+  const items = getTransferItems_(transferId);
+  if (!items.length) return;
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const idx = indexMap_(headers);
+  const rowByAssetId = {};
+  for (let i = 1; i < values.length; i++) {
+    rowByAssetId[String(values[i][idx.AssetID])] = i + 1;
+  }
+  items.forEach(it => {
+    const rowNum = rowByAssetId[String(it.AssetID)];
+    if (!rowNum) return;
+    if (it.ToDeptName) sh.getRange(rowNum, idx.Department + 1).setValue(it.ToDeptName);
+    if (it.ToSignName) sh.getRange(rowNum, idx.Custodian + 1).setValue(it.ToSignName);
+    sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
+  });
 }
 
 // ============================================================
@@ -804,6 +919,170 @@ function decideSale_(body) {
 }
 
 // ============================================================
+// WRITE-OFFS — ตัดชำรุดทรัพย์สิน (ราคาซาก)
+// ============================================================
+function getWriteOffs_(params) {
+  const sh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  let rows = values.map(r => rowToObj_(r, idx));
+
+  if (params.status) rows = rows.filter(r => r.Status === params.status);
+  if (params.dept) rows = rows.filter(r => r.FromDept === params.dept);
+  if (params.from) rows = rows.filter(r => new Date(r.CreatedAt) >= new Date(params.from));
+  if (params.to) rows = rows.filter(r => new Date(r.CreatedAt) <= new Date(params.to + 'T23:59:59'));
+  if (params.q) {
+    const qq = params.q.toLowerCase();
+    rows = rows.filter(r =>
+      String(r.RunningNo).toLowerCase().indexOf(qq) !== -1 ||
+      String(r.Reason).toLowerCase().indexOf(qq) !== -1
+    );
+  }
+  rows.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
+
+  const itemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+  const counts = {};
+  itemValues.forEach(r => {
+    const wid = r[itemIdx.WriteOffID];
+    counts[wid] = (counts[wid] || 0) + 1;
+  });
+  rows.forEach(r => { r.ItemCount = counts[r.WriteOffID] || 0; });
+
+  return rows;
+}
+
+function getWriteOffFull_(writeOffId) {
+  const w = findWriteOffRow_(writeOffId);
+  if (!w) return null;
+  const obj = w.obj;
+  obj.Items = getWriteOffItems_(writeOffId);
+  delete obj.ApprovalToken;
+  return obj;
+}
+
+function getWriteOffItems_(writeOffId) {
+  const sh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  return values
+    .map(r => rowToObj_(r, idx))
+    .filter(r => r.WriteOffID === writeOffId)
+    .sort((a, b) => a.LineNo - b.LineNo);
+}
+
+function findWriteOffRow_(writeOffId) {
+  const sh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const idx = indexMap_(headers);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.WriteOffID]) === String(writeOffId)) {
+      return { rowNum: i + 1, obj: rowToObj_(values[i], idx), idx };
+    }
+  }
+  return null;
+}
+
+function createWriteOff_(body) {
+  const items = body.items || [];
+  if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
+  if (!body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
+
+  const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
+  const runningNo = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS);
+  const writeOffId = Utilities.getUuid();
+  const token = Utilities.getUuid();
+  const now = new Date();
+
+  const wSheet = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  wSheet.appendRow([
+    writeOffId,
+    runningNo,
+    now,
+    body.fromDept || '',
+    fromDeptCode,
+    body.reason || '',
+    body.remark || '',
+    STATUS.PENDING,
+    body.approverName || '',
+    body.approverEmail || '',
+    token,
+    '',
+    '',
+    body.createdBy || '',
+    body.createdByEmail || ''
+  ]);
+
+  const iSheet = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const itemRows = items.map((it, i) => [
+    writeOffId,
+    i + 1,
+    it.assetId || '',
+    it.assetName || '',
+    it.scrapPrice || 0,
+    it.remark || '',
+    it.imageUrl || ''
+  ]);
+  if (itemRows.length) {
+    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.WRITEOFF_ITEMS.length).setValues(itemRows);
+  }
+
+  logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
+
+  const emailResult = sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token);
+
+  return { ok: true, data: { writeOffId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null } };
+}
+
+function getWriteOffApprovalView_(writeOffId, token) {
+  const found = findWriteOffRow_(writeOffId);
+  if (!found) return { ok: false, error: 'ไม่พบใบตัดชำรุดนี้' };
+  if (String(found.obj.ApprovalToken) !== String(token)) {
+    return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
+  }
+  const items = getWriteOffItems_(writeOffId);
+  const obj = Object.assign({}, found.obj);
+  delete obj.ApprovalToken;
+  obj.Items = items;
+  return { ok: true, data: obj };
+}
+
+function decideWriteOff_(body) {
+  const writeOffId = body.writeOffId;
+  const token = body.token;
+  const decision = body.decision; // 'Approved' | 'Rejected'
+  const found = findWriteOffRow_(writeOffId);
+  if (!found) return { ok: false, error: 'ไม่พบใบตัดชำรุดนี้' };
+  if (String(found.obj.ApprovalToken) !== String(token)) {
+    return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
+  }
+  if (found.obj.Status !== STATUS.PENDING) {
+    return { ok: false, error: 'ใบตัดชำรุดนี้ถูกดำเนินการไปแล้ว (สถานะปัจจุบัน: ' + found.obj.Status + ')' };
+  }
+  if (decision !== STATUS.APPROVED && decision !== STATUS.REJECTED) {
+    return { ok: false, error: 'decision ไม่ถูกต้อง' };
+  }
+
+  const sh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const idx = found.idx;
+  const rowNum = found.rowNum;
+  sh.getRange(rowNum, idx.Status + 1).setValue(decision);
+  sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
+  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+
+  logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
+
+  sendWriteOffDecisionNotification_(found.obj, decision, body.comment || '');
+
+  return { ok: true, data: { writeOffId, status: decision } };
+}
+
+// ============================================================
 // IMAGE UPLOAD (Google Drive)
 // ============================================================
 function uploadImage_(body) {
@@ -952,6 +1231,68 @@ function sendSaleDecisionNotification_(saleObj, decision, comment) {
     });
   } catch (err) {
     Logger.log('sendSaleDecisionNotification_ error: ' + err);
+  }
+}
+
+function sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token) {
+  try {
+    const approveUrl = CONFIG.FRONTEND_URL + '?view=approveWriteOff&id=' + encodeURIComponent(writeOffId) + '&token=' + encodeURIComponent(token);
+    const itemsHtml = items.map((it, i) => (
+      '<tr>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.assetId) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.assetName) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(it.scrapPrice) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.remark || '') + '</td>' +
+      '</tr>'
+    )).join('');
+
+    const html =
+      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:640px;margin:auto;">' +
+      '<h2 style="color:#1a3c6e;">' + CONFIG.COMPANY_NAME + '</h2>' +
+      '<h3>ใบตัดชำรุดทรัพย์สิน เลขที่ ' + runningNo + '</h3>' +
+      '<p><b>หน่วยงาน:</b> ' + escapeHtml_(body.fromDept) + '</p>' +
+      '<p><b>สาเหตุชำรุด:</b> ' + escapeHtml_(body.reason || '-') + '</p>' +
+      '<p><b>หมายเหตุ:</b> ' + escapeHtml_(body.remark || '-') + '</p>' +
+      '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
+      '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ราคาซาก</th><th style="border:1px solid #ddd;padding:6px;">หมายเหตุ</th></tr>' +
+      itemsHtml +
+      '</table>' +
+      '<p style="margin-top:20px;">กรุณาตรวจสอบรายละเอียดฉบับเต็มและพิจารณาอนุมัติที่ลิงก์ด้านล่าง:</p>' +
+      '<p><a href="' + approveUrl + '" style="background:#1a3c6e;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;">เปิดใบตัดชำรุดเพื่อพิจารณาอนุมัติ</a></p>' +
+      '<p style="color:#888;font-size:12px;">ผู้บันทึก: ' + escapeHtml_(body.createdBy || '-') + '</p>' +
+      '</div>';
+
+    MailApp.sendEmail({
+      to: body.approverEmail,
+      subject: '[ขออนุมัติ] ใบตัดชำรุดทรัพย์สิน ' + runningNo + ' — ' + CONFIG.COMPANY_NAME,
+      htmlBody: html
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+function sendWriteOffDecisionNotification_(writeOffObj, decision, comment) {
+  try {
+    if (!writeOffObj.CreatedByEmail) return;
+    const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
+    const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
+    const html =
+      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
+      '<h3>ใบตัดชำรุดทรัพย์สิน เลขที่ ' + writeOffObj.RunningNo + '</h3>' +
+      '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
+      (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
+      '<p>โดย: ' + escapeHtml_(writeOffObj.ApproverName || writeOffObj.ApproverEmail) + '</p>' +
+      '</div>';
+    MailApp.sendEmail({
+      to: writeOffObj.CreatedByEmail,
+      subject: '[' + statusThai + '] ใบตัดชำรุดทรัพย์สิน ' + writeOffObj.RunningNo,
+      htmlBody: html
+    });
+  } catch (err) {
+    Logger.log('sendWriteOffDecisionNotification_ error: ' + err);
   }
 }
 
