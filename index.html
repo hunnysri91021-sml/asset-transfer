@@ -463,6 +463,27 @@ function closeAssetModal(){
   document.getElementById('modalHost').innerHTML = '';
 }
 
+function uploadAssetModalImage(input){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    toast('กำลังอัปโหลดรูป...');
+    apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: document.getElementById('amAssetID').value || 'asset' })
+      .then(res=>{
+        if(res.ok){
+          document.getElementById('amImageURL').value = res.data.url;
+          const preview = document.getElementById('amImagePreview');
+          preview.src = res.data.url;
+          preview.style.visibility = 'visible';
+          toast('อัปโหลดรูปสำเร็จ','ok');
+        } else toast(res.error||'อัปโหลดไม่สำเร็จ','err');
+      });
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
 function openAssetEditModal(asset, onSaved){
   const a = asset || {};
   const isNew = !asset;
@@ -497,8 +518,17 @@ function openAssetEditModal(asset, onSaved){
         </div>
         <label>แท็กสถานะ</label>
         <select id="amTag">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${(a.Tag||'ใช้งาน')===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
-        <label>URL รูปภาพ</label>
-        <input type="text" id="amImageURL" value="${esc(a.ImageURL||'')}" placeholder="https://...">
+        <label>รูปภาพ</label>
+        <div class="item-img-gallery">
+          <div class="item-img-thumb">
+            <img id="amImagePreview" src="${esc(a.ImageURL||'')}" onerror="this.style.visibility='hidden'" style="${a.ImageURL?'':'visibility:hidden;'}">
+          </div>
+          <div class="item-img-add" onclick="document.getElementById('amImageFile').click()">+ อัปโหลดรูป</div>
+          <div class="item-img-add" onclick="document.getElementById('amImageCam').click()">📷 ถ่ายรูป</div>
+        </div>
+        <input type="file" id="amImageFile" accept="image/*" style="display:none;">
+        <input type="file" id="amImageCam" accept="image/*" capture="environment" style="display:none;">
+        <input type="text" id="amImageURL" value="${esc(a.ImageURL||'')}" placeholder="https://... (หรืออัปโหลด/ถ่ายรูปด้านบน)" style="margin-top:8px;">
         <div class="modal-actions">
           <button class="btn btn-secondary btn-sm" id="btnAssetModalCancel">ยกเลิก</button>
           <button class="btn btn-primary btn-sm" id="btnAssetModalSave">บันทึก</button>
@@ -508,6 +538,8 @@ function openAssetEditModal(asset, onSaved){
   `;
   document.getElementById('btnAssetModalCancel').onclick = closeAssetModal;
   document.getElementById('assetModalOverlay').onclick = (e)=>{ if(e.target.id==='assetModalOverlay') closeAssetModal(); };
+  document.getElementById('amImageFile').onchange = function(){ uploadAssetModalImage(this); };
+  document.getElementById('amImageCam').onchange = function(){ uploadAssetModalImage(this); };
   document.getElementById('btnAssetModalSave').onclick = ()=>{
     const assetId = document.getElementById('amAssetID').value.trim();
     if(!assetId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
