@@ -182,6 +182,7 @@ const COMPANY_NAME = '    บริษัท   สยามกลการโล
 let STATE = {
   view: 'dashboard',
   role: null,
+  username: null,
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -191,7 +192,6 @@ let STATE = {
   transferHeader: null,
   approveCtx: null,
   adminPassword: null,
-  adminAssets: [],
   sales: [],
   draftSaleItems: [],
   saleCreateStep: 'form',
@@ -299,6 +299,7 @@ function checkAuth(){
     if(obj && obj.password && obj.role){
       STATE.adminPassword = obj.password;
       STATE.role = obj.role;
+      STATE.username = obj.username || '';
       return true;
     }
   }catch(e){}
@@ -313,30 +314,33 @@ function renderLogin(){
       <div class="card login-card">
         <h1>ระบบจัดการทรัพย์สิน</h1>
         <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด</div>
-        <label>รหัสผ่านเข้าระบบ</label>
-        <input type="password" id="loginPw" placeholder="กรอกรหัสผ่าน">
-        <div class="row" style="margin-top:16px;">
-          <button class="btn btn-secondary" id="btnLoginUser" style="flex:1;">เข้าใช้งาน (User)</button>
-          <button class="btn btn-primary" id="btnLoginAdmin" style="flex:1;">เข้าสู่ระบบ Admin</button>
+        <label>ชื่อผู้ใช้</label>
+        <input type="text" id="loginUsername" placeholder="กรอกชื่อผู้ใช้" autocomplete="username">
+        <label>รหัสผ่าน</label>
+        <input type="password" id="loginPw" placeholder="กรอกรหัสผ่าน" autocomplete="current-password">
+        <div style="margin-top:16px;">
+          <button class="btn btn-primary" id="btnLogin" style="width:100%;">เข้าสู่ระบบ</button>
         </div>
       </div>
     </div>
   `;
-  document.getElementById('loginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin('user'); });
-  document.getElementById('btnLoginUser').onclick = ()=> doLogin('user');
-  document.getElementById('btnLoginAdmin').onclick = ()=> doLogin('admin');
+  document.getElementById('loginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+  document.getElementById('loginUsername').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+  document.getElementById('btnLogin').onclick = doLogin;
 
-  function doLogin(role){
+  function doLogin(){
+    const username = document.getElementById('loginUsername').value.trim();
     const pw = document.getElementById('loginPw').value;
     if(!pw){ toast('กรุณากรอกรหัสผ่าน','err'); return; }
-    const btns = [document.getElementById('btnLoginUser'), document.getElementById('btnLoginAdmin')];
-    btns.forEach(b=>b.disabled = true);
-    apiPost({ action:'adminVerify', password: pw }).then(res=>{
-      btns.forEach(b=>b.disabled = false);
-      if(!res.ok){ toast(res.error||'รหัสผ่านไม่ถูกต้อง','err'); return; }
+    const btn = document.getElementById('btnLogin');
+    btn.disabled = true;
+    apiPost({ action:'login', username, password: pw }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'เข้าสู่ระบบไม่สำเร็จ','err'); return; }
       STATE.adminPassword = pw;
-      STATE.role = role;
-      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role }));
+      STATE.role = res.data.role;
+      STATE.username = res.data.username;
+      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username }));
       STATE.view = 'dashboard';
       enterApp();
     });
@@ -347,6 +351,7 @@ function logout(){
   sessionStorage.removeItem(AUTH_SESSION_KEY);
   STATE.adminPassword = null;
   STATE.role = null;
+  STATE.username = null;
   STATE.view = 'dashboard';
   enterApp();
 }
@@ -434,7 +439,7 @@ function render(){
   const titleEl = document.getElementById('pageTitle');
   if(titleEl) titleEl.textContent = VIEW_TITLES[STATE.view] || '';
   const roleBadgeEl = document.getElementById('roleBadge');
-  if(roleBadgeEl) roleBadgeEl.textContent = STATE.role==='admin' ? 'โหมด: Admin' : 'โหมด: User';
+  if(roleBadgeEl) roleBadgeEl.textContent = (STATE.username ? STATE.username+' · ' : '') + (STATE.role==='admin' ? 'Admin' : 'User');
   const settingsNavBtn = document.querySelector('#mainNav button[data-view="settings"]');
   if(settingsNavBtn) settingsNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const navGroupSystem = document.getElementById('navGroupSystem');
@@ -2004,9 +2009,9 @@ function renderSettings(root){
     </div>
 
     <div class="card" id="adminCard">
-      <h2>จัดการข้อมูลทรัพย์สินหลัก (Admin)</h2>
-      <p style="color:var(--muted);font-size:13px;">ข้อมูลหลักในชีต <b>Assets</b> ถูกอัปโหลดเข้ามาเป็นระยะโดยทีมบัญชี (จาก AppSheet) หากต้องแก้ไข/เพิ่ม/ลบรายการระหว่างรอบอัปโหลด Admin สามารถทำได้ที่นี่</p>
-      <div id="adminSourceLinkHost" style="margin-bottom:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+      <h2>เชื่อมข้อมูลทรัพย์สินหลักจากทีมบัญชี</h2>
+      <p style="color:var(--muted);font-size:13px;">ข้อมูลหลักในชีต <b>Assets</b> ถูกอัปโหลดเข้ามาเป็นระยะโดยทีมบัญชี (จาก AppSheet) ผ่านลิงก์ด้านล่างนี้ ส่วนการดู/แก้ไข/เพิ่ม/ลบรายการทรัพย์สินแต่ละรายการ ทำได้ที่หน้า <b>"รายการทรัพย์สิน"</b> โดยตรง</p>
+      <div id="adminSourceLinkHost" style="padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ลิงก์ Google Sheet เชื่อมข้อมูล (ต้นทางจากทีมบัญชี)</label>
         <input type="text" id="sourceSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/....">
         <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ระบบจะอ่านจากแท็บที่ชื่อขึ้นต้นด้วย <b>AppSheet.ViewData</b> ในลิงก์นี้ (เลือกแท็บวันที่ล่าสุดให้อัตโนมัติ) โดยจับคู่คอลัมน์ตามชื่อหัวตาราง เช่น AssetID, AssetName, Department, PurchasePrice ฯลฯ แล้วอัปเดตรายการที่มี AssetID ตรงกับที่มีอยู่แล้ว และเพิ่มรายการใหม่ให้กับ AssetID ที่ยังไม่มีในระบบ</p>
@@ -2015,17 +2020,24 @@ function renderSettings(root){
           <button class="btn btn-primary btn-sm" id="btnSyncSource">↻ ดึงข้อมูลล่าสุด</button>
         </div>
       </div>
-      <div id="adminAssetsHost"></div>
+    </div>
+
+    <div class="card">
+      <h2>ผู้ใช้งาน</h2>
+      <p style="color:var(--muted);font-size:13px;">เพิ่ม/แก้ไข/ลบผู้ใช้งานระบบ พร้อมกำหนดรหัสผ่านและสิทธิ์การใช้งาน (User เข้าได้ทุกแถบยกเว้นตั้งค่า, Admin เข้าได้ทุกแถบ) — เว้นว่างช่องรหัสผ่านเวลาบันทึกแก้ไขผู้ใช้เดิม เพื่อไม่เปลี่ยนรหัสผ่าน</p>
+      <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnUserAddNew">+ เพิ่มผู้ใช้ใหม่</button></div>
+      <div id="userTableHost">กำลังโหลด...</div>
     </div>
   `;
 
   loadDeptCodes();
   loadSourceLink();
-  loadAdminAssets();
+  loadUsers();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
+  document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
 
   function loadDeptCodes(){
     apiGet({action:'getDeptCodes'}).then(res=>{
@@ -2123,94 +2135,75 @@ function renderSettings(root){
     apiPost({ action:'adminSyncFromSource', password: STATE.adminPassword }).then(res=>{
       btn.disabled = false; btn.innerHTML = '↻ ดึงข้อมูลล่าสุด';
       if(!res.ok){ toast(res.error||'ดึงข้อมูลไม่สำเร็จ','err'); return; }
-      toast('ดึงข้อมูลจาก '+esc(res.data.sourceTabName||'')+' สำเร็จ อัปเดต '+res.data.updatedCount+' รายการ เพิ่มใหม่ '+res.data.addedCount+' รายการ','ok');
-      loadAdminAssets();
+      toast('ดึงข้อมูลจาก '+esc(res.data.sourceTabName||'')+' สำเร็จ อัปเดต '+res.data.updatedCount+' รายการ เพิ่มใหม่ '+res.data.addedCount+' รายการ — ดูรายละเอียดได้ที่หน้า "รายการทรัพย์สิน"','ok');
     });
   }
 
-  function loadAdminAssets(){
-    const host = document.getElementById('adminAssetsHost');
-    host.innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiGet({action:'getAssets'}).then(res=>{
-      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
-      STATE.adminAssets = res.data;
-      renderAdminAssetsTable();
+  let userList = [];
+
+  function loadUsers(){
+    apiPost({ action:'adminGetUsers', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ document.getElementById('userTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
+      userList = res.data;
+      renderUsersTable();
     });
   }
 
-  const ADMIN_FIELD_COLS = [
-    ['AssetID','รหัสทรัพย์สิน'], ['AssetName','ชื่อทรัพย์สิน'], ['Department','หน่วยงาน'],
-    ['Division','ฝ่าย'], ['WorkGroup','กลุ่มงาน'],
-    ['PurchaseDate','วันที่ซื้อ'], ['PurchasePrice','ราคาซื้อ'], ['BookValue','มูลค่าตามบัญชี'],
-    ['Custodian','ผู้ดูแล'], ['Location','สถานที่'], ['Tag','แท็กสถานะ'],
-    ['ScrapPrice','ราคาซาก'], ['MinSalePrice','ราคาขายขั้นต่ำ'], ['ImageURL','URL รูปภาพ']
-  ];
-
-  function renderAdminAssetsTable(){
-    const host = document.getElementById('adminAssetsHost');
-    host.innerHTML = `
-      <div class="toolbar">
-        <button class="btn btn-secondary btn-sm" id="btnAdminRefresh">↻ รีเฟรช</button>
-        <button class="btn btn-primary btn-sm" id="btnAdminAddNew">+ เพิ่มทรัพย์สินใหม่</button>
-      </div>
-      <div style="overflow-x:auto;">
-        <table>
-          <tr>${ADMIN_FIELD_COLS.map(c=>`<th>${esc(c[1])}</th>`).join('')}<th class="no-print">จัดการ</th></tr>
-          <tbody id="adminAssetsBody"></tbody>
-        </table>
-      </div>
+  function renderUsersTable(){
+    const rowsHtml = userList.map((u,i)=>`
+      <tr>
+        <td><input type="text" data-ufield="Username" data-ui="${i}" value="${esc(u.Username)}" ${u.__isNew ? '' : 'readonly style="background:#f4f6f9;"'}></td>
+        <td>
+          <select data-ufield="Role" data-ui="${i}">
+            <option value="user" ${u.Role!=='admin'?'selected':''}>User</option>
+            <option value="admin" ${u.Role==='admin'?'selected':''}>Admin</option>
+          </select>
+        </td>
+        <td><input type="password" data-ufield="Password" data-ui="${i}" placeholder="${u.__isNew ? 'ระบุรหัสผ่าน' : 'เว้นว่าง = ไม่เปลี่ยน'}"></td>
+        <td class="no-print" style="white-space:nowrap;">
+          <button class="btn btn-secondary btn-sm" onclick="saveUserRow(${i})">บันทึก</button>
+          <button class="btn btn-red btn-sm" onclick="deleteUserRow(${i})">ลบ</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('userTableHost').innerHTML = `
+      <div style="overflow-x:auto;"><table>
+        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th class="no-print">จัดการ</th></tr>
+        ${rowsHtml || '<tr><td colspan="4" class="empty">ยังไม่มีผู้ใช้ (เข้าระบบด้วยรหัสผ่านหลักได้เสมอ)</td></tr>'}
+      </table></div>
     `;
-    document.getElementById('btnAdminRefresh').onclick = loadAdminAssets;
-    document.getElementById('btnAdminAddNew').onclick = addBlankAssetRow;
-    renderAdminRows();
-
-    function addBlankAssetRow(){
-      STATE.adminAssets.unshift({ AssetID:'', AssetName:'', Department:'', PurchaseDate:'', PurchasePrice:'', BookValue:'', Custodian:'', Location:'', ImageURL:'', __isNew:true });
-      renderAdminRows();
-    }
-
-    function renderAdminRows(){
-      const body = document.getElementById('adminAssetsBody');
-      if(!STATE.adminAssets.length){ body.innerHTML = `<tr><td colspan="${ADMIN_FIELD_COLS.length+1}" class="empty">ยังไม่มีข้อมูลทรัพย์สิน</td></tr>`; return; }
-      body.innerHTML = STATE.adminAssets.map((a, i) => `
-        <tr>
-          ${ADMIN_FIELD_COLS.map(([f])=> `<td><input type="text" data-field="${f}" data-i="${i}" value="${esc(a[f]!=null?a[f]:'')}" ${f==='AssetID' && !a.__isNew ? 'readonly style="background:#f4f6f9;"' : ''}></td>`).join('')}
-          <td class="no-print" style="white-space:nowrap;">
-            <button class="btn btn-green btn-sm" data-save="${i}">บันทึก</button>
-            <button class="btn btn-red btn-sm" data-del="${i}" ${a.__isNew?'disabled':''}>ลบ</button>
-          </td>
-        </tr>
-      `).join('');
-      body.querySelectorAll('button[data-save]').forEach(b=>{ b.onclick = ()=> saveRow(parseInt(b.dataset.save,10)); });
-      body.querySelectorAll('button[data-del]').forEach(b=>{ b.onclick = ()=> deleteRow(parseInt(b.dataset.del,10)); });
-    }
-
-    function collectRow(i){
-      const obj = {};
-      document.querySelectorAll(`input[data-i="${i}"]`).forEach(inp => { obj[inp.dataset.field] = inp.value.trim(); });
-      return obj;
-    }
-
-    function saveRow(i){
-      const asset = collectRow(i);
-      if(!asset.AssetID){ toast('กรุณาระบุรหัสทรัพย์สิน (AssetID)','err'); return; }
-      apiPost({ action:'adminSaveAsset', password: STATE.adminPassword, asset }).then(res=>{
-        if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
-        toast('บันทึกข้อมูลสำเร็จ','ok');
-        loadAdminAssets();
-      });
-    }
-
-    function deleteRow(i){
-      const asset = STATE.adminAssets[i];
-      if(!confirm('ยืนยันการลบทรัพย์สิน '+asset.AssetID+' ?')) return;
-      apiPost({ action:'adminDeleteAsset', password: STATE.adminPassword, assetId: asset.AssetID }).then(res=>{
-        if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
-        toast('ลบข้อมูลสำเร็จ','ok');
-        loadAdminAssets();
-      });
-    }
   }
+
+  function addBlankUserRow(){
+    userList.push({ Username:'', Role:'user', __isNew:true });
+    renderUsersTable();
+  }
+
+  window.saveUserRow = (i)=>{
+    const u = userList[i];
+    const usernameEl = document.querySelector(`[data-ufield="Username"][data-ui="${i}"]`);
+    const roleEl = document.querySelector(`[data-ufield="Role"][data-ui="${i}"]`);
+    const pwEl = document.querySelector(`[data-ufield="Password"][data-ui="${i}"]`);
+    u.Username = usernameEl.value.trim();
+    u.Role = roleEl.value;
+    const password = pwEl.value;
+    if(!u.Username){ toast('กรุณาระบุชื่อผู้ใช้','err'); return; }
+    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Password: password } }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกผู้ใช้ไม่สำเร็จ','err'); return; }
+      toast('บันทึกผู้ใช้สำเร็จ','ok');
+      loadUsers();
+    });
+  };
+
+  window.deleteUserRow = (i)=>{
+    const u = userList[i];
+    if(u.__isNew){ userList.splice(i,1); renderUsersTable(); return; }
+    if(!confirm('ยืนยันลบผู้ใช้ "'+u.Username+'" ?')) return;
+    apiPost({ action:'adminDeleteUser', password: STATE.adminPassword, username: u.Username }).then(res=>{
+      if(!res.ok){ toast(res.error||'ลบผู้ใช้ไม่สำเร็จ','err'); return; }
+      toast('ลบผู้ใช้สำเร็จ','ok');
+      loadUsers();
+    });
+  };
 }
 
 /* ================= PRINT VIEW ================= */
