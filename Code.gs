@@ -11,6 +11,8 @@
  *       - Who has access: Anyone
  *  5. คัดลอก Web App URL ไปใส่ใน index.html (GAS_URL)
  *  6. รันฟังก์ชัน setup() หนึ่งครั้งจากตัวแก้ไข Apps Script เพื่อสร้างชีตทั้งหมดอัตโนมัติ
+ *  7. เปิดชีต Users แล้วเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน (Username, Password, Role=admin) ด้วยตนเอง
+ *       ก่อนเริ่มใช้งานจริง — ไม่เช่นนั้นจะไม่มีใคร login เข้าระบบได้เลย (ไม่มีรหัสผ่านสำรองอีกต่อไป)
  */
 
 // ============================================================
@@ -21,8 +23,7 @@ const CONFIG = {
   FRONTEND_URL: 'https://hunnysri91021-sml.github.io/asset-transfer', // TODO: แก้เป็น URL จริงหลัง deploy GitHub Pages
   COMPANY_NAME: 'บริษัท สยามกลการโลจิสติกส์ จำกัด',
   DRIVE_FOLDER_NAME: 'SML_Asset_Transfer_Images',
-  DEFAULT_TIMEOUT_MS: 15000,
-  ADMIN_PASSWORD: '' // TODO: ตั้งรหัสผ่านก่อนใช้งาน — ใช้เป็นรหัสผ่านเข้าระบบทั้งโหมด User และ Admin (เว้นว่าง = ระบบ login ปฏิเสธทุกคน)
+  DEFAULT_TIMEOUT_MS: 15000
 };
 
 const SHEETS = {
@@ -343,11 +344,10 @@ function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, 
 // ============================================================
 // ADMIN — แก้ไขข้อมูลทรัพย์สินหลัก (ชีต Assets ที่ทีมบัญชี upload เข้ามา)
 // ============================================================
-// รหัสผ่าน Admin ที่ใช้ได้: รหัสผ่านหลัก (bootstrap, กันล็อกตัวเองออกจากระบบ) หรือรหัสผ่านของผู้ใช้ที่มีสิทธิ์ admin ในชีต Users
+// รหัสผ่าน admin ต้องตรงกับผู้ใช้ที่มีสิทธิ์ admin ในชีต Users เท่านั้น (ไม่มีรหัสผ่านกลางสำรองอีกต่อไป)
 function checkAdminPassword_(pw) {
   const p = String(pw || '');
   if (!p) return false;
-  if (CONFIG.ADMIN_PASSWORD && p === String(CONFIG.ADMIN_PASSWORD)) return true;
   const sh = getSS_().getSheetByName(SHEETS.USERS);
   const values = sh.getDataRange().getValues();
   const idx = indexMap_(values[0]);
@@ -357,25 +357,19 @@ function checkAdminPassword_(pw) {
   return false;
 }
 
-// เข้าสู่ระบบด้วยชื่อผู้ใช้ + รหัสผ่านที่ Admin ตั้งไว้ในชีต Users
-// หรือใช้รหัสผ่านหลัก (CONFIG.ADMIN_PASSWORD) เป็นทางสำรองเข้าเป็น admin ได้เสมอ กันกรณีล็อกตัวเองออกจากระบบ
+// เข้าสู่ระบบด้วยชื่อผู้ใช้ + รหัสผ่านที่ Admin ตั้งไว้ในชีต Users เท่านั้น
 function login_(body) {
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
-  if (!password) return { ok: false, error: 'กรุณากรอกรหัสผ่าน' };
+  if (!username || !password) return { ok: false, error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' };
 
-  if (username) {
-    const sh = getSS_().getSheetByName(SHEETS.USERS);
-    const values = sh.getDataRange().getValues();
-    const idx = indexMap_(values[0]);
-    for (let i = 1; i < values.length; i++) {
-      if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
-        return { ok: true, data: { username, role: values[i][idx.Role] === 'admin' ? 'admin' : 'user' } };
-      }
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
+      return { ok: true, data: { username, role: values[i][idx.Role] === 'admin' ? 'admin' : 'user' } };
     }
-  }
-  if (CONFIG.ADMIN_PASSWORD && password === String(CONFIG.ADMIN_PASSWORD)) {
-    return { ok: true, data: { username: username || 'admin', role: 'admin' } };
   }
   return { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
 }
