@@ -186,6 +186,15 @@ function doPost(e) {
       case 'adminDeleteAsset':
         result = adminDeleteAsset_(body);
         break;
+      case 'adminGetSettings':
+        result = adminGetSettings_(body);
+        break;
+      case 'adminSaveSourceSheetLink':
+        result = adminSaveSourceSheetLink_(body);
+        break;
+      case 'adminSyncFromSource':
+        result = adminSyncFromSource_(body);
+        break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
     }
@@ -330,6 +339,87 @@ function adminDeleteAsset_(body) {
     }
   }
   return { ok: false, error: 'ไม่พบทรัพย์สิน: ' + assetId };
+}
+
+// ============================================================
+// ADMIN — เชื่อมข้อมูลจาก Google Sheet ต้นทาง (เช่น AppSheet.ViewData ของทีมบัญชี)
+// ============================================================
+const SOURCE_SHEET_TAB_NAME = 'ViewData';
+const SOURCE_SHEET_URL_PROP = 'SOURCE_SHEET_URL';
+const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ImageURL'];
+
+function getSourceSheetUrl_() {
+  return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
+}
+
+function adminGetSettings_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_() } };
+}
+
+function adminSaveSourceSheetLink_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const url = String(body.url || '').trim();
+  if (url && !/^https:\/\/docs\.google\.com\/spreadsheets\//.test(url)) {
+    return { ok: false, error: 'กรุณาระบุลิงก์ Google Sheets ที่ถูกต้อง (https://docs.google.com/spreadsheets/...)' };
+  }
+  PropertiesService.getScriptProperties().setProperty(SOURCE_SHEET_URL_PROP, url);
+  logActivity_('', 'ADMIN_SET_SOURCE_LINK', 'admin', 'ตั้งค่าลิงก์ข้อมูลต้นทาง');
+  return { ok: true };
+}
+
+// ดึงข้อมูลจากชีตต้นทาง จับคู่คอลัมน์ตามชื่อหัวตาราง แล้วอัปเดตเฉพาะแถวที่มี AssetID ตรงกับที่มีอยู่แล้วในชีต Assets
+// (ไม่เพิ่มแถวใหม่ ไม่ลบแถวเดิม เพื่อไม่ทับรายการที่ Admin เพิ่ม/แก้ไขเองในระบบ)
+function adminSyncFromSource_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const url = getSourceSheetUrl_();
+  if (!url) return { ok: false, error: 'ยังไม่ได้ตั้งค่าลิงก์ Google Sheet ต้นทาง' };
+
+  let srcSs;
+  try {
+    srcSs = SpreadsheetApp.openByUrl(url);
+  } catch (err) {
+    return { ok: false, error: 'เปิดลิงก์ Google Sheet ไม่สำเร็จ (ตรวจสอบลิงก์และสิทธิ์การเข้าถึง): ' + err };
+  }
+  const srcSheet = srcSs.getSheetByName(SOURCE_SHEET_TAB_NAME) || srcSs.getSheets()[0];
+  if (!srcSheet) return { ok: false, error: 'ไม่พบชีตข้อมูลในลิงก์ที่ระบุ' };
+
+  const srcValues = srcSheet.getDataRange().getValues();
+  if (srcValues.length < 2) return { ok: false, error: 'ไม่พบข้อมูลในชีตต้นทาง' };
+  const srcHeaders = srcValues.shift();
+  const srcIdx = indexMap_(srcHeaders);
+  if (srcIdx.AssetID === undefined) return { ok: false, error: 'ไม่พบคอลัมน์ AssetID ในชีตต้นทาง' };
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const idx = indexMap_(headers);
+  const localRowByAssetId = {};
+  for (let i = 1; i < values.length; i++) {
+    localRowByAssetId[String(values[i][idx.AssetID])] = i + 1;
+  }
+
+  let updatedCount = 0;
+  srcValues.forEach(srcRow => {
+    const assetId = String(srcRow[srcIdx.AssetID] || '').trim();
+    if (!assetId) return;
+    const rowNum = localRowByAssetId[assetId];
+    if (!rowNum) return; // อัปเดตเฉพาะรายการที่ตรงกันเท่านั้น
+    let changed = false;
+    SOURCE_SYNC_FIELDS.forEach(f => {
+      if (srcIdx[f] === undefined) return;
+      sh.getRange(rowNum, idx[f] + 1).setValue(srcRow[srcIdx[f]]);
+      changed = true;
+    });
+    if (changed) {
+      sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
+      updatedCount++;
+    }
+  });
+
+  logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง อัปเดต ' + updatedCount + ' รายการ');
+
+  return { ok: true, data: { updatedCount } };
 }
 
 // ============================================================
