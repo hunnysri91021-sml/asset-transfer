@@ -15,14 +15,15 @@
   *{box-sizing:border-box;}
   body{font-family:'Sarabun',sans-serif;background:var(--bg);color:var(--text);margin:0;}
   #app{max-width:1180px;margin:0 auto;padding:16px;}
-  .topbar{display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:#fff;padding:14px 20px;border-radius:var(--radius);margin-bottom:16px;flex-wrap:wrap;gap:10px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:#fff;padding:14px 20px;border-radius:var(--radius);margin-bottom:16px;flex-wrap:wrap;gap:10px;box-shadow:0 2px 10px rgba(10,30,60,.18);}
   .topbar h1{font-size:18px;margin:0;font-weight:600;}
   .topbar .sub{font-size:12px;opacity:.8;font-weight:300;}
-  nav{display:flex;gap:6px;flex-wrap:wrap;}
+  nav{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
   nav button{background:rgba(255,255,255,.12);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;transition:.15s;}
   nav button:hover{background:rgba(255,255,255,.25);}
   nav button.active{background:#fff;color:var(--navy);font-weight:600;}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
+  nav .nav-sep{width:1px;align-self:stretch;background:rgba(255,255,255,.2);margin:2px 2px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(20,30,50,.05);}
   .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:500;}
   input[type=text], input[type=date], input[type=email], select, textarea{
@@ -43,6 +44,8 @@
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th,td{border:1px solid var(--border);padding:8px;text-align:left;vertical-align:middle;}
   th{background:var(--navy-light);color:var(--navy);font-weight:600;}
+  tbody tr:hover td{background:#f5f8fc;}
+  .money{text-align:right;font-variant-numeric:tabular-nums;}
   .thumb{width:44px;height:44px;object-fit:cover;border-radius:6px;background:#eee;}
   .thumb-lg{width:100px;height:100px;object-fit:cover;border-radius:8px;background:#eee;border:1px solid var(--border);}
   .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}
@@ -99,6 +102,10 @@
     <nav id="mainNav">
       <button data-view="list" class="active">รายการใบโอนย้าย</button>
       <button data-view="create">+ สร้างใบโอนย้าย</button>
+      <span class="nav-sep"></span>
+      <button data-view="saleList">รายการขายออก</button>
+      <button data-view="saleCreate">+ บันทึกขายออก</button>
+      <span class="nav-sep"></span>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
   </div>
@@ -121,7 +128,11 @@ let STATE = {
   draftItems: [],
   approveCtx: null,
   adminPassword: null,
-  adminAssets: []
+  adminAssets: [],
+  sales: [],
+  draftSaleItems: [],
+  printSaleId: null,
+  approveSaleCtx: null
 };
 
 /* ================= API HELPERS ================= */
@@ -179,6 +190,12 @@ function route(){
     renderApprove();
     return;
   }
+  if(params.get('view') === 'approveSale'){
+    STATE.view = 'approveSale';
+    STATE.approveSaleCtx = { id: params.get('id'), token: params.get('token') };
+    renderApproveSale();
+    return;
+  }
   render();
 }
 
@@ -196,6 +213,9 @@ function render(){
   document.getElementById('mainNav').style.display = 'flex';
   if(STATE.view === 'list') renderList(root);
   else if(STATE.view === 'create') renderCreate(root);
+  else if(STATE.view === 'saleList') renderSaleList(root);
+  else if(STATE.view === 'saleCreate') renderSaleCreate(root);
+  else if(STATE.view === 'salePrint') renderSalePrint(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
 }
@@ -506,6 +526,277 @@ function renderCreate(root){
   }
 }
 
+/* ================= SALE LIST VIEW ================= */
+function renderSaleList(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>รายการขายออกทรัพย์สิน</h2>
+      <div class="toolbar no-print">
+        <input type="text" id="fSaleSearch" placeholder="ค้นหาเลขที่ / ผู้ซื้อ..." style="max-width:220px;">
+        <select id="fSaleStatus" style="max-width:160px;">
+          <option value="">ทุกสถานะ</option>
+          <option value="PendingApproval">รออนุมัติ</option>
+          <option value="Approved">อนุมัติแล้ว</option>
+          <option value="Rejected">ไม่อนุมัติ</option>
+        </select>
+        <input type="date" id="fSaleFrom" style="max-width:150px;">
+        <input type="date" id="fSaleTo" style="max-width:150px;">
+        <button class="btn btn-secondary btn-sm" id="btnSaleFilter">กรอง</button>
+        <button class="btn btn-secondary btn-sm" id="btnSaleRefresh">↻ รีเฟรช</button>
+      </div>
+      <div id="saleListTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+  document.getElementById('btnSaleFilter').onclick = loadSaleList;
+  document.getElementById('btnSaleRefresh').onclick = loadSaleList;
+  loadSaleList();
+
+  function loadSaleList(){
+    const params = { action:'getSales' };
+    const q = document.getElementById('fSaleSearch').value.trim();
+    const status = document.getElementById('fSaleStatus').value;
+    const from = document.getElementById('fSaleFrom').value;
+    const to = document.getElementById('fSaleTo').value;
+    if(q) params.q = q;
+    if(status) params.status = status;
+    if(from) params.from = from;
+    if(to) params.to = to;
+    document.getElementById('saleListTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet(params).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
+      STATE.sales = res.data;
+      renderSaleListTable();
+    });
+  }
+  function renderSaleListTable(){
+    const host = document.getElementById('saleListTableHost');
+    if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการขายออก</div>'; return; }
+    let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
+    STATE.sales.forEach(s=>{
+      html += `<tr>
+        <td><b>${esc(s.RunningNo)}</b></td>
+        <td>${fmtDate(s.CreatedAt)}</td>
+        <td>${esc(s.FromDept)}</td>
+        <td>${esc(s.Buyer||'-')}</td>
+        <td style="text-align:center;">${s.ItemCount}</td>
+        <td class="money">${fmtMoney(s.TotalSalePrice)}</td>
+        <td>${statusBadge(s.Status)}</td>
+        <td>${esc(s.ApproverName||s.ApproverEmail||'-')}</td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button></td>
+      </tr>`;
+    });
+    html += '</table>';
+    host.innerHTML = html;
+  }
+}
+
+window.openSalePrint = function(id){
+  STATE.view = 'salePrint';
+  STATE.printSaleId = id;
+  render();
+};
+
+/* ================= SALE CREATE VIEW ================= */
+function renderSaleCreate(root){
+  STATE.draftSaleItems = STATE.draftSaleItems && STATE.view==='saleCreate' ? STATE.draftSaleItems : [];
+  root.innerHTML = `
+    <div class="card">
+      <h2>บันทึกขายออกทรัพย์สิน</h2>
+      <div class="row">
+        <div>
+          <label>หน่วยงานเจ้าของทรัพย์สิน</label>
+          <select id="sFromDept"></select>
+        </div>
+        <div>
+          <label>ผู้ซื้อ / ผู้ประมูลได้</label>
+          <input type="text" id="sBuyer" placeholder="ชื่อผู้ซื้อ หรือ บริษัทผู้ประมูล">
+        </div>
+      </div>
+      <label>หมายเหตุ</label>
+      <textarea id="sRemark" placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับการขายออก..."></textarea>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้บันทึก</label>
+          <input type="text" id="sCreatedBy">
+        </div>
+        <div>
+          <label>อีเมลผู้บันทึก (สำหรับรับผลอนุมัติ)</label>
+          <input type="email" id="sCreatedByEmail">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
+          <input type="text" id="sApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย">
+        </div>
+        <div>
+          <label>อีเมลผู้อนุมัติ *</label>
+          <input type="email" id="sApproverEmail" placeholder="approver@company.com">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>รายการทรัพย์สินที่ขายออก</h2>
+      <div class="autocomplete-wrap">
+        <input type="text" id="saleAssetSearch" placeholder="ค้นหารหัส หรือ ชื่อทรัพย์สิน แล้วเลือกเพื่อเพิ่มรายการ...">
+        <div id="saleAssetSuggest" class="autocomplete-list" style="display:none;"></div>
+      </div>
+      <div id="saleItemsHost" style="margin-top:14px;"></div>
+      <div class="empty" id="saleItemsEmpty">ยังไม่มีรายการทรัพย์สิน — ค้นหาด้านบนเพื่อเพิ่ม</div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px;">
+        <div style="max-width:320px;text-align:right;font-size:13px;color:var(--muted);">
+          รวมราคาขาย: <b id="saleTotal" style="color:var(--navy);font-size:15px;">0.00</b> บาท
+        </div>
+      </div>
+    </div>
+
+    <div class="card no-print" style="text-align:right;">
+      <button class="btn btn-primary" id="btnSubmitSale">บันทึกและส่งอีเมลขออนุมัติ</button>
+    </div>
+  `;
+
+  loadDeptOptions();
+  loadAssetsForSearch();
+  renderSaleItems();
+
+  document.getElementById('btnSubmitSale').onclick = submitSale;
+
+  function loadDeptOptions(){
+    apiGet({action:'getDeptCodes'}).then(res=>{
+      if(!res.ok){ toast(res.error,'err'); return; }
+      STATE.deptCodes = res.data;
+      const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
+      document.getElementById('sFromDept').innerHTML = opts;
+    });
+  }
+
+  function loadAssetsForSearch(){
+    apiGet({action:'getAssets'}).then(res=>{ if(res.ok) STATE.assets = res.data; });
+  }
+
+  const searchInput = document.getElementById('saleAssetSearch');
+  searchInput.addEventListener('input', ()=>{
+    const q = searchInput.value.trim().toLowerCase();
+    const suggestBox = document.getElementById('saleAssetSuggest');
+    if(!q){ suggestBox.style.display='none'; return; }
+    const usedIds = STATE.draftSaleItems.map(x=>x.assetId);
+    const matches = STATE.assets.filter(a =>
+      (String(a.AssetID).toLowerCase().includes(q) || String(a.AssetName).toLowerCase().includes(q)) && usedIds.indexOf(a.AssetID)===-1
+    ).slice(0,15);
+    if(!matches.length){ suggestBox.innerHTML = '<div class="autocomplete-item">ไม่พบรายการ</div>'; suggestBox.style.display='block'; return; }
+    suggestBox.innerHTML = matches.map(a => `
+      <div class="autocomplete-item" data-id="${esc(a.AssetID)}">
+        <img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'">
+        <div><b>${esc(a.AssetID)}</b> — ${esc(a.AssetName)}<br><span style="color:var(--muted);font-size:11px;">${esc(a.Department)}</span></div>
+      </div>`).join('');
+    suggestBox.style.display='block';
+    suggestBox.querySelectorAll('.autocomplete-item').forEach(el=>{
+      el.onclick = ()=>{
+        const asset = STATE.assets.find(a=>a.AssetID===el.dataset.id);
+        addSaleItem(asset);
+        searchInput.value='';
+        suggestBox.style.display='none';
+      };
+    });
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.autocomplete-wrap')) {
+      const box = document.getElementById('saleAssetSuggest');
+      if(box) box.style.display='none';
+    }
+  });
+
+  function addSaleItem(asset){
+    STATE.draftSaleItems.push({
+      assetId: asset.AssetID,
+      assetName: asset.AssetName,
+      imageUrl: asset.DisplayImage || '',
+      scrapPrice: '',
+      auctionPrice: '',
+      salePrice: '',
+      remark: ''
+    });
+    renderSaleItems();
+  }
+
+  function renderSaleItems(){
+    const host = document.getElementById('saleItemsHost');
+    const empty = document.getElementById('saleItemsEmpty');
+    empty.style.display = STATE.draftSaleItems.length ? 'none':'block';
+    host.innerHTML = STATE.draftSaleItems.map((it, i) => `
+      <div class="item-line">
+        <button class="del" onclick="removeSaleItem(${i})">✕</button>
+        <div class="row">
+          <div style="flex:0 0 90px;">
+            <img class="thumb-lg" src="${esc(it.imageUrl||'')}" onerror="this.style.visibility='hidden'">
+          </div>
+          <div style="flex:2;">
+            <b>${esc(it.assetId)}</b> — ${esc(it.assetName)}
+            <div class="row" style="margin-top:8px;">
+              <div>
+                <label>ราคาซาก</label>
+                <input type="text" inputmode="decimal" value="${esc(it.scrapPrice)}" onchange="updateSaleItemField(${i},'scrapPrice',this.value)">
+              </div>
+              <div>
+                <label>ราคาประมูล</label>
+                <input type="text" inputmode="decimal" value="${esc(it.auctionPrice)}" onchange="updateSaleItemField(${i},'auctionPrice',this.value)">
+              </div>
+              <div>
+                <label>ราคาขาย</label>
+                <input type="text" inputmode="decimal" value="${esc(it.salePrice)}" onchange="updateSaleItemField(${i},'salePrice',this.value)">
+              </div>
+            </div>
+            <label style="margin-top:6px;">หมายเหตุ</label>
+            <input type="text" value="${esc(it.remark)}" onchange="updateSaleItemField(${i},'remark',this.value)">
+          </div>
+        </div>
+      </div>
+    `).join('');
+    updateSaleTotal();
+  }
+
+  function updateSaleTotal(){
+    const total = STATE.draftSaleItems.reduce((sum,it)=> sum + (parseFloat(String(it.salePrice).replace(/,/g,''))||0), 0);
+    const el = document.getElementById('saleTotal');
+    if(el) el.textContent = fmtMoney(total);
+  }
+
+  window.removeSaleItem = (i)=>{ STATE.draftSaleItems.splice(i,1); renderSaleItems(); };
+  window.updateSaleItemField = (i, field, val)=>{ STATE.draftSaleItems[i][field] = val; updateSaleTotal(); };
+
+  function submitSale(){
+    if(!STATE.draftSaleItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const approverEmail = document.getElementById('sApproverEmail').value.trim();
+    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    const fromDept = document.getElementById('sFromDept').value;
+
+    const payload = {
+      action:'createSale',
+      fromDept,
+      buyer: document.getElementById('sBuyer').value,
+      remark: document.getElementById('sRemark').value,
+      createdBy: document.getElementById('sCreatedBy').value,
+      createdByEmail: document.getElementById('sCreatedByEmail').value,
+      approverName: document.getElementById('sApproverName').value,
+      approverEmail,
+      items: STATE.draftSaleItems
+    };
+    const btn = document.getElementById('btnSubmitSale');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
+    apiPost(payload).then(res=>{
+      btn.disabled = false; btn.innerHTML = 'บันทึกและส่งอีเมลขออนุมัติ';
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('สร้างใบขายออก '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+      STATE.draftSaleItems = [];
+      STATE.view = 'salePrint';
+      STATE.printSaleId = res.data.saleId;
+      [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view==='saleList'));
+      render();
+    });
+  }
+}
+
 /* ================= SETTINGS VIEW (Dept Codes + Admin Asset Data) ================= */
 function renderSettings(root){
   root.innerHTML = `
@@ -728,6 +1019,80 @@ function buildDocHtml(t, withToolbar){
   `;
 }
 
+/* ================= SALE PRINT VIEW ================= */
+function renderSalePrint(root){
+  root.innerHTML = `<div class="empty">กำลังโหลด...</div>`;
+  apiGet({action:'getSale', id: STATE.printSaleId}).then(res=>{
+    if(!res.ok || !res.data){ root.innerHTML = '<div class="empty">ไม่พบใบขายออกนี้</div>'; return; }
+    root.innerHTML = buildSaleDocHtml(res.data, true);
+    const btn = document.getElementById('btnPrintSaleNow');
+    if(btn) btn.onclick = ()=> window.print();
+  });
+}
+
+function buildSaleDocHtml(s, withToolbar){
+  const itemsRows = (s.Items||[]).map((it, i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td>${esc(it.AssetID)}</td>
+      <td class="left">${it.ImageURL?`<img src="${esc(it.ImageURL)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">`:''} ${esc(it.AssetName)}</td>
+      <td class="money">${fmtMoney(it.ScrapPrice)}</td>
+      <td class="money">${fmtMoney(it.AuctionPrice)}</td>
+      <td class="money">${fmtMoney(it.SalePrice)}</td>
+      <td>${esc(it.Remark)}</td>
+    </tr>`).join('');
+  const total = (s.Items||[]).reduce((sum,it)=> sum + (parseFloat(it.SalePrice)||0), 0);
+
+  return `
+    ${withToolbar ? `
+    <div class="toolbar no-print">
+      <button class="btn btn-secondary btn-sm" onclick="STATE.view='saleList';render();">← กลับรายการ</button>
+      <button class="btn btn-primary btn-sm" id="btnPrintSaleNow">🖨️ พิมพ์ / บันทึก PDF</button>
+      <span style="margin-left:auto;">${statusBadge(s.Status)}</span>
+    </div>` : ''}
+    <div class="card" id="printArea">
+      <div class="doc">
+        <div class="doc-header">${esc(COMPANY_NAME)}</div>
+        <div class="doc-title">ใบขายออกทรัพย์สิน</div>
+        <div class="doc-meta">
+          <div><b>เลขที่</b> ${esc(s.RunningNo)}</div>
+          <div><b>วันที่</b> ${fmtDate(s.CreatedAt)}</div>
+        </div>
+        <div class="doc-field"><b>หน่วยงาน</b> ${esc(s.FromDept)}</div>
+        <div class="doc-field"><b>ผู้ซื้อ/ผู้ประมูลได้</b> ${esc(s.Buyer||'-')}</div>
+        <div class="doc-field"><b>หมายเหตุ</b> ${esc(s.Remark||'-')}</div>
+
+        <table class="doc-table">
+          <tr><th style="width:30px;">ลำดับ</th><th style="width:90px;">รหัส</th><th>รายการ</th><th>ราคาซาก</th><th>ราคาประมูล</th><th>ราคาขาย</th><th>หมายเหตุ</th></tr>
+          ${itemsRows}
+          <tr><td colspan="5" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">${fmtMoney(total)}</td><td></td></tr>
+        </table>
+
+        <div class="doc-sign">
+          <div>
+            <div class="line"></div>
+            (ผู้บันทึก) ${esc(s.CreatedBy||'')}<br>
+            วันที่..........................
+          </div>
+          <div>
+            <div class="line"></div>
+            (ผู้อนุมัติ) ${esc(s.ApproverName||'')}<br>
+            วันที่..........................
+          </div>
+        </div>
+
+        ${s.Status !== 'Draft' ? `
+        <div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">
+          <b>สถานะการอนุมัติ:</b> ${statusBadge(s.Status)} &nbsp;
+          ${s.ApproverName || s.ApproverEmail ? 'โดย '+esc(s.ApproverName||s.ApproverEmail) : ''}
+          ${s.ApprovedAt ? ' เมื่อ '+fmtDate(s.ApprovedAt) : ''}
+          ${s.ApproverComment ? '<br><b>ความเห็น:</b> '+esc(s.ApproverComment) : ''}
+        </div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
 /* ================= APPROVAL VIEW (from email link) ================= */
 function renderApprove(){
   document.querySelector('.topbar').style.display='none';
@@ -769,6 +1134,50 @@ function renderApprove(){
         if(!res.ok){ toast(res.error||'ดำเนินการไม่สำเร็จ','err'); return; }
         toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
         renderApprove();
+      });
+  }
+}
+
+/* ================= SALE APPROVAL VIEW (from email link) ================= */
+function renderApproveSale(){
+  document.querySelector('.topbar').style.display='none';
+  document.getElementById('mainNav').style.display='none';
+  const root = document.getElementById('viewRoot');
+  root.innerHTML = '<div class="empty">กำลังโหลดใบขายออก...</div>';
+  apiGet({action:'getSaleApprovalView', id: STATE.approveSaleCtx.id, token: STATE.approveSaleCtx.token}).then(res=>{
+    if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
+    const s = res.data;
+    let actionHtml = '';
+    if(s.Status === 'PendingApproval'){
+      actionHtml = `
+        <div class="card no-print">
+          <h2>พิจารณาอนุมัติการขายออก</h2>
+          <label>ความเห็น (ถ้ามี)</label>
+          <textarea id="approveSaleComment" placeholder="ระบุความเห็นเพิ่มเติม..."></textarea>
+          <div style="margin-top:14px;display:flex;gap:10px;">
+            <button class="btn btn-green" id="btnApproveSale">✓ อนุมัติ</button>
+            <button class="btn btn-red" id="btnRejectSale">✕ ไม่อนุมัติ</button>
+          </div>
+        </div>`;
+    } else {
+      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${statusBadge(s.Status)}</div></div>`;
+    }
+    root.innerHTML = buildSaleDocHtml(s, false) + actionHtml;
+
+    if(s.Status === 'PendingApproval'){
+      document.getElementById('btnApproveSale').onclick = ()=>decide('Approved');
+      document.getElementById('btnRejectSale').onclick = ()=>decide('Rejected');
+    }
+  });
+
+  function decide(decision){
+    const comment = document.getElementById('approveSaleComment').value;
+    if(!confirm(decision==='Approved' ? 'ยืนยันการอนุมัติใบขายออกนี้?' : 'ยืนยันการไม่อนุมัติใบขายออกนี้?')) return;
+    apiPost({ action:'decideSale', saleId: STATE.approveSaleCtx.id, token: STATE.approveSaleCtx.token, decision, comment })
+      .then(res=>{
+        if(!res.ok){ toast(res.error||'ดำเนินการไม่สำเร็จ','err'); return; }
+        toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
+        renderApproveSale();
       });
   }
 }
