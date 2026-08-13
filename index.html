@@ -247,6 +247,10 @@ function statusBadge(s){
   const cls = { Draft:'draft', PendingApproval:'pending', Approved:'approved', Rejected:'rejected', Voided:'draft' };
   return '<span class="badge badge-'+(cls[s]||'draft')+'">'+(STATUS_LABELS[s]||s)+'</span>';
 }
+function deptSkipsApproval(deptName){
+  const d = STATE.deptCodes.find(x=>x.DeptName===deptName);
+  return !!(d && d.SkipApprovalEmail);
+}
 function assetStatusBadge(s){
   const map = {
     Active: ['approved','ใช้งาน'],
@@ -594,12 +598,12 @@ function renderAssetList(root){
     } else if(targetView === 'saleCreate'){
       STATE.draftSaleItems = selected.map(a => ({
         assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
-        scrapPrice:'', auctionPrice:'', salePrice:'', remark:''
+        scrapPrice: a.ScrapPrice||'', auctionPrice:'', salePrice: a.MinSalePrice||'', remark:''
       }));
     } else if(targetView === 'writeOffCreate'){
       STATE.draftWriteOffItems = selected.map(a => ({
         assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
-        scrapPrice:'', remark:''
+        scrapPrice: a.ScrapPrice||'', remark:''
       }));
     }
     STATE.view = targetView;
@@ -911,9 +915,9 @@ function renderCreate(root){
 
   function goToPreview(){
     if(!STATE.draftItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
-    const approverEmail = document.getElementById('cApproverEmail').value.trim();
-    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
     const fromDept = document.getElementById('cFromDept').value;
+    const approverEmail = document.getElementById('cApproverEmail').value.trim();
+    if(!deptSkipsApproval(fromDept) && !approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
     const toDept = document.getElementById('cToDept').value;
     const fromSign = document.getElementById('cFromSign').value;
     const toSign = document.getElementById('cToSign').value;
@@ -1111,7 +1115,7 @@ function doSubmitTransfer(){
       toast(res.error||'บันทึกไม่สำเร็จ','err');
       return;
     }
-    toast('สร้างใบโอนย้าย '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+    toast('สร้างใบโอนย้าย '+res.data.runningNo+' สำเร็จ '+(res.data.autoApproved ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : 'ส่งอีเมลขออนุมัติแล้ว'),'ok');
     STATE.draftItems = [];
     STATE.transferHeader = null;
     STATE.createStep = 'form';
@@ -1273,10 +1277,11 @@ function renderSaleCreate(root){
 
   function goToSalePreview(){
     if(!STATE.draftSaleItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const fromDept = document.getElementById('sFromDept').value;
     const approverEmail = document.getElementById('sApproverEmail').value.trim();
-    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    if(!deptSkipsApproval(fromDept) && !approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
     STATE.saleHeader = {
-      fromDept: document.getElementById('sFromDept').value,
+      fromDept,
       buyer: document.getElementById('sBuyer').value,
       remark: document.getElementById('sRemark').value,
       createdBy: document.getElementById('sCreatedBy').value,
@@ -1346,9 +1351,9 @@ function renderSaleCreate(root){
       assetId: asset.AssetID,
       assetName: asset.AssetName,
       images: asset.DisplayImage ? [asset.DisplayImage] : [],
-      scrapPrice: '',
+      scrapPrice: asset.ScrapPrice || '',
       auctionPrice: '',
-      salePrice: '',
+      salePrice: asset.MinSalePrice || '',
       remark: ''
     });
     renderSaleItems();
@@ -1471,7 +1476,7 @@ function doSubmitSale(){
       toast(res.error||'บันทึกไม่สำเร็จ','err');
       return;
     }
-    toast('สร้างใบขายออก '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+    toast('สร้างใบขายออก '+res.data.runningNo+' สำเร็จ '+(res.data.autoApproved ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : 'ส่งอีเมลขออนุมัติแล้ว'),'ok');
     STATE.draftSaleItems = [];
     STATE.saleHeader = null;
     STATE.saleCreateStep = 'form';
@@ -1627,10 +1632,11 @@ function renderWriteOffCreate(root){
 
   function goToWriteOffPreview(){
     if(!STATE.draftWriteOffItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    const fromDept = document.getElementById('wFromDept').value;
     const approverEmail = document.getElementById('wApproverEmail').value.trim();
-    if(!approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    if(!deptSkipsApproval(fromDept) && !approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
     STATE.writeOffHeader = {
-      fromDept: document.getElementById('wFromDept').value,
+      fromDept,
       reason: document.getElementById('wReason').value,
       remark: document.getElementById('wRemark').value,
       createdBy: document.getElementById('wCreatedBy').value,
@@ -1697,7 +1703,7 @@ function renderWriteOffCreate(root){
   function addWoItem(asset){
     STATE.draftWriteOffItems.push({
       assetId: asset.AssetID, assetName: asset.AssetName, images: asset.DisplayImage ? [asset.DisplayImage] : [],
-      scrapPrice: '', remark: ''
+      scrapPrice: asset.ScrapPrice || '', remark: ''
     });
     renderWoItems();
   }
@@ -1800,7 +1806,7 @@ function doSubmitWriteOff(){
       toast(res.error||'บันทึกไม่สำเร็จ','err');
       return;
     }
-    toast('สร้างใบตัดชำรุด '+res.data.runningNo+' สำเร็จ ส่งอีเมลขออนุมัติแล้ว','ok');
+    toast('สร้างใบตัดชำรุด '+res.data.runningNo+' สำเร็จ '+(res.data.autoApproved ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : 'ส่งอีเมลขออนุมัติแล้ว'),'ok');
     STATE.draftWriteOffItems = [];
     STATE.writeOffHeader = null;
     STATE.writeOffCreateStep = 'form';
@@ -1859,6 +1865,10 @@ function renderSettings(root){
         <td><input type="text" data-dfield="Code" data-di="${i}" value="${esc(d.Code)}" style="max-width:90px;"></td>
         <td><input type="text" data-dfield="ApproverName" data-di="${i}" value="${esc(d.ApproverName||'')}" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย"></td>
         <td><input type="email" data-dfield="ApproverEmail" data-di="${i}" value="${esc(d.ApproverEmail||'')}" placeholder="approver@company.com"></td>
+        <td style="text-align:center;"><input type="checkbox" data-dfield="RequireApproval" data-di="${i}" ${d.SkipApprovalEmail ? '' : 'checked'}></td>
+        <td><input type="number" min="1" data-dfield="StartSeqTransfer" data-di="${i}" value="${esc(d.StartSeqTransfer||'')}" placeholder="1" style="max-width:70px;"></td>
+        <td><input type="number" min="1" data-dfield="StartSeqSale" data-di="${i}" value="${esc(d.StartSeqSale||'')}" placeholder="1" style="max-width:70px;"></td>
+        <td><input type="number" min="1" data-dfield="StartSeqWriteOff" data-di="${i}" value="${esc(d.StartSeqWriteOff||'')}" placeholder="1" style="max-width:70px;"></td>
         <td class="no-print" style="white-space:nowrap;">
           <button class="btn btn-secondary btn-sm" onclick="saveDeptRow(${i})">บันทึก</button>
           <button class="btn btn-red btn-sm" onclick="deleteDeptRow(${i})">ลบ</button>
@@ -1866,14 +1876,19 @@ function renderSettings(root){
       </tr>`).join('');
     document.getElementById('deptTableHost').innerHTML = `
       <div style="overflow-x:auto;"><table>
-        <tr><th>หน่วยงาน</th><th>รหัส</th><th>ชื่อผู้อนุมัติ</th><th>อีเมลผู้อนุมัติ</th><th class="no-print">จัดการ</th></tr>
-        ${rowsHtml || '<tr><td colspan="5" class="empty">ยังไม่มีหน่วยงาน</td></tr>'}
+        <tr>
+          <th>หน่วยงาน</th><th>รหัส</th><th>ชื่อผู้อนุมัติ</th><th>อีเมลผู้อนุมัติ</th>
+          <th>ต้องส่งอีเมล<br>ขออนุมัติ</th><th>เลขเริ่มต้น<br>โอนย้าย</th><th>เลขเริ่มต้น<br>ขายออก</th><th>เลขเริ่มต้น<br>ตัดชำรุด</th>
+          <th class="no-print">จัดการ</th>
+        </tr>
+        ${rowsHtml || '<tr><td colspan="9" class="empty">ยังไม่มีหน่วยงาน</td></tr>'}
       </table></div>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px;">"เลขเริ่มต้น" คือเลขลำดับที่ต้องการให้เอกสารถัดไปของหน่วยงานนี้เริ่มออกจากเลขนี้เป็นต้นไป (เว้นว่าง = เริ่มที่ 1 ตามปกติ) ถ้ามีเอกสารออกไปแล้วเลขสูงกว่าที่กำหนด ระบบจะออกเลขต่อจากเลขสูงสุดที่มีอยู่แทน</p>
     `;
   }
 
   function addBlankDeptRow(){
-    STATE.deptCodes.push({ DeptName:'', Code:'', ApproverName:'', ApproverEmail:'', __isNew:true });
+    STATE.deptCodes.push({ DeptName:'', Code:'', ApproverName:'', ApproverEmail:'', SkipApprovalEmail:false, StartSeqTransfer:'', StartSeqSale:'', StartSeqWriteOff:'', __isNew:true });
     renderDeptTable();
   }
 
@@ -1882,6 +1897,12 @@ function renderSettings(root){
     ['DeptName','Code','ApproverName','ApproverEmail'].forEach(f=>{
       const el = document.querySelector(`[data-dfield="${f}"][data-di="${i}"]`);
       if(el) d[f] = el.value.trim();
+    });
+    const reqEl = document.querySelector(`[data-dfield="RequireApproval"][data-di="${i}"]`);
+    d.SkipApprovalEmail = reqEl ? !reqEl.checked : false;
+    ['StartSeqTransfer','StartSeqSale','StartSeqWriteOff'].forEach(f=>{
+      const el = document.querySelector(`[data-dfield="${f}"][data-di="${i}"]`);
+      d[f] = el ? el.value.trim() : '';
     });
     if(!d.DeptName || !d.Code){ toast('กรุณาระบุชื่อหน่วยงานและรหัส','err'); return; }
     apiPost({ action:'adminSaveDept', password: STATE.adminPassword, dept: d }).then(res=>{
@@ -1943,7 +1964,8 @@ function renderSettings(root){
   const ADMIN_FIELD_COLS = [
     ['AssetID','รหัสทรัพย์สิน'], ['AssetName','ชื่อทรัพย์สิน'], ['Department','หน่วยงาน'],
     ['PurchaseDate','วันที่ซื้อ'], ['PurchasePrice','ราคาซื้อ'], ['BookValue','มูลค่าตามบัญชี'],
-    ['Custodian','ผู้ดูแล'], ['Location','สถานที่'], ['Tag','แท็กสถานะ'], ['ImageURL','URL รูปภาพ']
+    ['Custodian','ผู้ดูแล'], ['Location','สถานที่'], ['Tag','แท็กสถานะ'],
+    ['ScrapPrice','ราคาซาก'], ['MinSalePrice','ราคาขายขั้นต่ำ'], ['ImageURL','URL รูปภาพ']
   ];
 
   function renderAdminAssetsTable(){

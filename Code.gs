@@ -38,8 +38,8 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
-  DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
+  DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
@@ -339,7 +339,7 @@ function adminVerify_(body) {
   return checkAdminPassword_(body.password) ? { ok: true } : { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
 }
 
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ImageURL'];
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
@@ -447,7 +447,7 @@ function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, asse
 // จึงจับคู่ด้วย prefix แล้วเลือกแท็บที่มีชื่อ (วันที่) ล่าสุดโดยอัตโนมัติ แทนชื่อคงที่
 const SOURCE_SHEET_TAB_PREFIX = 'AppSheet.ViewData';
 const SOURCE_SHEET_URL_PROP = 'SOURCE_SHEET_URL';
-const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ImageURL'];
+const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
 
 function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
@@ -572,7 +572,13 @@ function adminSaveDept_(body) {
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.DeptName]) === deptName) { rowNum = i + 1; break; }
   }
-  const fields = { DeptName: deptName, Code: code, ApproverName: String(dept.ApproverName || ''), ApproverEmail: String(dept.ApproverEmail || '') };
+  const toSeq = v => (v === undefined || v === null || v === '') ? '' : (Number(v) || '');
+  const fields = {
+    DeptName: deptName, Code: code,
+    ApproverName: String(dept.ApproverName || ''), ApproverEmail: String(dept.ApproverEmail || ''),
+    SkipApprovalEmail: !!dept.SkipApprovalEmail,
+    StartSeqTransfer: toSeq(dept.StartSeqTransfer), StartSeqSale: toSeq(dept.StartSeqSale), StartSeqWriteOff: toSeq(dept.StartSeqWriteOff)
+  };
   if (rowNum === -1) {
     sh.appendRow(HEADERS.DEPT_CODES.map(h => fields[h]));
     logActivity_('', 'ADMIN_SAVE_DEPT', 'admin', 'เพิ่มหน่วยงาน ' + deptName);
@@ -676,13 +682,17 @@ function findTransferRow_(transferId) {
 function createTransfer_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
-  if (!body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
+
+  const dept = getDeptByName_(body.fromDept);
+  const skipApproval = !!(dept && dept.SkipApprovalEmail);
+  if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
-  const runningNo = getNextRunningNo_(fromDeptCode);
+  const runningNo = getNextRunningNo_(fromDeptCode, SHEETS.TRANSFERS, dept && dept.StartSeqTransfer);
   const transferId = Utilities.getUuid();
   const token = Utilities.getUuid();
   const now = new Date();
+  const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
   const tSheet = getSS_().getSheetByName(SHEETS.TRANSFERS);
   tSheet.appendRow([
@@ -695,12 +705,12 @@ function createTransfer_(body) {
     body.fromDept || '',
     fromDeptCode,
     body.toDept || '',
-    STATUS.PENDING,
+    status,
     body.approverName || '',
     body.approverEmail || '',
     token,
-    '',
-    '',
+    skipApproval ? now : '',
+    skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
     body.createdBy || '',
     body.createdByEmail || ''
   ]);
@@ -722,11 +732,16 @@ function createTransfer_(body) {
     iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.ITEMS.length).setValues(itemRows);
   }
 
-  logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo);
+  let emailResult = { ok: true };
+  if (skipApproval) {
+    applyTransferToAssets_(transferId);
+    logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo + ' (อนุมัติอัตโนมัติ)');
+  } else {
+    logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo);
+    emailResult = sendApprovalEmail_(transferId, runningNo, body, items, token);
+  }
 
-  const emailResult = sendApprovalEmail_(transferId, runningNo, body, items, token);
-
-  return { ok: true, data: { transferId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null } };
+  return { ok: true, data: { transferId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null, autoApproved: skipApproval } };
 }
 
 function getCodeForDept_(deptName) {
@@ -735,7 +750,13 @@ function getCodeForDept_(deptName) {
   return found ? found.Code : null;
 }
 
-function getNextRunningNo_(code, sheetName) {
+function getDeptByName_(deptName) {
+  return getDeptCodes_().find(d => d.DeptName === deptName) || null;
+}
+
+// startSeq (ถ้ากำหนดไว้ใน DeptCodes) คือเลขลำดับเริ่มต้นของหน่วยงานนั้นสำหรับเอกสารประเภทนี้
+// เลขที่ออกจริงจะเป็นค่ามากกว่าระหว่าง startSeq กับเลขลำดับสูงสุดที่มีอยู่แล้ว +1 เสมอ (ไม่ทับเลขที่ออกไปแล้ว)
+function getNextRunningNo_(code, sheetName, startSeq) {
   const buddhistYear = new Date().getFullYear() + 543;
   const yy = String(buddhistYear).slice(-2);
   const sh = getSS_().getSheetByName(sheetName || SHEETS.TRANSFERS);
@@ -744,7 +765,7 @@ function getNextRunningNo_(code, sheetName) {
   const idx = indexMap_(headers);
   const prefix = code + '/';
   const suffix = '/' + yy;
-  let maxSeq = 0;
+  let maxSeq = (startSeq && Number(startSeq) > 0) ? Number(startSeq) - 1 : 0;
   values.forEach(r => {
     const rn = String(r[idx.RunningNo] || '');
     if (rn.indexOf(prefix) === 0 && rn.indexOf(suffix) === rn.length - suffix.length) {
@@ -905,13 +926,17 @@ function findSaleRow_(saleId) {
 function createSale_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
-  if (!body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
+
+  const dept = getDeptByName_(body.fromDept);
+  const skipApproval = !!(dept && dept.SkipApprovalEmail);
+  if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
-  const runningNo = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES);
+  const runningNo = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
   const saleId = Utilities.getUuid();
   const token = Utilities.getUuid();
   const now = new Date();
+  const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
   const sSheet = getSS_().getSheetByName(SHEETS.SALES);
   sSheet.appendRow([
@@ -922,12 +947,12 @@ function createSale_(body) {
     fromDeptCode,
     body.buyer || '',
     body.remark || '',
-    STATUS.PENDING,
+    status,
     body.approverName || '',
     body.approverEmail || '',
     token,
-    '',
-    '',
+    skipApproval ? now : '',
+    skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
     body.createdBy || '',
     body.createdByEmail || ''
   ]);
@@ -948,11 +973,15 @@ function createSale_(body) {
     iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.SALE_ITEMS.length).setValues(itemRows);
   }
 
-  logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
+  let emailResult = { ok: true };
+  if (skipApproval) {
+    logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
+  } else {
+    logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
+    emailResult = sendSaleApprovalEmail_(saleId, runningNo, body, items, token);
+  }
 
-  const emailResult = sendSaleApprovalEmail_(saleId, runningNo, body, items, token);
-
-  return { ok: true, data: { saleId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null } };
+  return { ok: true, data: { saleId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null, autoApproved: skipApproval } };
 }
 
 function getSaleApprovalView_(saleId, token) {
@@ -1072,13 +1101,17 @@ function findWriteOffRow_(writeOffId) {
 function createWriteOff_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
-  if (!body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
+
+  const dept = getDeptByName_(body.fromDept);
+  const skipApproval = !!(dept && dept.SkipApprovalEmail);
+  if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
-  const runningNo = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS);
+  const runningNo = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS, dept && dept.StartSeqWriteOff);
   const writeOffId = Utilities.getUuid();
   const token = Utilities.getUuid();
   const now = new Date();
+  const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
   const wSheet = getSS_().getSheetByName(SHEETS.WRITEOFFS);
   wSheet.appendRow([
@@ -1089,12 +1122,12 @@ function createWriteOff_(body) {
     fromDeptCode,
     body.reason || '',
     body.remark || '',
-    STATUS.PENDING,
+    status,
     body.approverName || '',
     body.approverEmail || '',
     token,
-    '',
-    '',
+    skipApproval ? now : '',
+    skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
     body.createdBy || '',
     body.createdByEmail || ''
   ]);
@@ -1113,11 +1146,15 @@ function createWriteOff_(body) {
     iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.WRITEOFF_ITEMS.length).setValues(itemRows);
   }
 
-  logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
+  let emailResult = { ok: true };
+  if (skipApproval) {
+    logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
+  } else {
+    logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
+    emailResult = sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token);
+  }
 
-  const emailResult = sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token);
-
-  return { ok: true, data: { writeOffId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null } };
+  return { ok: true, data: { writeOffId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null, autoApproved: skipApproval } };
 }
 
 function getWriteOffApprovalView_(writeOffId, token) {
