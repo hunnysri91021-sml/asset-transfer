@@ -23,7 +23,12 @@ const CONFIG = {
   FRONTEND_URL: 'https://hunnysri91021-sml.github.io/asset-transfer', // TODO: แก้เป็น URL จริงหลัง deploy GitHub Pages
   COMPANY_NAME: 'บริษัท สยามกลการโลจิสติกส์ จำกัด',
   DRIVE_FOLDER_NAME: 'SML_Asset_Transfer_Images',
-  DEFAULT_TIMEOUT_MS: 15000
+  DEFAULT_TIMEOUT_MS: 15000,
+  // SharePoint — ไม่ใช่ความลับ (แค่ระบุตำแหน่งไซต์/โฟลเดอร์) ส่วน Tenant/Client ID/Secret เก็บแยกใน
+  // Script Properties เท่านั้น (ดู getSharePointAccessToken_) ไม่ฝังในโค้ดนี้เพื่อความปลอดภัย
+  SHAREPOINT_HOSTNAME: 'siammotor.sharepoint.com',
+  SHAREPOINT_SITE_PATH: '/sites/Chosiya_Server',
+  SHAREPOINT_FOLDER: 'Doc_Assets-2026'
 };
 
 const SHEETS = {
@@ -1139,6 +1144,7 @@ function createTransfer_(body) {
   let emailResult = { ok: true };
   if (skipApproval) {
     applyTransferToAssets_(transferId);
+    exportDocToSharePointSafe_('transfer', getTransferFull_(transferId));
     logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo);
@@ -1224,6 +1230,7 @@ function decideTransfer_(body) {
 
   if (decision === STATUS.APPROVED) {
     applyTransferToAssets_(transferId);
+    exportDocToSharePointSafe_('transfer', getTransferFull_(transferId));
   }
 
   logActivity_(transferId, decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
@@ -1389,6 +1396,7 @@ function createSale_(body) {
     const soldAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIdsNow);
     setAssetsTag_(soldAssetIdsNow, 'ขาย');
+    exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
@@ -1438,6 +1446,7 @@ function decideSale_(body) {
     const soldAssetIds = getSaleItems_(saleId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIds);
     setAssetsTag_(soldAssetIds, 'ขาย');
+    exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
   }
 
   logActivity_(saleId, 'SALE_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
@@ -1578,6 +1587,7 @@ function createWriteOff_(body) {
     const writtenOffAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIdsNow);
     setAssetsTag_(writtenOffAssetIdsNow, 'ชำรุด');
+    exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
@@ -1627,6 +1637,7 @@ function decideWriteOff_(body) {
     const writtenOffAssetIds = getWriteOffItems_(writeOffId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIds);
     setAssetsTag_(writtenOffAssetIds, 'ชำรุด');
+    exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
   }
 
   logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
@@ -1847,6 +1858,203 @@ function sendWriteOffDecisionNotification_(writeOffObj, decision, comment) {
     });
   } catch (err) {
     Logger.log('sendWriteOffDecisionNotification_ error: ' + err);
+  }
+}
+
+// ============================================================
+// SHAREPOINT EXPORT — บันทึก PDF ใบโอนย้าย/ขายออก/ตัดชำรุด ที่อนุมัติแล้วขึ้น SharePoint อัตโนมัติ
+// ============================================================
+// ต้องตั้งค่า Script Properties 3 ค่านี้ก่อนใช้งาน (Apps Script editor > Project Settings > Script Properties):
+//   SHAREPOINT_TENANT_ID, SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET
+// และต้องเปิด Advanced Service "Drive API" (Services > + > Drive API) เพื่อแปลง HTML เป็น PDF
+// ถ้ายังไม่ได้ตั้งค่า ฟังก์ชันนี้จะข้ามไปเงียบๆ ไม่ทำให้การสร้าง/อนุมัติเอกสารล้มเหลว
+
+function getSharePointCreds_() {
+  const props = PropertiesService.getScriptProperties();
+  const tenantId = props.getProperty('SHAREPOINT_TENANT_ID');
+  const clientId = props.getProperty('SHAREPOINT_CLIENT_ID');
+  const clientSecret = props.getProperty('SHAREPOINT_CLIENT_SECRET');
+  if (!tenantId || !clientId || !clientSecret) return null;
+  return { tenantId, clientId, clientSecret };
+}
+
+function getSharePointAccessToken_() {
+  const creds = getSharePointCreds_();
+  if (!creds) return null;
+
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('sp_access_token');
+  if (cached) return cached;
+
+  const tokenUrl = 'https://login.microsoftonline.com/' + creds.tenantId + '/oauth2/v2.0/token';
+  const resp = UrlFetchApp.fetch(tokenUrl, {
+    method: 'post',
+    payload: {
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials'
+    },
+    muteHttpExceptions: true
+  });
+  const data = JSON.parse(resp.getContentText());
+  if (!data.access_token) throw new Error('ขอ access token จาก Microsoft ไม่สำเร็จ: ' + resp.getContentText());
+  cache.put('sp_access_token', data.access_token, Math.min((data.expires_in || 3600) - 60, 1500));
+  return data.access_token;
+}
+
+// หา driveId ของ document library ปลายทางบน SharePoint (แคชไว้ใน Script Properties เพราะแทบไม่เปลี่ยน)
+function getSharePointDriveId_(token) {
+  const props = PropertiesService.getScriptProperties();
+  const cached = props.getProperty('SHAREPOINT_DRIVE_ID');
+  if (cached) return cached;
+
+  const siteResp = UrlFetchApp.fetch(
+    'https://graph.microsoft.com/v1.0/sites/' + CONFIG.SHAREPOINT_HOSTNAME + ':' + CONFIG.SHAREPOINT_SITE_PATH,
+    { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+  );
+  const siteData = JSON.parse(siteResp.getContentText());
+  if (!siteData.id) throw new Error('ไม่พบไซต์ SharePoint (' + CONFIG.SHAREPOINT_SITE_PATH + '): ' + siteResp.getContentText());
+
+  const drivesResp = UrlFetchApp.fetch(
+    'https://graph.microsoft.com/v1.0/sites/' + siteData.id + '/drives',
+    { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+  );
+  const drivesData = JSON.parse(drivesResp.getContentText());
+  const drive = (drivesData.value || []).find(d => d.name === 'Documents' || d.name === 'Shared Documents') || (drivesData.value || [])[0];
+  if (!drive) throw new Error('ไม่พบ document library บนไซต์นี้: ' + drivesResp.getContentText());
+
+  props.setProperty('SHAREPOINT_DRIVE_ID', drive.id);
+  return drive.id;
+}
+
+// แปลง HTML เป็น PDF โดยอาศัย Google Drive แปลงไฟล์ให้ (ต้องเปิด Advanced Service "Drive API" ก่อน)
+function htmlToPdfBlob_(html, fileName) {
+  const htmlBlob = Utilities.newBlob(html, MimeType.HTML, fileName + '.html');
+  const file = Drive.Files.insert({ title: fileName, mimeType: MimeType.GOOGLE_DOCS }, htmlBlob, { convert: true });
+  try {
+    return DriveApp.getFileById(file.id).getAs(MimeType.PDF);
+  } finally {
+    DriveApp.getFileById(file.id).setTrashed(true); // ลบไฟล์ Google Doc ชั่วคราวทิ้ง เหลือแค่ PDF ที่อัปโหลดต่อ
+  }
+}
+
+function uploadBlobToSharePoint_(blob, fileName, subfolder) {
+  const token = getSharePointAccessToken_();
+  if (!token) return { ok: false, error: 'ยังไม่ได้ตั้งค่า SharePoint (Script Properties)' };
+  const driveId = getSharePointDriveId_(token);
+  const path = CONFIG.SHAREPOINT_FOLDER + '/' + subfolder + '/' + fileName;
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+  const resp = UrlFetchApp.fetch(
+    'https://graph.microsoft.com/v1.0/drives/' + driveId + '/root:/' + encodedPath + ':/content',
+    {
+      method: 'put',
+      contentType: blob.getContentType(),
+      payload: blob.getBytes(),
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    }
+  );
+  if (resp.getResponseCode() >= 300) return { ok: false, error: 'อัปโหลด SharePoint ไม่สำเร็จ: ' + resp.getContentText() };
+  return { ok: true };
+}
+
+function fmtDateServer_(d) {
+  if (!d) return '-';
+  const dt = new Date(d);
+  if (isNaN(dt)) return String(d);
+  const buddhistYear = dt.getFullYear() + 543;
+  return ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2) + '/' + buddhistYear;
+}
+
+function pdfDocStyle_() {
+  return '<style>' +
+    'body{font-family:"Sarabun","Angsana New",sans-serif;font-size:14px;color:#222;padding:20px;}' +
+    '.doc-header{text-align:center;font-size:18px;font-weight:700;margin-bottom:4px;}' +
+    '.doc-title{text-align:center;font-size:16px;font-weight:700;margin-bottom:14px;text-decoration:underline;}' +
+    '.doc-meta{display:flex;justify-content:space-between;margin-bottom:8px;}' +
+    '.doc-field{margin-bottom:4px;}' +
+    'table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12.5px;}' +
+    'th,td{border:1px solid #999;padding:6px 8px;text-align:center;}' +
+    'td.left{text-align:left;}' +
+    'td.money{text-align:right;}' +
+    '.doc-sign{display:flex;justify-content:space-between;margin-top:40px;font-size:13px;}' +
+    '.doc-sign div{width:45%;text-align:center;}' +
+    '.doc-sign .line{border-bottom:1px dotted #333;height:36px;}' +
+    '</style>';
+}
+
+function buildTransferPdfHtml_(t) {
+  const rows = (t.Items || []).map((it, i) =>
+    '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
+    '</td><td>' + escapeHtml_(it.FromDeptName) + '</td><td>' + escapeHtml_(it.ToDeptName) + '</td><td>' + escapeHtml_(it.Remark) + '</td></tr>'
+  ).join('');
+  return '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
+    '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
+    '<div class="doc-title">ใบโอนย้ายทรัพย์สิน</div>' +
+    '<div class="doc-meta"><div><b>เลขที่</b> ' + escapeHtml_(t.RunningNo) + '</div><div><b>วันที่</b> ' + fmtDateServer_(t.CreatedAt) + '</div></div>' +
+    '<div class="doc-field"><b>จาก</b> ' + escapeHtml_(t.FromDept) + ' &nbsp; <b>ไปยัง</b> ' + escapeHtml_(t.ToDept) + '</div>' +
+    '<table><tr><th>ลำดับ</th><th>รหัส</th><th>รายการ</th><th>ผู้โอน</th><th>ผู้รับโอน</th><th>หมายเหตุ</th></tr>' + rows + '</table>' +
+    '<div class="doc-sign"><div><div class="line"></div>(ผู้โอน)</div><div><div class="line"></div>(ผู้รับโอน)</div></div>' +
+    '</body></html>';
+}
+
+function buildSalePdfHtml_(s) {
+  const rows = (s.Items || []).map((it, i) =>
+    '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
+    '</td><td class="money">' + fmtMoneyServer_(it.ScrapPrice) + '</td><td class="money">' + fmtMoneyServer_(it.AuctionPrice) +
+    '</td><td class="money">' + fmtMoneyServer_(it.SalePrice) + '</td><td>' + escapeHtml_(it.Remark) + '</td></tr>'
+  ).join('');
+  const total = (s.Items || []).reduce((sum, it) => sum + (parseFloat(it.SalePrice) || 0), 0);
+  return '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
+    '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
+    '<div class="doc-title">ใบขายออกทรัพย์สิน</div>' +
+    '<div class="doc-meta"><div><b>เลขที่</b> ' + escapeHtml_(s.RunningNo) + '</div><div><b>วันที่</b> ' + fmtDateServer_(s.CreatedAt) + '</div></div>' +
+    '<div class="doc-field"><b>หน่วยงาน</b> ' + escapeHtml_(s.FromDept) + ' &nbsp; <b>ผู้ซื้อ</b> ' + escapeHtml_(s.Buyer || '-') + '</div>' +
+    '<table><tr><th>ลำดับ</th><th>รหัส</th><th>รายการ</th><th>ราคาซาก</th><th>ราคาประมูล</th><th>ราคาขาย</th><th>หมายเหตุ</th></tr>' + rows +
+    '<tr><td colspan="5" style="text-align:right;font-weight:700;">รวมราคาขาย</td><td class="money" style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
+    '<div class="doc-sign"><div><div class="line"></div>(ผู้บันทึก)</div><div><div class="line"></div>(ผู้อนุมัติ)</div></div>' +
+    '</body></html>';
+}
+
+function buildWriteOffPdfHtml_(w) {
+  const rows = (w.Items || []).map((it, i) =>
+    '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
+    '</td><td class="money">' + fmtMoneyServer_(it.ScrapPrice) + '</td><td>' + escapeHtml_(it.Remark) + '</td></tr>'
+  ).join('');
+  const total = (w.Items || []).reduce((sum, it) => sum + (parseFloat(it.ScrapPrice) || 0), 0);
+  return '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
+    '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
+    '<div class="doc-title">ใบตัดชำรุดทรัพย์สิน</div>' +
+    '<div class="doc-meta"><div><b>เลขที่</b> ' + escapeHtml_(w.RunningNo) + '</div><div><b>วันที่</b> ' + fmtDateServer_(w.CreatedAt) + '</div></div>' +
+    '<div class="doc-field"><b>หน่วยงาน</b> ' + escapeHtml_(w.FromDept) + ' &nbsp; <b>สาเหตุ</b> ' + escapeHtml_(w.Reason || '-') + '</div>' +
+    '<table><tr><th>ลำดับ</th><th>รหัส</th><th>รายการ</th><th>ราคาซาก</th><th>หมายเหตุ</th></tr>' + rows +
+    '<tr><td colspan="3" style="text-align:right;font-weight:700;">รวมราคาซาก</td><td class="money" style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
+    '<div class="doc-sign"><div><div class="line"></div>(ผู้บันทึก)</div><div><div class="line"></div>(ผู้อนุมัติ)</div></div>' +
+    '</body></html>';
+}
+
+// เรียกจาก createTransfer_/createSale_/createWriteOff_ (กรณีอนุมัติอัตโนมัติ) และ decideTransfer_/decideSale_/decideWriteOff_
+// (กรณีอนุมัติผ่านลิงก์อีเมล) เพื่อบันทึก PDF ของเอกสารที่อนุมัติเสร็จสมบูรณ์แล้วขึ้น SharePoint
+// ห่อด้วย try/catch เสมอ — ถ้า SharePoint ล่มหรือยังไม่ได้ตั้งค่า ต้องไม่ทำให้การสร้าง/อนุมัติเอกสารหลักล้มเหลว
+function exportDocToSharePointSafe_(kind, fullObj) {
+  try {
+    if (!getSharePointCreds_()) return; // ยังไม่ได้ตั้งค่า ข้ามไปเงียบๆ
+    let html, subfolder, titlePrefix;
+    if (kind === 'transfer') { html = buildTransferPdfHtml_(fullObj); subfolder = 'โอนย้าย'; titlePrefix = 'ใบโอนย้าย'; }
+    else if (kind === 'sale') { html = buildSalePdfHtml_(fullObj); subfolder = 'ขายออก'; titlePrefix = 'ใบขายออก'; }
+    else if (kind === 'writeoff') { html = buildWriteOffPdfHtml_(fullObj); subfolder = 'ตัดชำรุด'; titlePrefix = 'ใบตัดชำรุด'; }
+    else return;
+
+    const safeRunningNo = String(fullObj.RunningNo || '').replace(/\//g, '-');
+    const fileName = titlePrefix + '_' + safeRunningNo + '.pdf';
+    const pdfBlob = htmlToPdfBlob_(html, titlePrefix + '_' + safeRunningNo);
+    const result = uploadBlobToSharePoint_(pdfBlob, fileName, subfolder);
+    if (!result.ok) {
+      logActivity_('', 'SHAREPOINT_EXPORT_FAILED', 'system', (fullObj.RunningNo || '') + ': ' + result.error);
+    }
+  } catch (err) {
+    logActivity_('', 'SHAREPOINT_EXPORT_FAILED', 'system', (fullObj && fullObj.RunningNo || '') + ': ' + String(err));
   }
 }
 
