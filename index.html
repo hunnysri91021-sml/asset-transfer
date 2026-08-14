@@ -600,7 +600,7 @@ function renderAssetList(root){
     <div class="card">
       <h2>รายการทรัพย์สิน</h2>
       <div class="toolbar no-print">
-        <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน / ผู้ดูแล..." style="max-width:220px;">
         <select id="alStatus" style="max-width:160px;">
           <option value="">ทุกสถานะ</option>
           <option value="Active">ใช้งาน</option>
@@ -627,6 +627,9 @@ function renderAssetList(root){
 
   document.getElementById('btnAlFilter').onclick = load;
   document.getElementById('btnAlRefresh').onclick = load;
+  document.getElementById('alStatus').onchange = renderTable;
+  document.getElementById('alDivision').onchange = renderTable;
+  document.getElementById('alWorkGroup').onchange = renderTable;
   document.getElementById('btnAlExport').onclick = exportAssetList;
   document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
   document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
@@ -1009,6 +1012,9 @@ function renderList(root){
   `;
   document.getElementById('btnFilter').onclick = loadList;
   document.getElementById('btnRefresh').onclick = loadList;
+  document.getElementById('fStatus').onchange = loadList;
+  document.getElementById('fFrom').onchange = loadList;
+  document.getElementById('fTo').onchange = loadList;
   document.getElementById('btnListExport').onclick = exportTransferList;
   document.getElementById('btnCreateFromQueue').onclick = createTransferFromQueue;
   document.getElementById('btnQueueRefresh').onclick = loadQueue;
@@ -1487,6 +1493,9 @@ function renderSaleList(root){
   `;
   document.getElementById('btnSaleFilter').onclick = loadSaleList;
   document.getElementById('btnSaleRefresh').onclick = loadSaleList;
+  document.getElementById('fSaleStatus').onchange = loadSaleList;
+  document.getElementById('fSaleFrom').onchange = loadSaleList;
+  document.getElementById('fSaleTo').onchange = loadSaleList;
   document.getElementById('btnSaleExport').onclick = exportSaleList;
   document.getElementById('btnCreateFromSaleQueue').onclick = createSaleFromQueue;
   document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
@@ -1944,6 +1953,9 @@ function renderWriteOffList(root){
   `;
   document.getElementById('btnWoFilter').onclick = loadWoList;
   document.getElementById('btnWoRefresh').onclick = loadWoList;
+  document.getElementById('fWoStatus').onchange = loadWoList;
+  document.getElementById('fWoFrom').onchange = loadWoList;
+  document.getElementById('fWoTo').onchange = loadWoList;
   document.getElementById('btnWoExport').onclick = exportWoList;
   document.getElementById('btnCreateFromWriteOffQueue').onclick = createWriteOffFromQueue;
   document.getElementById('btnWriteOffQueueRefresh').onclick = loadWriteOffQueue;
