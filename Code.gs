@@ -263,6 +263,9 @@ function doPost(e) {
       case 'adminSaveScrapRate':
         result = adminSaveScrapRate_(body);
         break;
+      case 'adminBackfillAssetTags':
+        result = adminBackfillAssetTags_(body);
+        break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
         break;
@@ -794,6 +797,24 @@ function adminSaveScrapRate_(body) {
   PropertiesService.getScriptProperties().setProperty(SCRAP_RATE_PROP, String(rate));
   logActivity_('', 'ADMIN_SET_SCRAP_RATE', 'admin', 'ตั้งค่าเปอร์เซ็นต์ราคาซาก ' + rate + '%');
   return { ok: true };
+}
+
+// setAssetsTag_ เขียนแท็ก "ขาย"/"ชำรุด" ให้อัตโนมัติเฉพาะตอนใบขาย/ตัดชำรุดอนุมัติใหม่นับจากตอนที่เพิ่มฟีเจอร์นี้
+// (ดู createSale_/createWriteOff_/decideSale_/decideWriteOff_) — รายการที่ขาย/ตัดชำรุดไปแล้ว "ก่อนหน้านั้น" ไม่ถูกไล่ย้อนหลังให้
+// ฟังก์ชันนี้ให้ Admin กดครั้งเดียวเพื่อไล่เช็คสถานะจริง (ตามเอกสารที่อนุมัติแล้วทั้งหมด) แล้วปรับ Tag ในชีต Assets ให้ตรงกันย้อนหลัง
+function adminBackfillAssetTags_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const disposed = getDisposedAssetStatus_();
+  const soldIds = [];
+  const writtenOffIds = [];
+  Object.keys(disposed).forEach(assetId => {
+    if (disposed[assetId] === 'Sold') soldIds.push(assetId);
+    else if (disposed[assetId] === 'WrittenOff') writtenOffIds.push(assetId);
+  });
+  setAssetsTag_(soldIds, 'ขาย');
+  setAssetsTag_(writtenOffIds, 'ชำรุด');
+  logActivity_('', 'ADMIN_BACKFILL_TAGS', 'admin', 'ซิงค์แท็กสถานะย้อนหลัง: ขาย ' + soldIds.length + ' รายการ ตัดชำรุด ' + writtenOffIds.length + ' รายการ');
+  return { ok: true, data: { soldCount: soldIds.length, writtenOffCount: writtenOffIds.length } };
 }
 
 function findSourceSheet_(srcSs) {
