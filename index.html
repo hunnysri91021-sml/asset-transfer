@@ -2438,6 +2438,11 @@ function renderSettings(root){
         </div>
         <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ราคาซากของทุกทรัพย์สินคำนวณอัตโนมัติตามหลักบัญชี = ราคาซื้อ x เปอร์เซ็นต์นี้ (ไม่รับค่าที่พิมพ์เองหรือซิงค์จากทีมบัญชีอีกต่อไป) มีผลทันทีกับทุกรายงานและทุกแบบฟอร์มที่อ้างอิงราคาซาก</p>
       </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ซิงค์แท็กสถานะ "ขาย" / "ชำรุด" ย้อนหลัง</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ระบบจะติดแท็ก "ขาย"/"ชำรุด" ให้ทรัพย์สินอัตโนมัติเฉพาะใบขาย/ใบตัดชำรุดที่อนุมัติ<b>นับจากนี้ไป</b> — ถ้ามีรายการที่ขาย/ตัดชำรุดไปแล้วก่อนหน้านี้และแท็กยังไม่ตรง กดปุ่มนี้เพื่อไล่ตรวจสอบเอกสารที่อนุมัติแล้วทั้งหมดแล้วปรับแท็กในชีต Assets ให้ตรงกับความจริงย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
+        <button class="btn btn-secondary btn-sm" id="btnBackfillTags">🔄 ซิงค์แท็กสถานะย้อนหลัง</button>
+      </div>
     </div>
 
     <div class="card">
@@ -2455,7 +2460,18 @@ function renderSettings(root){
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveScrapRate').onclick = saveScrapRate;
+  document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
+
+  function backfillTags(){
+    const btn = document.getElementById('btnBackfillTags');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังซิงค์...';
+    apiPost({ action:'adminBackfillAssetTags', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '🔄 ซิงค์แท็กสถานะย้อนหลัง';
+      if(!res.ok){ toast(res.error||'ซิงค์ไม่สำเร็จ','err'); return; }
+      toast('ซิงค์สำเร็จ — ขาย '+res.data.soldCount+' รายการ ตัดชำรุด '+res.data.writtenOffCount+' รายการ ไปดูผลได้ที่หน้า "ข้อมูลรวม"','ok');
+    });
+  }
 
   function loadDeptCodes(){
     return apiGet({action:'getDeptCodes'}).then(res=>{
