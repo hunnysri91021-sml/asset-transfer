@@ -385,12 +385,23 @@ function addToAssetQueue_(body, purpose) {
   return withLock_(() => {
     const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
     const values = sh.getDataRange().getValues();
-    const idx = indexMap_(values[0]);
+    const headers = values[0];
+    const idx = indexMap_(headers);
+    // ชีตนี้เดิมมีแค่ AssetID/AddedBy/AddedAt (ก่อนเพิ่มคิวขาย/ตัดชำรุด) คอลัมน์ Purpose อาจยังไม่ถูกสร้างถ้ายังไม่ได้รัน setup() ใหม่
+    if (idx.Purpose === undefined && purpose !== QUEUE_PURPOSES.TRANSFER) {
+      return { ok: false, error: 'ชีต TransferQueue ยังไม่มีคอลัมน์ Purpose กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อนใช้งานคิวขาย/คิวตัดชำรุด' };
+    }
     for (let i = 1; i < values.length; i++) {
-      const rowPurpose = values[i][idx.Purpose] || QUEUE_PURPOSES.TRANSFER;
+      const rowPurpose = idx.Purpose !== undefined ? (values[i][idx.Purpose] || QUEUE_PURPOSES.TRANSFER) : QUEUE_PURPOSES.TRANSFER;
       if (String(values[i][idx.AssetID]) === assetId && rowPurpose === purpose) return { ok: true, data: { alreadyQueued: true } };
     }
-    sh.appendRow([assetId, purpose, body.addedBy || '', new Date()]);
+    // เขียนตามตำแหน่งคอลัมน์จริงในชีต (idx) แทนการอิงลำดับคงที่ กันค่าคลาดเคลื่อนคอลัมน์เหมือนที่เคยเกิดกับชีต Users
+    const newRow = headers.map(() => '');
+    newRow[idx.AssetID] = assetId;
+    if (idx.Purpose !== undefined) newRow[idx.Purpose] = purpose;
+    newRow[idx.AddedBy] = body.addedBy || '';
+    newRow[idx.AddedAt] = new Date();
+    sh.appendRow(newRow);
     return { ok: true, data: { alreadyQueued: false } };
   });
 }
