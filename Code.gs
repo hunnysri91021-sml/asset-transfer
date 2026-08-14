@@ -230,6 +230,9 @@ function doPost(e) {
       case 'adminSaveSourceSheetLink':
         result = adminSaveSourceSheetLink_(body);
         break;
+      case 'adminSaveScrapRate':
+        result = adminSaveScrapRate_(body);
+        break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
         break;
@@ -293,6 +296,12 @@ function getAssetsRaw_(q) {
   }
   // resolve display image: override wins over original
   rows.forEach(r => { r.DisplayImage = r.ImageURLOverride || r.ImageURL || ''; });
+  // ราคาซาก คำนวณอัตโนมัติตามหลักบัญชี = ราคาซื้อ x เปอร์เซ็นต์ที่ตั้งค่าไว้ (ไม่รับค่าที่พิมพ์เอง/ซิงค์จากภายนอกอีกต่อไป)
+  const scrapRate = getScrapRatePercent_();
+  rows.forEach(r => {
+    const purchasePrice = parseFloat(r.PurchasePrice) || 0;
+    r.ScrapPrice = Math.round(purchasePrice * scrapRate / 100 * 100) / 100;
+  });
   return rows;
 }
 
@@ -433,7 +442,8 @@ function adminDeleteUser_(body) {
   return { ok: false, error: 'ไม่พบผู้ใช้นี้' };
 }
 
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+// ScrapPrice ไม่อยู่ในนี้แล้ว เพราะคำนวณอัตโนมัติจาก PurchasePrice x เปอร์เซ็นต์ราคาซาก (ดู getScrapRatePercent_)
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
@@ -541,10 +551,28 @@ function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, asse
 // จึงจับคู่ด้วย prefix แล้วเลือกแท็บที่มีชื่อ (วันที่) ล่าสุดโดยอัตโนมัติ แทนชื่อคงที่
 const SOURCE_SHEET_TAB_PREFIX = 'AppSheet.ViewData';
 const SOURCE_SHEET_URL_PROP = 'SOURCE_SHEET_URL';
-const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'MinSalePrice', 'ImageURL'];
 
 function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
+}
+
+// เปอร์เซ็นต์ราคาซาก (ตามหลักบัญชี) ที่ใช้คำนวณ ราคาซาก = ราคาซื้อ x เปอร์เซ็นต์นี้ ค่าเริ่มต้น 5%
+const SCRAP_RATE_PROP = 'SCRAP_RATE_PERCENT';
+const DEFAULT_SCRAP_RATE_PERCENT = 5;
+function getScrapRatePercent_() {
+  const v = PropertiesService.getScriptProperties().getProperty(SCRAP_RATE_PROP);
+  const n = parseFloat(v);
+  return isNaN(n) ? DEFAULT_SCRAP_RATE_PERCENT : n;
+}
+
+function adminSaveScrapRate_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const rate = parseFloat(body.scrapRatePercent);
+  if (isNaN(rate) || rate < 0 || rate > 100) return { ok: false, error: 'กรุณาระบุเปอร์เซ็นต์ราคาซากระหว่าง 0-100' };
+  PropertiesService.getScriptProperties().setProperty(SCRAP_RATE_PROP, String(rate));
+  logActivity_('', 'ADMIN_SET_SCRAP_RATE', 'admin', 'ตั้งค่าเปอร์เซ็นต์ราคาซาก ' + rate + '%');
+  return { ok: true };
 }
 
 function findSourceSheet_(srcSs) {
@@ -559,7 +587,7 @@ function findSourceSheet_(srcSs) {
 
 function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_() } };
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_() } };
 }
 
 function adminSaveSourceSheetLink_(body) {

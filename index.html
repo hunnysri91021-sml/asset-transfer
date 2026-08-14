@@ -186,6 +186,7 @@ let STATE = {
   view: 'dashboard',
   role: null,
   username: null,
+  scrapRatePercent: null,
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -521,7 +522,7 @@ function openAssetEditModal(asset, onSaved){
           <div><label>มูลค่าตามบัญชี</label><input type="text" inputmode="decimal" id="amBookValue" value="${esc(a.BookValue||'')}"></div>
         </div>
         <div class="row">
-          <div><label>ราคาซาก</label><input type="text" inputmode="decimal" id="amScrapPrice" value="${esc(a.ScrapPrice||'')}"></div>
+          <div><label>ราคาซาก (คำนวณอัตโนมัติ)</label><input type="text" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.ScrapPrice||0))} บาท" disabled style="background:#f4f6f9;"></div>
           <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
         </div>
         <label>แท็กสถานะ</label>
@@ -548,6 +549,17 @@ function openAssetEditModal(asset, onSaved){
   document.getElementById('assetModalOverlay').onclick = (e)=>{ if(e.target.id==='assetModalOverlay') closeAssetModal(); };
   document.getElementById('amImageFile').onchange = function(){ uploadAssetModalImage(this); };
   document.getElementById('amImageCam').onchange = function(){ uploadAssetModalImage(this); };
+  document.getElementById('amPurchasePrice').oninput = updateScrapPriceDisplay;
+  function updateScrapPriceDisplay(){
+    const purchasePrice = parseFloat(document.getElementById('amPurchasePrice').value) || 0;
+    const rate = STATE.scrapRatePercent==null ? 5 : STATE.scrapRatePercent;
+    document.getElementById('amScrapPriceDisplay').value = fmtMoney(Math.round(purchasePrice * rate / 100 * 100) / 100) + ' บาท';
+  }
+  if(STATE.scrapRatePercent==null){
+    apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
+      if(res.ok){ STATE.scrapRatePercent = res.data.scrapRatePercent; updateScrapPriceDisplay(); }
+    });
+  }
   document.getElementById('btnAssetModalSave').onclick = ()=>{
     const assetId = document.getElementById('amAssetID').value.trim();
     if(!assetId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
@@ -563,7 +575,6 @@ function openAssetEditModal(asset, onSaved){
       Custodian: document.getElementById('amCustodian').value.trim(),
       Location: document.getElementById('amLocation').value.trim(),
       Tag: document.getElementById('amTag').value,
-      ScrapPrice: document.getElementById('amScrapPrice').value.trim(),
       MinSalePrice: document.getElementById('amMinSalePrice').value.trim(),
       ImageURL: document.getElementById('amImageURL').value.trim()
     };
@@ -621,8 +632,8 @@ function renderAssetList(root){
     const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','สถานะ','แท็กสถานะ','ลิงก์รูปภาพ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน', a.DisplayImage||'']);
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','ลิงก์รูปภาพ'];
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน', a.DisplayImage||'']);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
@@ -2023,6 +2034,16 @@ function renderSettings(root){
           <button class="btn btn-primary btn-sm" id="btnSyncSource">↻ ดึงข้อมูลล่าสุด</button>
         </div>
       </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>เปอร์เซ็นต์ราคาซาก (%)</label>
+        <div class="row">
+          <div style="max-width:160px;"><input type="text" inputmode="decimal" id="scrapRatePercent" placeholder="5"></div>
+          <div style="flex:2;display:flex;align-items:flex-end;">
+            <button class="btn btn-secondary btn-sm" id="btnSaveScrapRate">บันทึก</button>
+          </div>
+        </div>
+        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ราคาซากของทุกทรัพย์สินคำนวณอัตโนมัติตามหลักบัญชี = ราคาซื้อ x เปอร์เซ็นต์นี้ (ไม่รับค่าที่พิมพ์เองหรือซิงค์จากทีมบัญชีอีกต่อไป) มีผลทันทีกับทุกรายงานและทุกแบบฟอร์มที่อ้างอิงราคาซาก</p>
+      </div>
     </div>
 
     <div class="card">
@@ -2040,6 +2061,7 @@ function renderSettings(root){
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
+  document.getElementById('btnSaveScrapRate').onclick = saveScrapRate;
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
 
   function loadDeptCodes(){
@@ -2117,7 +2139,10 @@ function renderSettings(root){
 
   function loadSourceLink(){
     apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
-      if(res.ok) document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
+      if(!res.ok) return;
+      document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
+      STATE.scrapRatePercent = res.data.scrapRatePercent;
+      document.getElementById('scrapRatePercent').value = res.data.scrapRatePercent;
     });
   }
 
@@ -2129,6 +2154,18 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกลิงก์ไม่สำเร็จ','err'); return; }
       toast('บันทึกลิงก์สำเร็จ','ok');
+    });
+  }
+
+  function saveScrapRate(){
+    const rate = document.getElementById('scrapRatePercent').value.trim();
+    const btn = document.getElementById('btnSaveScrapRate');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveScrapRate', password: STATE.adminPassword, scrapRatePercent: rate }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกเปอร์เซ็นต์ราคาซากไม่สำเร็จ','err'); return; }
+      STATE.scrapRatePercent = parseFloat(rate);
+      toast('บันทึกเปอร์เซ็นต์ราคาซากสำเร็จ','ok');
     });
   }
 
