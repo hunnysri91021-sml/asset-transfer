@@ -30,6 +30,7 @@ const SHEETS = {
   ASSETS: 'Assets',
   DEPT_CODES: 'DeptCodes',
   USERS: 'Users',
+  TRANSFER_QUEUE: 'TransferQueue',
   TRANSFERS: 'Transfers',
   ITEMS: 'TransferItems',
   SALES: 'Sales',
@@ -43,6 +44,7 @@ const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'CreatedAt'],
+  TRANSFER_QUEUE: ['AssetID', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
@@ -87,6 +89,7 @@ function setup() {
     deptSheet.getRange(2, 1, DEFAULT_DEPT_CODES.length, 2).setValues(DEFAULT_DEPT_CODES);
   }
   ensureSheet_(ss, SHEETS.USERS, HEADERS.USERS);
+  ensureSheet_(ss, SHEETS.TRANSFER_QUEUE, HEADERS.TRANSFER_QUEUE);
   ensureSheet_(ss, SHEETS.TRANSFERS, HEADERS.TRANSFERS);
   ensureSheet_(ss, SHEETS.ITEMS, HEADERS.ITEMS);
   ensureSheet_(ss, SHEETS.SALES, HEADERS.SALES);
@@ -140,6 +143,9 @@ function doGet(e) {
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
+      case 'getTransferQueue':
+        result = { ok: true, data: getTransferQueue_() };
+        break;
       case 'getTransfers':
         result = { ok: true, data: getTransfers_(e.parameter) };
         break;
@@ -182,6 +188,12 @@ function doPost(e) {
     const action = body.action;
     let result;
     switch (action) {
+      case 'addToTransferQueue':
+        result = addToTransferQueue_(body);
+        break;
+      case 'removeFromTransferQueue':
+        result = removeFromTransferQueue_(body);
+        break;
       case 'createTransfer':
         result = createTransfer_(body);
         break;
@@ -303,6 +315,69 @@ function getAssetsRaw_(q) {
     r.ScrapPrice = Math.round(purchasePrice * scrapRate / 100 * 100) / 100;
   });
   return rows;
+}
+
+// ============================================================
+// TRANSFER QUEUE — ทรัพย์สินที่มาร์คไว้ล่วงหน้าจากหน้า "รายการทรัพย์สิน" เพื่อรอออกใบโอนย้ายที่แถบ "โอนย้าย"
+// ============================================================
+function getTransferQueue_() {
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  const queueRows = values.filter(r => r[idx.AssetID]).map(r => rowToObj_(r, idx));
+
+  const disposed = getDisposedAssetStatus_();
+  const assetsById = {};
+  getAssetsRaw_().forEach(a => { assetsById[String(a.AssetID)] = a; });
+
+  return queueRows.map(q => {
+    const a = assetsById[String(q.AssetID)] || {};
+    return {
+      AssetID: q.AssetID,
+      AddedBy: q.AddedBy,
+      AddedAt: q.AddedAt,
+      AssetName: a.AssetName || '',
+      Department: a.Department || '',
+      DisplayImage: a.DisplayImage || '',
+      PurchasePrice: a.PurchasePrice || 0,
+      BookValue: a.BookValue || 0,
+      AssetStatus: disposed[String(q.AssetID)] || 'Active'
+    };
+  }).sort((x, y) => new Date(x.AddedAt) - new Date(y.AddedAt));
+}
+
+function addToTransferQueue_(body) {
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const disposed = getDisposedAssetStatus_();
+  if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถโอนย้ายได้' };
+
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) return { ok: true, data: { alreadyQueued: true } };
+  }
+  sh.appendRow([assetId, body.addedBy || '', new Date()]);
+  return { ok: true, data: { alreadyQueued: false } };
+}
+
+function removeFromTransferQueue_(body) {
+  const assetIds = (body.assetIds || []).map(String);
+  if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการที่ต้องการลบออกจากคิว' };
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let removed = 0;
+  for (let i = values.length - 1; i >= 1; i--) {
+    if (assetIds.indexOf(String(values[i][idx.AssetID])) !== -1) {
+      sh.deleteRow(i + 1);
+      removed++;
+    }
+  }
+  return { ok: true, data: { removed } };
 }
 
 function updateAssetImage_(body) {
