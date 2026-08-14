@@ -30,6 +30,7 @@ const SHEETS = {
   ASSETS: 'Assets',
   DEPT_CODES: 'DeptCodes',
   USERS: 'Users',
+  TRANSFER_QUEUE: 'TransferQueue',
   TRANSFERS: 'Transfers',
   ITEMS: 'TransferItems',
   SALES: 'Sales',
@@ -43,6 +44,7 @@ const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'CreatedAt'],
+  TRANSFER_QUEUE: ['AssetID', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
@@ -87,6 +89,7 @@ function setup() {
     deptSheet.getRange(2, 1, DEFAULT_DEPT_CODES.length, 2).setValues(DEFAULT_DEPT_CODES);
   }
   ensureSheet_(ss, SHEETS.USERS, HEADERS.USERS);
+  ensureSheet_(ss, SHEETS.TRANSFER_QUEUE, HEADERS.TRANSFER_QUEUE);
   ensureSheet_(ss, SHEETS.TRANSFERS, HEADERS.TRANSFERS);
   ensureSheet_(ss, SHEETS.ITEMS, HEADERS.ITEMS);
   ensureSheet_(ss, SHEETS.SALES, HEADERS.SALES);
@@ -140,6 +143,9 @@ function doGet(e) {
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
+      case 'getTransferQueue':
+        result = { ok: true, data: getTransferQueue_() };
+        break;
       case 'getTransfers':
         result = { ok: true, data: getTransfers_(e.parameter) };
         break;
@@ -182,6 +188,12 @@ function doPost(e) {
     const action = body.action;
     let result;
     switch (action) {
+      case 'addToTransferQueue':
+        result = addToTransferQueue_(body);
+        break;
+      case 'removeFromTransferQueue':
+        result = removeFromTransferQueue_(body);
+        break;
       case 'createTransfer':
         result = createTransfer_(body);
         break;
@@ -229,6 +241,9 @@ function doPost(e) {
         break;
       case 'adminSaveSourceSheetLink':
         result = adminSaveSourceSheetLink_(body);
+        break;
+      case 'adminSaveScrapRate':
+        result = adminSaveScrapRate_(body);
         break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
@@ -293,7 +308,76 @@ function getAssetsRaw_(q) {
   }
   // resolve display image: override wins over original
   rows.forEach(r => { r.DisplayImage = r.ImageURLOverride || r.ImageURL || ''; });
+  // ราคาซาก คำนวณอัตโนมัติตามหลักบัญชี = ราคาซื้อ x เปอร์เซ็นต์ที่ตั้งค่าไว้ (ไม่รับค่าที่พิมพ์เอง/ซิงค์จากภายนอกอีกต่อไป)
+  const scrapRate = getScrapRatePercent_();
+  rows.forEach(r => {
+    const purchasePrice = parseFloat(r.PurchasePrice) || 0;
+    r.ScrapPrice = Math.round(purchasePrice * scrapRate / 100 * 100) / 100;
+  });
   return rows;
+}
+
+// ============================================================
+// TRANSFER QUEUE — ทรัพย์สินที่มาร์คไว้ล่วงหน้าจากหน้า "รายการทรัพย์สิน" เพื่อรอออกใบโอนย้ายที่แถบ "โอนย้าย"
+// ============================================================
+function getTransferQueue_() {
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  const queueRows = values.filter(r => r[idx.AssetID]).map(r => rowToObj_(r, idx));
+
+  const disposed = getDisposedAssetStatus_();
+  const assetsById = {};
+  getAssetsRaw_().forEach(a => { assetsById[String(a.AssetID)] = a; });
+
+  return queueRows.map(q => {
+    const a = assetsById[String(q.AssetID)] || {};
+    return {
+      AssetID: q.AssetID,
+      AddedBy: q.AddedBy,
+      AddedAt: q.AddedAt,
+      AssetName: a.AssetName || '',
+      Department: a.Department || '',
+      DisplayImage: a.DisplayImage || '',
+      PurchasePrice: a.PurchasePrice || 0,
+      BookValue: a.BookValue || 0,
+      AssetStatus: disposed[String(q.AssetID)] || 'Active'
+    };
+  }).sort((x, y) => new Date(x.AddedAt) - new Date(y.AddedAt));
+}
+
+function addToTransferQueue_(body) {
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const disposed = getDisposedAssetStatus_();
+  if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถโอนย้ายได้' };
+
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) return { ok: true, data: { alreadyQueued: true } };
+  }
+  sh.appendRow([assetId, body.addedBy || '', new Date()]);
+  return { ok: true, data: { alreadyQueued: false } };
+}
+
+function removeFromTransferQueue_(body) {
+  const assetIds = (body.assetIds || []).map(String);
+  if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการที่ต้องการลบออกจากคิว' };
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let removed = 0;
+  for (let i = values.length - 1; i >= 1; i--) {
+    if (assetIds.indexOf(String(values[i][idx.AssetID])) !== -1) {
+      sh.deleteRow(i + 1);
+      removed++;
+    }
+  }
+  return { ok: true, data: { removed } };
 }
 
 function updateAssetImage_(body) {
@@ -433,7 +517,8 @@ function adminDeleteUser_(body) {
   return { ok: false, error: 'ไม่พบผู้ใช้นี้' };
 }
 
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+// ScrapPrice ไม่อยู่ในนี้แล้ว เพราะคำนวณอัตโนมัติจาก PurchasePrice x เปอร์เซ็นต์ราคาซาก (ดู getScrapRatePercent_)
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
@@ -541,10 +626,28 @@ function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, asse
 // จึงจับคู่ด้วย prefix แล้วเลือกแท็บที่มีชื่อ (วันที่) ล่าสุดโดยอัตโนมัติ แทนชื่อคงที่
 const SOURCE_SHEET_TAB_PREFIX = 'AppSheet.ViewData';
 const SOURCE_SHEET_URL_PROP = 'SOURCE_SHEET_URL';
-const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+const SOURCE_SYNC_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'MinSalePrice', 'ImageURL'];
 
 function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
+}
+
+// เปอร์เซ็นต์ราคาซาก (ตามหลักบัญชี) ที่ใช้คำนวณ ราคาซาก = ราคาซื้อ x เปอร์เซ็นต์นี้ ค่าเริ่มต้น 5%
+const SCRAP_RATE_PROP = 'SCRAP_RATE_PERCENT';
+const DEFAULT_SCRAP_RATE_PERCENT = 5;
+function getScrapRatePercent_() {
+  const v = PropertiesService.getScriptProperties().getProperty(SCRAP_RATE_PROP);
+  const n = parseFloat(v);
+  return isNaN(n) ? DEFAULT_SCRAP_RATE_PERCENT : n;
+}
+
+function adminSaveScrapRate_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const rate = parseFloat(body.scrapRatePercent);
+  if (isNaN(rate) || rate < 0 || rate > 100) return { ok: false, error: 'กรุณาระบุเปอร์เซ็นต์ราคาซากระหว่าง 0-100' };
+  PropertiesService.getScriptProperties().setProperty(SCRAP_RATE_PROP, String(rate));
+  logActivity_('', 'ADMIN_SET_SCRAP_RATE', 'admin', 'ตั้งค่าเปอร์เซ็นต์ราคาซาก ' + rate + '%');
+  return { ok: true };
 }
 
 function findSourceSheet_(srcSs) {
@@ -559,7 +662,7 @@ function findSourceSheet_(srcSs) {
 
 function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_() } };
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_() } };
 }
 
 function adminSaveSourceSheetLink_(body) {
