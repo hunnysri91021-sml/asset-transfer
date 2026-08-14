@@ -41,7 +41,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CreatedAt'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
@@ -562,7 +562,8 @@ function adminSaveUser_(body) {
 
   const sh = getSS_().getSheetByName(SHEETS.USERS);
   const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const headers = values[0];
+  const idx = indexMap_(headers);
   let rowNum = -1;
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username) { rowNum = i + 1; break; }
@@ -570,12 +571,20 @@ function adminSaveUser_(body) {
 
   if (rowNum === -1) {
     if (!newPassword) return { ok: false, error: 'กรุณาระบุรหัสผ่านสำหรับผู้ใช้ใหม่' };
-    sh.appendRow([username, newPassword, role, departments, new Date()]);
+    // เขียนตามตำแหน่งคอลัมน์จริงในชีต (idx) แทนการอิงลำดับคงที่ เพื่อไม่ให้ค่าคลาดเคลื่อนคอลัมน์
+    // ถ้าชีตยังไม่มีคอลัมน์ Departments (ยังไม่ได้รัน setup() ใหม่)
+    const newRow = headers.map(() => '');
+    newRow[idx.Username] = username;
+    newRow[idx.Password] = newPassword;
+    newRow[idx.Role] = role;
+    if (idx.Departments !== undefined) newRow[idx.Departments] = departments;
+    newRow[idx.CreatedAt] = new Date();
+    sh.appendRow(newRow);
     logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
     return { ok: true, data: { created: true } };
   }
   sh.getRange(rowNum, idx.Role + 1).setValue(role);
-  sh.getRange(rowNum, idx.Departments + 1).setValue(departments);
+  if (idx.Departments !== undefined) sh.getRange(rowNum, idx.Departments + 1).setValue(departments);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
   return { ok: true, data: { created: false } };
@@ -622,7 +631,9 @@ function adminSaveAsset_(body) {
 
   if (rowNum === -1) {
     if (!canManageDept_(user, asset.Department)) return { ok: false, error: 'ไม่มีสิทธิ์เพิ่มทรัพย์สินของหน่วยงานนี้' };
-    const newRow = HEADERS.ASSETS.map(h => {
+    // เขียนตามตำแหน่งคอลัมน์จริงในชีต (headers/idx) แทนการอิงลำดับคงที่ใน HEADERS.ASSETS
+    // เพื่อไม่ให้ค่าคลาดเคลื่อนคอลัมน์ถ้าชีตจริงมีลำดับต่างจากค่าคงที่ (เช่น ยังไม่ได้รัน setup() ใหม่)
+    const newRow = headers.map(h => {
       if (h === 'AssetID') return assetId;
       if (h === 'UpdatedAt') return new Date();
       if (ADMIN_ASSET_EDITABLE_FIELDS.indexOf(h) !== -1) return asset[h] || '';
@@ -643,6 +654,10 @@ function adminSaveAsset_(body) {
     if (asset[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
   });
   sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
+  // มีคนแก้ไข/บันทึกรายการนี้แล้ว ถือว่ารับทราบ จึงล้างป้าย "ข้อมูลใหม่จากบัญชี" / "ไม่ตรงกับบัญชี" ทิ้ง
+  // (เช็ค idx !== undefined เผื่อยังไม่ได้รัน setup() ใหม่เพื่อเพิ่มคอลัมน์ SyncFlag/SyncNote ในชีต)
+  if (idx.SyncFlag !== undefined) sh.getRange(rowNum, idx.SyncFlag + 1).setValue('');
+  if (idx.SyncNote !== undefined) sh.getRange(rowNum, idx.SyncNote + 1).setValue('');
   logActivity_('', 'ADMIN_ASSET_UPDATE', user.username, 'แก้ไขทรัพย์สิน ' + assetId);
   return { ok: true, data: { created: false } };
 }
@@ -769,6 +784,26 @@ function adminSaveSourceSheetLink_(body) {
 
 // ดึงข้อมูลจากชีตต้นทาง จับคู่คอลัมน์ตามชื่อหัวตาราง: อัปเดตแถวที่มี AssetID ตรงกับที่มีอยู่แล้ว
 // และเพิ่มแถวใหม่ให้กับ AssetID ที่ยังไม่มีในระบบ (ไม่ลบแถวเดิมที่ไม่พบในต้นทาง เพื่อไม่ทับรายการที่ Admin เพิ่ม/แก้ไขเองในระบบ)
+// ป้ายกำกับฟิลด์ (ภาษาไทย) สำหรับสรุปรายละเอียดความไม่ตรงกันให้ผู้ใช้อ่านง่าย
+const SYNC_FIELD_LABELS_TH = {
+  AssetName: 'ชื่อทรัพย์สิน', Department: 'หน่วยงาน', Division: 'ฝ่าย', WorkGroup: 'กลุ่มงาน',
+  PurchaseDate: 'วันที่ซื้อ', PurchasePrice: 'ราคาซื้อ', BookValue: 'มูลค่าตามบัญชี',
+  Custodian: 'ผู้ดูแล', Location: 'สถานที่', MinSalePrice: 'ราคาขายขั้นต่ำ', ImageURL: 'รูปภาพ'
+};
+
+function normalizeCompareValue_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  if (typeof v === 'number') return String(Math.round(v * 100) / 100);
+  return String(v == null ? '' : v).trim();
+}
+
+function valuesDiffer_(a, b) {
+  return normalizeCompareValue_(a) !== normalizeCompareValue_(b);
+}
+
+// ดึงข้อมูลจากชีตต้นทางมาเทียบกับข้อมูลในระบบ: AssetID ใหม่ที่ยังไม่มี -> เพิ่มเข้ามาและติดป้าย "ข้อมูลใหม่จากบัญชี"
+// AssetID ที่มีอยู่แล้วแต่บางฟิลด์ไม่ตรงกับที่มีในระบบ -> "ไม่อัปเดตค่าอัตโนมัติ" แค่ติดป้าย "ไม่ตรงกับบัญชี" พร้อมสรุปรายละเอียดไว้ให้ตรวจสอบเอง
+// ป้ายทั้งสองแบบจะหายไปอัตโนมัติเมื่อมีคนแก้ไข/บันทึกทรัพย์สินรายการนั้น (ดู adminSaveAsset_)
 function adminSyncFromSource_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const url = getSourceSheetUrl_();
@@ -798,7 +833,7 @@ function adminSyncFromSource_(body) {
     localRowByAssetId[String(values[i][idx.AssetID])] = i + 1;
   }
 
-  let updatedCount = 0;
+  let mismatchCount = 0;
   const newRows = [];
   srcValues.forEach(srcRow => {
     const assetId = String(srcRow[srcIdx.AssetID] || '').trim();
@@ -812,18 +847,31 @@ function adminSyncFromSource_(body) {
         newRow[idx[f]] = srcRow[srcIdx[f]];
       });
       newRow[idx.UpdatedAt] = new Date();
+      newRow[idx.SyncFlag] = 'New';
       newRows.push(newRow);
       return;
     }
-    let changed = false;
+
+    const mismatches = [];
     SOURCE_SYNC_FIELDS.forEach(f => {
-      if (srcIdx[f] === undefined) return;
-      sh.getRange(rowNum, idx[f] + 1).setValue(srcRow[srcIdx[f]]);
-      changed = true;
+      if (srcIdx[f] === undefined || idx[f] === undefined) return;
+      const srcVal = srcRow[srcIdx[f]];
+      const localVal = values[rowNum - 1][idx[f]];
+      if (valuesDiffer_(srcVal, localVal)) {
+        mismatches.push((SYNC_FIELD_LABELS_TH[f] || f) + ': บัญชีแจ้ง ' + normalizeCompareValue_(srcVal) + ' / ในระบบ ' + normalizeCompareValue_(localVal));
+      }
     });
-    if (changed) {
-      sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
-      updatedCount++;
+
+    if (mismatches.length) {
+      mismatchCount++;
+      // เขียนป้ายเตือนได้ก็ต่อเมื่อชีตมีคอลัมน์ SyncFlag/SyncNote แล้ว (รัน setup() ใหม่แล้ว)
+      if (idx.SyncFlag !== undefined && idx.SyncNote !== undefined) {
+        sh.getRange(rowNum, idx.SyncFlag + 1).setValue('Mismatch');
+        sh.getRange(rowNum, idx.SyncNote + 1).setValue(mismatches.join('; '));
+      }
+    } else if (idx.SyncFlag !== undefined && String(values[rowNum - 1][idx.SyncFlag] || '') === 'Mismatch') {
+      sh.getRange(rowNum, idx.SyncFlag + 1).setValue('');
+      if (idx.SyncNote !== undefined) sh.getRange(rowNum, idx.SyncNote + 1).setValue('');
     }
   });
 
@@ -831,9 +879,9 @@ function adminSyncFromSource_(body) {
     sh.getRange(sh.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
   }
 
-  logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง (' + srcSheet.getName() + ') อัปเดต ' + updatedCount + ' รายการ เพิ่มใหม่ ' + newRows.length + ' รายการ');
+  logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง (' + srcSheet.getName() + ') พบข้อมูลใหม่ ' + newRows.length + ' รายการ พบไม่ตรงกับบัญชี ' + mismatchCount + ' รายการ');
 
-  return { ok: true, data: { updatedCount, addedCount: newRows.length, sourceTabName: srcSheet.getName() } };
+  return { ok: true, data: { mismatchCount, addedCount: newRows.length, sourceTabName: srcSheet.getName() } };
 }
 
 // ============================================================

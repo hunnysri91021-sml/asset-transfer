@@ -279,6 +279,13 @@ function assetStatusBadge(s){
   const v = map[s] || ['approved', 'ใช้งาน'];
   return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
 }
+
+// ป้ายแจ้งเตือนข้อมูลจากการดึงข้อมูลบัญชี (adminSyncFromSource) — หายไปเองเมื่อมีคนแก้ไข/บันทึกรายการนั้น
+function syncFlagBadge(a){
+  if(a.SyncFlag === 'New') return ' <span class="badge badge-approved" title="เพิ่มเข้ามาใหม่จากการดึงข้อมูลบัญชีล่าสุด">🆕 ข้อมูลใหม่จากบัญชี</span>';
+  if(a.SyncFlag === 'Mismatch') return ' <span class="badge badge-rejected" title="'+esc(a.SyncNote||'')+'">⚠️ ไม่ตรงกับบัญชี</span>';
+  return '';
+}
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 /* ================= EXCEL EXPORT ================= */
@@ -755,7 +762,7 @@ function renderAssetList(root){
         ${manageMode ? `<td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>` : ''}
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
         <td><b>${esc(a.AssetID)}</b></td>
-        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.AssetName)}${syncFlagBadge(a)}</td>
         <td>${esc(a.Department)}</td>
         <td>${esc(a.Division||'-')}</td>
         <td>${esc(a.WorkGroup||'-')}</td>
@@ -2555,7 +2562,7 @@ function renderSettings(root){
     apiPost({ action:'adminSyncFromSource', password: STATE.adminPassword }).then(res=>{
       btn.disabled = false; btn.innerHTML = '↻ ดึงข้อมูลล่าสุด';
       if(!res.ok){ toast(res.error||'ดึงข้อมูลไม่สำเร็จ','err'); return; }
-      toast('ดึงข้อมูลจาก '+esc(res.data.sourceTabName||'')+' สำเร็จ อัปเดต '+res.data.updatedCount+' รายการ เพิ่มใหม่ '+res.data.addedCount+' รายการ — ดูรายละเอียดได้ที่หน้า "รายการทรัพย์สิน"','ok');
+      toast('ดึงข้อมูลจาก '+esc(res.data.sourceTabName||'')+' สำเร็จ พบข้อมูลใหม่ '+res.data.addedCount+' รายการ พบไม่ตรงกับบัญชี '+res.data.mismatchCount+' รายการ (ไม่ได้อัปเดตค่าอัตโนมัติ) — ดูรายละเอียด/ตรวจสอบได้ที่หน้า "รายการทรัพย์สิน"','ok');
     });
   }
 
