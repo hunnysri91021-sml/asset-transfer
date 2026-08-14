@@ -44,7 +44,7 @@ const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'CreatedAt'],
-  TRANSFER_QUEUE: ['AssetID', 'AddedBy', 'AddedAt'],
+  TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
@@ -146,6 +146,12 @@ function doGet(e) {
       case 'getTransferQueue':
         result = { ok: true, data: getTransferQueue_() };
         break;
+      case 'getSaleQueue':
+        result = { ok: true, data: getSaleQueue_() };
+        break;
+      case 'getWriteOffQueue':
+        result = { ok: true, data: getWriteOffQueue_() };
+        break;
       case 'getTransfers':
         result = { ok: true, data: getTransfers_(e.parameter) };
         break;
@@ -193,6 +199,18 @@ function doPost(e) {
         break;
       case 'removeFromTransferQueue':
         result = removeFromTransferQueue_(body);
+        break;
+      case 'addToSaleQueue':
+        result = addToSaleQueue_(body);
+        break;
+      case 'removeFromSaleQueue':
+        result = removeFromSaleQueue_(body);
+        break;
+      case 'addToWriteOffQueue':
+        result = addToWriteOffQueue_(body);
+        break;
+      case 'removeFromWriteOffQueue':
+        result = removeFromWriteOffQueue_(body);
         break;
       case 'createTransfer':
         result = createTransfer_(body);
@@ -318,14 +336,20 @@ function getAssetsRaw_(q) {
 }
 
 // ============================================================
-// TRANSFER QUEUE — ทรัพย์สินที่มาร์คไว้ล่วงหน้าจากหน้า "รายการทรัพย์สิน" เพื่อรอออกใบโอนย้ายที่แถบ "โอนย้าย"
+// ASSET QUEUE — ทรัพย์สินที่มาร์คไว้ล่วงหน้าจากหน้า "รายการทรัพย์สิน" เพื่อรอออกใบโอนย้าย/ขายออก/ตัดชำรุด
+// ใช้ชีตเดียวกันร่วมกันทั้ง 3 ประเภท แยกด้วยคอลัมน์ Purpose
 // ============================================================
-function getTransferQueue_() {
+const QUEUE_PURPOSES = { TRANSFER: 'Transfer', SALE: 'Sale', WRITEOFF: 'WriteOff' };
+
+function getAssetQueue_(purpose) {
   const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
   const values = sh.getDataRange().getValues();
   const headers = values.shift();
   const idx = indexMap_(headers);
-  const queueRows = values.filter(r => r[idx.AssetID]).map(r => rowToObj_(r, idx));
+  const queueRows = values
+    .filter(r => r[idx.AssetID])
+    .map(r => rowToObj_(r, idx))
+    .filter(r => (r.Purpose || QUEUE_PURPOSES.TRANSFER) === purpose);
 
   const disposed = getDisposedAssetStatus_();
   const assetsById = {};
@@ -342,17 +366,19 @@ function getTransferQueue_() {
       DisplayImage: a.DisplayImage || '',
       PurchasePrice: a.PurchasePrice || 0,
       BookValue: a.BookValue || 0,
+      ScrapPrice: a.ScrapPrice || 0,
+      MinSalePrice: a.MinSalePrice || 0,
       AssetStatus: disposed[String(q.AssetID)] || 'Active'
     };
   }).sort((x, y) => new Date(x.AddedAt) - new Date(y.AddedAt));
 }
 
-function addToTransferQueue_(body) {
+function addToAssetQueue_(body, purpose) {
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
   const disposed = getDisposedAssetStatus_();
-  if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถโอนย้ายได้' };
+  if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถเพิ่มเข้าคิวได้' };
 
   // ล็อกช่วงตรวจสอบรายการซ้ำ + เพิ่มแถว กันซ้ำเมื่อมีคนกดเพิ่มทรัพย์สินเดียวกันเข้าคิวพร้อมกัน
   return withLock_(() => {
@@ -360,14 +386,15 @@ function addToTransferQueue_(body) {
     const values = sh.getDataRange().getValues();
     const idx = indexMap_(values[0]);
     for (let i = 1; i < values.length; i++) {
-      if (String(values[i][idx.AssetID]) === assetId) return { ok: true, data: { alreadyQueued: true } };
+      const rowPurpose = values[i][idx.Purpose] || QUEUE_PURPOSES.TRANSFER;
+      if (String(values[i][idx.AssetID]) === assetId && rowPurpose === purpose) return { ok: true, data: { alreadyQueued: true } };
     }
-    sh.appendRow([assetId, body.addedBy || '', new Date()]);
+    sh.appendRow([assetId, purpose, body.addedBy || '', new Date()]);
     return { ok: true, data: { alreadyQueued: false } };
   });
 }
 
-function removeFromTransferQueue_(body) {
+function removeFromAssetQueue_(body, purpose) {
   const assetIds = (body.assetIds || []).map(String);
   if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการที่ต้องการลบออกจากคิว' };
   const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
@@ -375,13 +402,26 @@ function removeFromTransferQueue_(body) {
   const idx = indexMap_(values[0]);
   let removed = 0;
   for (let i = values.length - 1; i >= 1; i--) {
-    if (assetIds.indexOf(String(values[i][idx.AssetID])) !== -1) {
+    const rowPurpose = values[i][idx.Purpose] || QUEUE_PURPOSES.TRANSFER;
+    if (rowPurpose === purpose && assetIds.indexOf(String(values[i][idx.AssetID])) !== -1) {
       sh.deleteRow(i + 1);
       removed++;
     }
   }
   return { ok: true, data: { removed } };
 }
+
+function getTransferQueue_() { return getAssetQueue_(QUEUE_PURPOSES.TRANSFER); }
+function addToTransferQueue_(body) { return addToAssetQueue_(body, QUEUE_PURPOSES.TRANSFER); }
+function removeFromTransferQueue_(body) { return removeFromAssetQueue_(body, QUEUE_PURPOSES.TRANSFER); }
+
+function getSaleQueue_() { return getAssetQueue_(QUEUE_PURPOSES.SALE); }
+function addToSaleQueue_(body) { return addToAssetQueue_(body, QUEUE_PURPOSES.SALE); }
+function removeFromSaleQueue_(body) { return removeFromAssetQueue_(body, QUEUE_PURPOSES.SALE); }
+
+function getWriteOffQueue_() { return getAssetQueue_(QUEUE_PURPOSES.WRITEOFF); }
+function addToWriteOffQueue_(body) { return addToAssetQueue_(body, QUEUE_PURPOSES.WRITEOFF); }
+function removeFromWriteOffQueue_(body) { return removeFromAssetQueue_(body, QUEUE_PURPOSES.WRITEOFF); }
 
 function updateAssetImage_(body) {
   const assetId = String(body.assetId || '');

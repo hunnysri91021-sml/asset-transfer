@@ -199,6 +199,8 @@ let STATE = {
   approveCtx: null,
   adminPassword: null,
   sales: [],
+  saleQueue: [],
+  selectedSaleQueueAssetIds: [],
   draftSaleItems: [],
   saleCreateStep: 'form',
   saleHeader: null,
@@ -207,6 +209,8 @@ let STATE = {
   assetsFull: [],
   selectedAssetIds: [],
   writeOffs: [],
+  writeOffQueue: [],
+  selectedWriteOffQueueAssetIds: [],
   draftWriteOffItems: [],
   writeOffCreateStep: 'form',
   writeOffHeader: null,
@@ -700,9 +704,13 @@ function renderAssetList(root){
         <td class="money">${fmtMoney(a.BookValue)}</td>
         <td>${assetStatusBadge(a.AssetStatus)}</td>
         <td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="min-width:130px;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>
-        <td class="no-print" style="white-space:nowrap;">
+        <td class="no-print" style="white-space:normal;min-width:220px;">
           <button class="btn btn-secondary btn-sm" data-editid="${esc(a.AssetID)}">แก้ไข</button>
-          ${(a.AssetStatus||'Active')==='Active' ? `<button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}">+ คิวโอนย้าย</button>` : ''}
+          ${(a.AssetStatus||'Active')==='Active' ? `
+            <button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="transfer">+ คิวโอนย้าย</button>
+            <button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="sale">+ คิวขาย</button>
+            <button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="writeoff">+ คิวตัดชำรุด</button>
+          ` : ''}
           <button class="btn btn-red btn-sm" data-delid="${esc(a.AssetID)}">ลบ</button>
         </td>
       </tr>`;
@@ -716,14 +724,20 @@ function renderAssetList(root){
         openAssetEditModal(asset, load);
       };
     });
+    const QUEUE_PURPOSE_INFO = {
+      transfer: { action:'addToTransferQueue', label:'โอนย้าย', tab:'รายการใบโอนย้าย' },
+      sale: { action:'addToSaleQueue', label:'ขาย', tab:'รายการขายออก' },
+      writeoff: { action:'addToWriteOffQueue', label:'ตัดชำรุด', tab:'รายการตัดชำรุด' }
+    };
     host.querySelectorAll('[data-queueid]').forEach(btn=>{
       btn.onclick = ()=>{
         const assetId = btn.dataset.queueid;
+        const info = QUEUE_PURPOSE_INFO[btn.dataset.queuepurpose];
         btn.disabled = true;
-        apiPost({ action:'addToTransferQueue', assetId, addedBy: STATE.username||'' }).then(res=>{
+        apiPost({ action: info.action, assetId, addedBy: STATE.username||'' }).then(res=>{
           btn.disabled = false;
           if(!res.ok){ toast(res.error||'เพิ่มเข้าคิวไม่สำเร็จ','err'); return; }
-          toast(res.data.alreadyQueued ? 'ทรัพย์สินนี้อยู่ในคิวรอโอนย้ายอยู่แล้ว' : 'เพิ่มเข้าคิวรอโอนย้ายสำเร็จ — ดูได้ที่แถบ "รายการใบโอนย้าย"','ok');
+          toast(res.data.alreadyQueued ? ('ทรัพย์สินนี้อยู่ในคิวรอ'+info.label+'อยู่แล้ว') : ('เพิ่มเข้าคิวรอ'+info.label+'สำเร็จ — ดูได้ที่แถบ "'+info.tab+'"'),'ok');
         });
       };
     });
@@ -1421,6 +1435,17 @@ function doSubmitTransfer(){
 /* ================= SALE LIST VIEW ================= */
 function renderSaleList(root){
   root.innerHTML = `
+    <div class="card" id="saleQueueCard">
+      <h2>รายการรอออกใบขายออก</h2>
+      <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวขาย") รอรวมออกเป็นใบขายออก — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
+      <div class="toolbar no-print">
+        <span id="saleQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueue">สร้างใบขายออกจากรายการที่เลือก</button>
+        <button class="btn btn-secondary btn-sm" id="btnSaleQueueRefresh">↻ รีเฟรช</button>
+      </div>
+      <div id="saleQueueTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
     <div class="card">
       <h2>รายการขายออกทรัพย์สิน</h2>
       <div class="toolbar no-print">
@@ -1443,7 +1468,85 @@ function renderSaleList(root){
   document.getElementById('btnSaleFilter').onclick = loadSaleList;
   document.getElementById('btnSaleRefresh').onclick = loadSaleList;
   document.getElementById('btnSaleExport').onclick = exportSaleList;
+  document.getElementById('btnCreateFromSaleQueue').onclick = createSaleFromQueue;
+  document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
   loadSaleList();
+  loadSaleQueue();
+
+  function loadSaleQueue(){
+    document.getElementById('saleQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet({action:'getSaleQueue'}).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดคิวไม่สำเร็จ','err'); return; }
+      STATE.saleQueue = res.data;
+      STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id => STATE.saleQueue.some(q=>q.AssetID===id));
+      renderSaleQueueTable();
+    });
+  }
+
+  function renderSaleQueueTable(){
+    const host = document.getElementById('saleQueueTableHost');
+    if(!STATE.saleQueue.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการรอขายออก — เพิ่มได้จากหน้า "รายการทรัพย์สิน"</div>'; updateSaleQueueSelCount(); return; }
+    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="saleQueueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
+    STATE.saleQueue.forEach(q=>{
+      const disabled = (q.AssetStatus||'Active')!=='Active';
+      const checked = STATE.selectedSaleQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
+      html += `<tr>
+        <td class="no-print"><input type="checkbox" class="saleQueueRowChk" data-id="${esc(q.AssetID)}" ${checked} ${disabled?'disabled':''}></td>
+        <td><img class="thumb" src="${esc(q.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
+        <td><b>${esc(q.AssetID)}</b></td>
+        <td>${esc(q.AssetName)}${disabled?' <span class="badge badge-rejected">ไม่ว่างแล้ว</span>':''}</td>
+        <td>${esc(q.Department)}</td>
+        <td class="money">${fmtMoney(q.ScrapPrice)}</td>
+        <td>${esc(q.AddedBy||'-')}</td>
+        <td>${fmtDate(q.AddedAt)}</td>
+        <td class="no-print"><button class="btn btn-red btn-sm" data-unqueueid="${esc(q.AssetID)}">เอาออก</button></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    document.getElementById('saleQueueSelectAll').onchange = (e)=>{
+      const ids = STATE.saleQueue.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
+      if(e.target.checked){ ids.forEach(id=>{ if(STATE.selectedSaleQueueAssetIds.indexOf(id)===-1) STATE.selectedSaleQueueAssetIds.push(id); }); }
+      else { STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id=>ids.indexOf(id)===-1); }
+      renderSaleQueueTable();
+    };
+    host.querySelectorAll('.saleQueueRowChk').forEach(chk=>{
+      chk.onchange = ()=>{
+        const id = chk.dataset.id;
+        if(chk.checked){ if(STATE.selectedSaleQueueAssetIds.indexOf(id)===-1) STATE.selectedSaleQueueAssetIds.push(id); }
+        else { STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(x=>x!==id); }
+        updateSaleQueueSelCount();
+      };
+    });
+    host.querySelectorAll('[data-unqueueid]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const assetId = btn.dataset.unqueueid;
+        apiPost({ action:'removeFromSaleQueue', assetIds:[assetId] }).then(res=>{
+          if(!res.ok){ toast(res.error||'เอาออกจากคิวไม่สำเร็จ','err'); return; }
+          STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(x=>x!==assetId);
+          loadSaleQueue();
+        });
+      };
+    });
+    updateSaleQueueSelCount();
+  }
+
+  function updateSaleQueueSelCount(){
+    const el = document.getElementById('saleQueueSelCount');
+    if(el) el.textContent = 'เลือกไว้ '+STATE.selectedSaleQueueAssetIds.length+' รายการ';
+  }
+
+  function createSaleFromQueue(){
+    const selected = STATE.saleQueue.filter(q => STATE.selectedSaleQueueAssetIds.indexOf(q.AssetID)!==-1 && (q.AssetStatus||'Active')==='Active');
+    if(!selected.length){ toast('กรุณาเลือกรายการจากคิวอย่างน้อย 1 รายการ','err'); return; }
+    STATE.draftSaleItems = selected.map(q => ({
+      assetId: q.AssetID, assetName: q.AssetName, images: q.DisplayImage ? [q.DisplayImage] : [],
+      scrapPrice: q.ScrapPrice||'', auctionPrice:'', salePrice: q.MinSalePrice||'', remark:''
+    }));
+    STATE.view = 'saleCreate';
+    render();
+  }
 
   function exportSaleList(){
     if(!STATE.sales.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
@@ -1774,6 +1877,9 @@ function doSubmitSale(){
       return;
     }
     toast('สร้างใบขายออก '+res.data.runningNo+' สำเร็จ '+(res.data.autoApproved ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : 'ส่งอีเมลขออนุมัติแล้ว'),'ok');
+    const submittedSaleAssetIds = STATE.draftSaleItems.map(it=>it.assetId);
+    if(submittedSaleAssetIds.length) apiPost({ action:'removeFromSaleQueue', assetIds: submittedSaleAssetIds });
+    STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id=>submittedSaleAssetIds.indexOf(id)===-1);
     STATE.draftSaleItems = [];
     STATE.saleHeader = null;
     STATE.saleCreateStep = 'form';
@@ -1786,6 +1892,17 @@ function doSubmitSale(){
 /* ================= WRITE-OFF LIST VIEW ================= */
 function renderWriteOffList(root){
   root.innerHTML = `
+    <div class="card" id="writeOffQueueCard">
+      <h2>รายการรอตัดชำรุด</h2>
+      <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวตัดชำรุด") รอรวมออกเป็นใบตัดชำรุด — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
+      <div class="toolbar no-print">
+        <span id="writeOffQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnCreateFromWriteOffQueue">สร้างใบตัดชำรุดจากรายการที่เลือก</button>
+        <button class="btn btn-secondary btn-sm" id="btnWriteOffQueueRefresh">↻ รีเฟรช</button>
+      </div>
+      <div id="writeOffQueueTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
     <div class="card">
       <h2>รายการตัดชำรุดทรัพย์สิน</h2>
       <div class="toolbar no-print">
@@ -1808,7 +1925,85 @@ function renderWriteOffList(root){
   document.getElementById('btnWoFilter').onclick = loadWoList;
   document.getElementById('btnWoRefresh').onclick = loadWoList;
   document.getElementById('btnWoExport').onclick = exportWoList;
+  document.getElementById('btnCreateFromWriteOffQueue').onclick = createWriteOffFromQueue;
+  document.getElementById('btnWriteOffQueueRefresh').onclick = loadWriteOffQueue;
   loadWoList();
+  loadWriteOffQueue();
+
+  function loadWriteOffQueue(){
+    document.getElementById('writeOffQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet({action:'getWriteOffQueue'}).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดคิวไม่สำเร็จ','err'); return; }
+      STATE.writeOffQueue = res.data;
+      STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id => STATE.writeOffQueue.some(q=>q.AssetID===id));
+      renderWriteOffQueueTable();
+    });
+  }
+
+  function renderWriteOffQueueTable(){
+    const host = document.getElementById('writeOffQueueTableHost');
+    if(!STATE.writeOffQueue.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการรอตัดชำรุด — เพิ่มได้จากหน้า "รายการทรัพย์สิน"</div>'; updateWriteOffQueueSelCount(); return; }
+    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="writeOffQueueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
+    STATE.writeOffQueue.forEach(q=>{
+      const disabled = (q.AssetStatus||'Active')!=='Active';
+      const checked = STATE.selectedWriteOffQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
+      html += `<tr>
+        <td class="no-print"><input type="checkbox" class="writeOffQueueRowChk" data-id="${esc(q.AssetID)}" ${checked} ${disabled?'disabled':''}></td>
+        <td><img class="thumb" src="${esc(q.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
+        <td><b>${esc(q.AssetID)}</b></td>
+        <td>${esc(q.AssetName)}${disabled?' <span class="badge badge-rejected">ไม่ว่างแล้ว</span>':''}</td>
+        <td>${esc(q.Department)}</td>
+        <td class="money">${fmtMoney(q.ScrapPrice)}</td>
+        <td>${esc(q.AddedBy||'-')}</td>
+        <td>${fmtDate(q.AddedAt)}</td>
+        <td class="no-print"><button class="btn btn-red btn-sm" data-unqueueid="${esc(q.AssetID)}">เอาออก</button></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    document.getElementById('writeOffQueueSelectAll').onchange = (e)=>{
+      const ids = STATE.writeOffQueue.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
+      if(e.target.checked){ ids.forEach(id=>{ if(STATE.selectedWriteOffQueueAssetIds.indexOf(id)===-1) STATE.selectedWriteOffQueueAssetIds.push(id); }); }
+      else { STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id=>ids.indexOf(id)===-1); }
+      renderWriteOffQueueTable();
+    };
+    host.querySelectorAll('.writeOffQueueRowChk').forEach(chk=>{
+      chk.onchange = ()=>{
+        const id = chk.dataset.id;
+        if(chk.checked){ if(STATE.selectedWriteOffQueueAssetIds.indexOf(id)===-1) STATE.selectedWriteOffQueueAssetIds.push(id); }
+        else { STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(x=>x!==id); }
+        updateWriteOffQueueSelCount();
+      };
+    });
+    host.querySelectorAll('[data-unqueueid]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const assetId = btn.dataset.unqueueid;
+        apiPost({ action:'removeFromWriteOffQueue', assetIds:[assetId] }).then(res=>{
+          if(!res.ok){ toast(res.error||'เอาออกจากคิวไม่สำเร็จ','err'); return; }
+          STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(x=>x!==assetId);
+          loadWriteOffQueue();
+        });
+      };
+    });
+    updateWriteOffQueueSelCount();
+  }
+
+  function updateWriteOffQueueSelCount(){
+    const el = document.getElementById('writeOffQueueSelCount');
+    if(el) el.textContent = 'เลือกไว้ '+STATE.selectedWriteOffQueueAssetIds.length+' รายการ';
+  }
+
+  function createWriteOffFromQueue(){
+    const selected = STATE.writeOffQueue.filter(q => STATE.selectedWriteOffQueueAssetIds.indexOf(q.AssetID)!==-1 && (q.AssetStatus||'Active')==='Active');
+    if(!selected.length){ toast('กรุณาเลือกรายการจากคิวอย่างน้อย 1 รายการ','err'); return; }
+    STATE.draftWriteOffItems = selected.map(q => ({
+      assetId: q.AssetID, assetName: q.AssetName, images: q.DisplayImage ? [q.DisplayImage] : [],
+      scrapPrice: q.ScrapPrice||'', remark:''
+    }));
+    STATE.view = 'writeOffCreate';
+    render();
+  }
 
   function exportWoList(){
     if(!STATE.writeOffs.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
@@ -2108,6 +2303,9 @@ function doSubmitWriteOff(){
       return;
     }
     toast('สร้างใบตัดชำรุด '+res.data.runningNo+' สำเร็จ '+(res.data.autoApproved ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : 'ส่งอีเมลขออนุมัติแล้ว'),'ok');
+    const submittedWoAssetIds = STATE.draftWriteOffItems.map(it=>it.assetId);
+    if(submittedWoAssetIds.length) apiPost({ action:'removeFromWriteOffQueue', assetIds: submittedWoAssetIds });
+    STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id=>submittedWoAssetIds.indexOf(id)===-1);
     STATE.draftWriteOffItems = [];
     STATE.writeOffHeader = null;
     STATE.writeOffCreateStep = 'form';
