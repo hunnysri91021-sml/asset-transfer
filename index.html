@@ -650,10 +650,26 @@ function renderAssetList(root){
     const params = { action:'getAssetsFull' };
     if(q) params.q = q;
     document.getElementById('alTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiGet(params).then(res=>{
+    Promise.all([
+      apiGet(params),
+      apiGet({action:'getTransferQueue'}),
+      apiGet({action:'getSaleQueue'}),
+      apiGet({action:'getWriteOffQueue'})
+    ]).then(([res, transferQ, saleQ, woQ])=>{
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
       STATE.assetsFull = res.data;
       STATE.selectedAssetIds = [];
+      STATE.assetQueuedPurposes = {};
+      const mark = (list, purpose)=>{
+        if(!list || !list.ok) return;
+        list.data.forEach(q=>{
+          if(!STATE.assetQueuedPurposes[q.AssetID]) STATE.assetQueuedPurposes[q.AssetID] = [];
+          STATE.assetQueuedPurposes[q.AssetID].push(purpose);
+        });
+      };
+      mark(transferQ, 'transfer');
+      mark(saleQ, 'sale');
+      mark(woQ, 'writeoff');
       populateDeptFilterOptions();
       renderTable();
     });
@@ -706,11 +722,15 @@ function renderAssetList(root){
         <td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="min-width:130px;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>
         <td class="no-print" style="white-space:normal;min-width:220px;">
           <button class="btn btn-secondary btn-sm" data-editid="${esc(a.AssetID)}">แก้ไข</button>
-          ${(a.AssetStatus||'Active')==='Active' ? `
-            <button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="transfer">+ คิวโอนย้าย</button>
-            <button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="sale">+ คิวขาย</button>
-            <button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="writeoff">+ คิวตัดชำรุด</button>
-          ` : ''}
+          ${(a.AssetStatus||'Active')==='Active' ? (()=>{
+            const queued = STATE.assetQueuedPurposes[a.AssetID] || [];
+            const btn = (purpose, label, queuedLabel) => queued.indexOf(purpose)!==-1
+              ? `<span class="badge badge-pending">${queuedLabel}</span>`
+              : `<button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="${purpose}">${label}</button>`;
+            return btn('transfer','+ คิวโอนย้าย','⏳ รอโอนย้าย')
+              + btn('sale','+ คิวขาย','⏳ รอขาย')
+              + btn('writeoff','+ คิวตัดชำรุด','⏳ รอตัดชำรุด');
+          })() : ''}
           <button class="btn btn-red btn-sm" data-delid="${esc(a.AssetID)}">ลบ</button>
         </td>
       </tr>`;
