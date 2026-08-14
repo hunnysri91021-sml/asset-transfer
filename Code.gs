@@ -424,6 +424,15 @@ function getWriteOffQueue_() { return getAssetQueue_(QUEUE_PURPOSES.WRITEOFF); }
 function addToWriteOffQueue_(body) { return addToAssetQueue_(body, QUEUE_PURPOSES.WRITEOFF); }
 function removeFromWriteOffQueue_(body) { return removeFromAssetQueue_(body, QUEUE_PURPOSES.WRITEOFF); }
 
+// เมื่อทรัพย์สินถูกขาย/ตัดชำรุดจนอนุมัติเสร็จสมบูรณ์แล้ว (ไม่ว่างอีกต่อไป) ให้เอาออกจากคิวรอทุกประเภท
+// กันไม่ให้ค้างเป็นรายการ "ผี" ในคิวโอนย้าย/ขาย/ตัดชำรุดที่เลือกไว้ก่อนหน้า
+function purgeAssetFromAllQueues_(assetIds) {
+  if (!assetIds || !assetIds.length) return;
+  removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.TRANSFER);
+  removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.SALE);
+  removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.WRITEOFF);
+}
+
 function updateAssetImage_(body) {
   const assetId = String(body.assetId || '');
   if (!assetId) return { ok: false, error: 'assetId required' };
@@ -1325,6 +1334,7 @@ function createSale_(body) {
 
   let emailResult = { ok: true };
   if (skipApproval) {
+    purgeAssetFromAllQueues_(items.map(it => it.assetId).filter(Boolean));
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
@@ -1369,6 +1379,11 @@ function decideSale_(body) {
   sh.getRange(rowNum, idx.Status + 1).setValue(decision);
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
   sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+
+  if (decision === STATUS.APPROVED) {
+    const soldAssetIds = getSaleItems_(saleId).map(it => it.AssetID).filter(Boolean);
+    purgeAssetFromAllQueues_(soldAssetIds);
+  }
 
   logActivity_(saleId, 'SALE_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
 
@@ -1505,6 +1520,7 @@ function createWriteOff_(body) {
 
   let emailResult = { ok: true };
   if (skipApproval) {
+    purgeAssetFromAllQueues_(items.map(it => it.assetId).filter(Boolean));
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
@@ -1549,6 +1565,11 @@ function decideWriteOff_(body) {
   sh.getRange(rowNum, idx.Status + 1).setValue(decision);
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
   sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+
+  if (decision === STATUS.APPROVED) {
+    const writtenOffAssetIds = getWriteOffItems_(writeOffId).map(it => it.AssetID).filter(Boolean);
+    purgeAssetFromAllQueues_(writtenOffAssetIds);
+  }
 
   logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
 
@@ -1690,7 +1711,7 @@ function sendSaleApprovalEmail_(saleId, runningNo, body, items, token) {
 function sendSaleDecisionNotification_(saleObj, decision, comment) {
   try {
     if (!saleObj.CreatedByEmail) return;
-    const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
+    const statusThai = decision === STATUS.APPROVED ? 'ขายแล้ว' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
