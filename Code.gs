@@ -1929,9 +1929,18 @@ function getSharePointDriveId_(token) {
 }
 
 // แปลง HTML เป็น PDF โดยอาศัย Google Drive แปลงไฟล์ให้ (ต้องเปิด Advanced Service "Drive API" ก่อน)
+// รองรับทั้ง Drive API v2 (Files.insert/title) และ v3 (Files.create/name) เพราะ Apps Script
+// ผูก Advanced Service เวอร์ชันไหนให้ก็ได้แล้วแต่ตอนเพิ่ม ไม่ควรอิงว่าเป็นเวอร์ชันใดเวอร์ชันหนึ่งตายตัว
 function htmlToPdfBlob_(html, fileName) {
   const htmlBlob = Utilities.newBlob(html, MimeType.HTML, fileName + '.html');
-  const file = Drive.Files.insert({ title: fileName, mimeType: MimeType.GOOGLE_DOCS }, htmlBlob, { convert: true });
+  let file;
+  if (Drive.Files.create) {
+    // Drive API v3
+    file = Drive.Files.create({ name: fileName, mimeType: MimeType.GOOGLE_DOCS }, htmlBlob);
+  } else {
+    // Drive API v2
+    file = Drive.Files.insert({ title: fileName, mimeType: MimeType.GOOGLE_DOCS }, htmlBlob, { convert: true });
+  }
   try {
     return DriveApp.getFileById(file.id).getAs(MimeType.PDF);
   } finally {
