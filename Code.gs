@@ -321,7 +321,8 @@ function getAssetsRaw_(q) {
     const qq = q.toString().toLowerCase();
     rows = rows.filter(r =>
       String(r.AssetID).toLowerCase().indexOf(qq) !== -1 ||
-      String(r.AssetName).toLowerCase().indexOf(qq) !== -1
+      String(r.AssetName).toLowerCase().indexOf(qq) !== -1 ||
+      String(r.Custodian).toLowerCase().indexOf(qq) !== -1
     );
   }
   // resolve display image: override wins over original
