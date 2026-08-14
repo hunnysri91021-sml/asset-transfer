@@ -127,6 +127,7 @@
   .doc .doc-sign{display:flex;justify-content:space-between;margin-top:30px;font-size:13px;}
   .doc .doc-sign div{width:45%;text-align:center;}
   .doc .doc-sign .line{border-bottom:1px dotted #333;height:40px;}
+  .doc .dateline{display:inline-block;width:110px;border-bottom:1px dotted #333;height:13px;vertical-align:top;}
   @media print{
     body *{visibility:hidden;}
     #printArea, #printArea *{visibility:visible;}
@@ -2639,19 +2640,19 @@ function buildDocHtml(t, withToolbar){
           <div>
             <div class="line"></div>
             (ผู้โอน) ${esc((t.Items&&t.Items[0]&&t.Items[0].FromSignName)||'')}<br>
-            วันที่..........................
+            วันที่ <span class="dateline"></span>
           </div>
           <div>
             <div class="line"></div>
             (ผู้รับโอน) ${esc((t.Items&&t.Items[0]&&t.Items[0].ToSignName)||'')}<br>
-            วันที่..........................
+            วันที่ <span class="dateline"></span>
           </div>
         </div>
 
         <div style="margin-top:26px;font-size:13px;">
           <b>รับทราบโดย</b><br>
-          1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่..........................<br>
-          2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่..........................
+          1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span><br>
+          2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span>
         </div>
 
         ${t.Status !== 'Draft' ? `
@@ -2720,12 +2721,12 @@ function buildSaleDocHtml(s, withToolbar){
           <div>
             <div class="line"></div>
             (ผู้บันทึก) ${esc(s.CreatedBy||'')}<br>
-            วันที่..........................
+            วันที่ <span class="dateline"></span>
           </div>
           <div>
             <div class="line"></div>
             (ผู้อนุมัติ) ${esc(s.ApproverName||'')}<br>
-            วันที่..........................
+            วันที่ <span class="dateline"></span>
           </div>
         </div>
 
@@ -2793,12 +2794,12 @@ function buildWriteOffDocHtml(w, withToolbar){
           <div>
             <div class="line"></div>
             (ผู้บันทึก) ${esc(w.CreatedBy||'')}<br>
-            วันที่..........................
+            วันที่ <span class="dateline"></span>
           </div>
           <div>
             <div class="line"></div>
             (ผู้อนุมัติ) ${esc(w.ApproverName||'')}<br>
-            วันที่..........................
+            วันที่ <span class="dateline"></span>
           </div>
         </div>
 
