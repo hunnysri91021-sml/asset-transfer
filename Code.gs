@@ -444,6 +444,25 @@ function purgeAssetFromAllQueues_(assetIds) {
   removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.WRITEOFF);
 }
 
+// AssetStatus (Active/Sold/WrittenOff) คำนวณสดจากเอกสารขาย/ตัดชำรุดที่อนุมัติแล้วเสมอ (ดู getDisposedAssetStatus_)
+// แต่ค่านั้นไม่เคยถูกเขียนกลับไปที่ชีต Assets เอง ทำให้เปิดชีตดูตรงๆ หรือดูสรุปแยกตามแท็กสถานะในหน้า Dashboard
+// แล้วไม่เห็นความเปลี่ยนแปลง — ฟังก์ชันนี้เขียนคอลัมน์ Tag ในชีต Assets ให้ตรงกับผลจริงด้วย ทุกครั้งที่มีการ
+// อนุมัติขาย/ตัดชำรุด (หรือคืนสถานะใช้งาน) เพื่อให้ทั้งชีตดิบและ Dashboard สอดคล้องกัน
+function setAssetsTag_(assetIds, tagValue) {
+  if (!assetIds || !assetIds.length) return;
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.Tag === undefined || idx.AssetID === undefined) return;
+  const idSet = {};
+  assetIds.forEach(id => { idSet[String(id)] = true; });
+  for (let i = 1; i < values.length; i++) {
+    if (idSet[String(values[i][idx.AssetID])]) {
+      sh.getRange(i + 1, idx.Tag + 1).setValue(tagValue);
+    }
+  }
+}
+
 function updateAssetImage_(body) {
   const assetId = String(body.assetId || '');
   if (!assetId) return { ok: false, error: 'assetId required' };
@@ -715,6 +734,7 @@ function adminRestoreAsset_(body) {
 
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
+  setAssetsTag_([assetId], 'ใช้งาน');
   logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะใช้งานทรัพย์สิน ' + assetId);
   return { ok: true, data: { voidedCount } };
 }
@@ -1345,7 +1365,9 @@ function createSale_(body) {
 
   let emailResult = { ok: true };
   if (skipApproval) {
-    purgeAssetFromAllQueues_(items.map(it => it.assetId).filter(Boolean));
+    const soldAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
+    purgeAssetFromAllQueues_(soldAssetIdsNow);
+    setAssetsTag_(soldAssetIdsNow, 'ขาย');
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
@@ -1394,6 +1416,7 @@ function decideSale_(body) {
   if (decision === STATUS.APPROVED) {
     const soldAssetIds = getSaleItems_(saleId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIds);
+    setAssetsTag_(soldAssetIds, 'ขาย');
   }
 
   logActivity_(saleId, 'SALE_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
@@ -1531,7 +1554,9 @@ function createWriteOff_(body) {
 
   let emailResult = { ok: true };
   if (skipApproval) {
-    purgeAssetFromAllQueues_(items.map(it => it.assetId).filter(Boolean));
+    const writtenOffAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
+    purgeAssetFromAllQueues_(writtenOffAssetIdsNow);
+    setAssetsTag_(writtenOffAssetIdsNow, 'ชำรุด');
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
@@ -1580,6 +1605,7 @@ function decideWriteOff_(body) {
   if (decision === STATUS.APPROVED) {
     const writtenOffAssetIds = getWriteOffItems_(writeOffId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIds);
+    setAssetsTag_(writtenOffAssetIds, 'ชำรุด');
   }
 
   logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
