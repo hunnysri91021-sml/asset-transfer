@@ -43,7 +43,7 @@ const SHEETS = {
 const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
-  USERS: ['Username', 'Password', 'Role', 'CreatedAt'],
+  USERS: ['Username', 'Password', 'Role', 'Departments', 'CreatedAt'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
@@ -496,10 +496,44 @@ function login_(body) {
   const idx = indexMap_(values[0]);
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
-      return { ok: true, data: { username, role: values[i][idx.Role] === 'admin' ? 'admin' : 'user' } };
+      return { ok: true, data: {
+        username,
+        role: values[i][idx.Role] === 'admin' ? 'admin' : 'user',
+        departments: parseDepartments_(values[i][idx.Departments])
+      } };
     }
   }
   return { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
+}
+
+function parseDepartments_(v) {
+  return String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// ค้นหาผู้ใช้จากรหัสผ่านที่ส่งมา (ไม่ต้องรู้ username ล่วงหน้า) เพื่อตรวจสอบสิทธิ์ role/หน่วยงานที่แก้ไขได้
+function getRequestingUser_(pw) {
+  const p = String(pw || '');
+  if (!p) return null;
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.Password]) === p) {
+      return {
+        username: values[i][idx.Username],
+        role: String(values[i][idx.Role]) === 'admin' ? 'admin' : 'user',
+        departments: parseDepartments_(values[i][idx.Departments])
+      };
+    }
+  }
+  return null;
+}
+
+// Admin แก้ไข/เพิ่ม/ลบได้ทุกหน่วยงาน ส่วน User แก้ไขได้เฉพาะหน่วยงานที่ Admin กำหนดสิทธิ์ให้เท่านั้น
+function canManageDept_(user, dept) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return user.departments.indexOf(String(dept || '').trim()) !== -1;
 }
 
 function getUsers_(body) {
@@ -511,6 +545,7 @@ function getUsers_(body) {
   const users = values.filter(r => r[idx.Username]).map(r => ({
     Username: r[idx.Username],
     Role: r[idx.Role],
+    Departments: parseDepartments_(r[idx.Departments]),
     CreatedAt: r[idx.CreatedAt] instanceof Date ? r[idx.CreatedAt].toISOString() : r[idx.CreatedAt]
   }));
   return { ok: true, data: users };
@@ -523,6 +558,7 @@ function adminSaveUser_(body) {
   if (!username) return { ok: false, error: 'กรุณาระบุชื่อผู้ใช้' };
   const role = u.Role === 'admin' ? 'admin' : 'user';
   const newPassword = String(u.Password || '').trim();
+  const departments = Array.isArray(u.Departments) ? u.Departments.map(d => String(d).trim()).filter(Boolean).join(',') : '';
 
   const sh = getSS_().getSheetByName(SHEETS.USERS);
   const values = sh.getDataRange().getValues();
@@ -534,11 +570,12 @@ function adminSaveUser_(body) {
 
   if (rowNum === -1) {
     if (!newPassword) return { ok: false, error: 'กรุณาระบุรหัสผ่านสำหรับผู้ใช้ใหม่' };
-    sh.appendRow([username, newPassword, role, new Date()]);
+    sh.appendRow([username, newPassword, role, departments, new Date()]);
     logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
     return { ok: true, data: { created: true } };
   }
   sh.getRange(rowNum, idx.Role + 1).setValue(role);
+  sh.getRange(rowNum, idx.Departments + 1).setValue(departments);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
   return { ok: true, data: { created: false } };
@@ -568,7 +605,8 @@ const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'Wor
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
 
 function adminSaveAsset_(body) {
-  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง' };
   const asset = body.asset || {};
   const assetId = String(asset.AssetID || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน (AssetID)' };
@@ -583,6 +621,7 @@ function adminSaveAsset_(body) {
   }
 
   if (rowNum === -1) {
+    if (!canManageDept_(user, asset.Department)) return { ok: false, error: 'ไม่มีสิทธิ์เพิ่มทรัพย์สินของหน่วยงานนี้' };
     const newRow = HEADERS.ASSETS.map(h => {
       if (h === 'AssetID') return assetId;
       if (h === 'UpdatedAt') return new Date();
@@ -590,20 +629,27 @@ function adminSaveAsset_(body) {
       return '';
     });
     sh.appendRow(newRow);
-    logActivity_('', 'ADMIN_ASSET_CREATE', 'admin', 'เพิ่มทรัพย์สิน ' + assetId);
+    logActivity_('', 'ADMIN_ASSET_CREATE', user.username, 'เพิ่มทรัพย์สิน ' + assetId);
     return { ok: true, data: { created: true } };
+  }
+
+  const existingDept = values[rowNum - 1][idx.Department];
+  if (!canManageDept_(user, existingDept)) return { ok: false, error: 'ไม่มีสิทธิ์แก้ไขทรัพย์สินของหน่วยงานนี้' };
+  if (asset.Department !== undefined && String(asset.Department).trim() !== String(existingDept || '').trim() && !canManageDept_(user, asset.Department)) {
+    return { ok: false, error: 'ไม่มีสิทธิ์ย้ายทรัพย์สินไปยังหน่วยงานนี้' };
   }
 
   ADMIN_ASSET_EDITABLE_FIELDS.forEach(f => {
     if (asset[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
   });
   sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
-  logActivity_('', 'ADMIN_ASSET_UPDATE', 'admin', 'แก้ไขทรัพย์สิน ' + assetId);
+  logActivity_('', 'ADMIN_ASSET_UPDATE', user.username, 'แก้ไขทรัพย์สิน ' + assetId);
   return { ok: true, data: { created: false } };
 }
 
 function adminDeleteAsset_(body) {
-  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง' };
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
@@ -612,8 +658,9 @@ function adminDeleteAsset_(body) {
   const idx = indexMap_(values[0]);
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.AssetID]) === assetId) {
+      if (!canManageDept_(user, values[i][idx.Department])) return { ok: false, error: 'ไม่มีสิทธิ์ลบทรัพย์สินของหน่วยงานนี้' };
       sh.deleteRow(i + 1);
-      logActivity_('', 'ADMIN_ASSET_DELETE', 'admin', 'ลบทรัพย์สิน ' + assetId);
+      logActivity_('', 'ADMIN_ASSET_DELETE', user.username, 'ลบทรัพย์สิน ' + assetId);
       return { ok: true };
     }
   }
