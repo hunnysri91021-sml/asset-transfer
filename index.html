@@ -216,7 +216,9 @@ let STATE = {
   writeOffCreateStep: 'form',
   writeOffHeader: null,
   printWriteOffId: null,
-  approveWriteOffCtx: null
+  approveWriteOffCtx: null,
+  myDepartments: [],
+  assetListTab: 'all'
 };
 
 /* ================= API HELPERS ================= */
@@ -311,6 +313,7 @@ function checkAuth(){
       STATE.adminPassword = obj.password;
       STATE.role = obj.role;
       STATE.username = obj.username || '';
+      STATE.myDepartments = obj.departments || [];
       return true;
     }
   }catch(e){}
@@ -351,7 +354,8 @@ function renderLogin(){
       STATE.adminPassword = pw;
       STATE.role = res.data.role;
       STATE.username = res.data.username;
-      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username }));
+      STATE.myDepartments = res.data.departments || [];
+      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [] }));
       STATE.view = 'dashboard';
       enterApp();
     });
@@ -363,6 +367,7 @@ function logout(){
   STATE.adminPassword = null;
   STATE.role = null;
   STATE.username = null;
+  STATE.myDepartments = [];
   STATE.view = 'dashboard';
   enterApp();
 }
@@ -503,6 +508,8 @@ function uploadAssetModalImage(input){
 function openAssetEditModal(asset, onSaved){
   const a = asset || {};
   const isNew = !asset;
+  const restrictDept = STATE.role !== 'admin';
+  const allowedDepts = STATE.myDepartments || [];
   const host = document.getElementById('modalHost');
   host.innerHTML = `
     <div class="modal-overlay no-print" id="assetModalOverlay">
@@ -513,7 +520,9 @@ function openAssetEditModal(asset, onSaved){
         <label>ชื่อทรัพย์สิน</label>
         <input type="text" id="amAssetName" value="${esc(a.AssetName||'')}">
         <div class="row">
-          <div><label>หน่วยงาน</label><input type="text" id="amDepartment" value="${esc(a.Department||'')}"></div>
+          <div><label>หน่วยงาน</label>${restrictDept
+            ? `<select id="amDepartment">${allowedDepts.length ? allowedDepts.map(d=>`<option value="${esc(d)}" ${(a.Department||'')===d?'selected':''}>${esc(d)}</option>`).join('') : '<option value="">- ไม่มีหน่วยงานที่ได้รับสิทธิ์ -</option>'}</select>`
+            : `<input type="text" id="amDepartment" value="${esc(a.Department||'')}">`}</div>
           <div><label>ผู้ดูแล</label><input type="text" id="amCustodian" value="${esc(a.Custodian||'')}"></div>
         </div>
         <div class="row">
@@ -597,9 +606,18 @@ function openAssetEditModal(asset, onSaved){
 }
 
 function renderAssetList(root){
+  const manageMode = STATE.assetListTab === 'manage';
+  const isAdmin = STATE.role === 'admin';
+  const noDeptsAssigned = manageMode && !isAdmin && !(STATE.myDepartments||[]).length;
+
   root.innerHTML = `
     <div class="card">
       <h2>รายการทรัพย์สิน</h2>
+      <div class="toolbar no-print" style="margin-bottom:6px;">
+        <button class="btn ${!manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabAll">ข้อมูลทั้งหมด</button>
+        <button class="btn ${manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabManage">จัดการทรัพย์สินหน่วยงานของฉัน</button>
+      </div>
+      <p style="color:var(--muted);font-size:13px;">${manageMode ? 'แก้ไข/เพิ่ม/ลบทรัพย์สิน — แสดงเฉพาะหน่วยงานที่คุณได้รับสิทธิ์ดูแล' + (isAdmin?' (Admin เห็นทุกหน่วยงาน)':'')  : 'ดูข้อมูลทรัพย์สินทั้งหมดของทุกหน่วยงาน (ไม่สามารถแก้ไขจากแถบนี้)'}</p>
       <div class="toolbar no-print">
         <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน / ผู้ดูแล..." style="max-width:220px;">
         <select id="alStatus" style="max-width:160px;">
@@ -614,6 +632,7 @@ function renderAssetList(root){
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
       </div>
+      ${manageMode ? `
       <div class="toolbar no-print" style="border-top:1px solid var(--border);padding-top:10px;">
         <span id="alSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnAlTransfer">สร้างใบโอนย้าย</button>
@@ -621,22 +640,26 @@ function renderAssetList(root){
         <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
-      </div>
-      <div id="alTableHost" style="margin-top:12px;"><div class="empty">กำลังโหลด...</div></div>
+      </div>` : ''}
+      <div id="alTableHost" style="margin-top:12px;">${noDeptsAssigned ? '<div class="empty">คุณยังไม่ได้รับสิทธิ์ดูแลหน่วยงานใด กรุณาติดต่อ Admin ให้กำหนดหน่วยงานที่ดูแลในแถบ "ตั้งค่า"</div>' : '<div class="empty">กำลังโหลด...</div>'}</div>
     </div>
   `;
 
+  document.getElementById('btnAlTabAll').onclick = ()=>{ STATE.assetListTab = 'all'; render(); };
+  document.getElementById('btnAlTabManage').onclick = ()=>{ STATE.assetListTab = 'manage'; render(); };
   document.getElementById('btnAlFilter').onclick = load;
   document.getElementById('btnAlRefresh').onclick = load;
   document.getElementById('alStatus').onchange = renderTable;
   document.getElementById('alDivision').onchange = renderTable;
   document.getElementById('alWorkGroup').onchange = renderTable;
   document.getElementById('btnAlExport').onclick = exportAssetList;
-  document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
-  document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
-  document.getElementById('btnAlWriteOff').onclick = ()=> startFromSelection('writeOffCreate');
-  document.getElementById('btnAlRestore').onclick = restoreSelected;
-  document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
+  if(manageMode){
+    document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
+    document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
+    document.getElementById('btnAlWriteOff').onclick = ()=> startFromSelection('writeOffCreate');
+    document.getElementById('btnAlRestore').onclick = restoreSelected;
+    document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
+  }
 
   function exportAssetList(){
     const rows = filteredRows();
@@ -647,7 +670,7 @@ function renderAssetList(root){
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
-  load();
+  if(!noDeptsAssigned) load();
 
   function load(){
     const q = document.getElementById('alSearch').value.trim();
@@ -683,19 +706,25 @@ function renderAssetList(root){
     const divSel = document.getElementById('alDivision');
     const wgSel = document.getElementById('alWorkGroup');
     const curDiv = divSel.value, curWg = wgSel.value;
-    const divisions = [...new Set(STATE.assetsFull.map(a=>a.Division).filter(Boolean))].sort();
-    const workGroups = [...new Set(STATE.assetsFull.map(a=>a.WorkGroup).filter(Boolean))].sort();
+    const scope = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
+    const divisions = [...new Set(scope.map(a=>a.Division).filter(Boolean))].sort();
+    const workGroups = [...new Set(scope.map(a=>a.WorkGroup).filter(Boolean))].sort();
     divSel.innerHTML = '<option value="">ทุกฝ่าย</option>' + divisions.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
     wgSel.innerHTML = '<option value="">ทุกกลุ่มงาน</option>' + workGroups.map(w=>`<option value="${esc(w)}">${esc(w)}</option>`).join('');
     if(divisions.indexOf(curDiv)!==-1) divSel.value = curDiv;
     if(workGroups.indexOf(curWg)!==-1) wgSel.value = curWg;
   }
 
+  function deptScopedRows(rows){
+    if(isAdmin) return rows;
+    return rows.filter(a => (STATE.myDepartments||[]).indexOf(a.Department) !== -1);
+  }
+
   function filteredRows(){
     const statusFilter = document.getElementById('alStatus').value;
     const divisionFilter = document.getElementById('alDivision').value;
     const workGroupFilter = document.getElementById('alWorkGroup').value;
-    let rows = STATE.assetsFull;
+    let rows = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
     if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
     if(divisionFilter) rows = rows.filter(a => a.Division === divisionFilter);
     if(workGroupFilter) rows = rows.filter(a => a.WorkGroup === workGroupFilter);
@@ -705,13 +734,17 @@ function renderAssetList(root){
   function renderTable(){
     const host = document.getElementById('alTableHost');
     const rows = filteredRows();
-    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; updateSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="alSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ฝ่าย</th><th>กลุ่มงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th><th class="no-print">จัดการ</th></tr>';
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; if(manageMode) updateSelCount(); return; }
+    let html = '<div style="overflow-x:auto;"><table><tr>'
+      + (manageMode ? '<th class="no-print"><input type="checkbox" id="alSelectAll"></th>' : '')
+      + '<th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ฝ่าย</th><th>กลุ่มงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ราคาซื้อ</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th><th>แท็กสถานะ</th>'
+      + (manageMode ? '<th class="no-print">จัดการ</th>' : '')
+      + '</tr>';
     rows.forEach(a=>{
       const checked = STATE.selectedAssetIds.indexOf(a.AssetID)!==-1 ? 'checked' : '';
       const curTag = a.Tag || 'ใช้งาน';
       html += `<tr>
-        <td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>
+        ${manageMode ? `<td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>` : ''}
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
@@ -723,8 +756,10 @@ function renderAssetList(root){
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
         <td class="money">${fmtMoney(a.BookValue)}</td>
         <td>${assetStatusBadge(a.AssetStatus)}</td>
-        <td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="min-width:130px;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>
-        <td class="no-print" style="white-space:normal;min-width:220px;">
+        ${manageMode
+          ? `<td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="min-width:130px;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>`
+          : `<td>${esc(curTag)}</td>`}
+        ${manageMode ? `<td class="no-print" style="white-space:normal;min-width:220px;">
           <button class="btn btn-secondary btn-sm" data-editid="${esc(a.AssetID)}">แก้ไข</button>
           ${(a.AssetStatus||'Active')==='Active' ? (()=>{
             const queued = STATE.assetQueuedPurposes[a.AssetID] || [];
@@ -736,11 +771,13 @@ function renderAssetList(root){
               + btn('writeoff','+ คิวตัดชำรุด','⏳ รอตัดชำรุด');
           })() : ''}
           <button class="btn btn-red btn-sm" data-delid="${esc(a.AssetID)}">ลบ</button>
-        </td>
+        </td>` : ''}
       </tr>`;
     });
     html += '</table></div>';
     host.innerHTML = html;
+
+    if(!manageMode) return;
 
     host.querySelectorAll('[data-editid]').forEach(btn=>{
       btn.onclick = ()=>{
@@ -2384,15 +2421,14 @@ function renderSettings(root){
 
     <div class="card">
       <h2>ผู้ใช้งาน</h2>
-      <p style="color:var(--muted);font-size:13px;">เพิ่ม/แก้ไข/ลบผู้ใช้งานระบบ พร้อมกำหนดรหัสผ่านและสิทธิ์การใช้งาน (User เข้าได้ทุกแถบยกเว้นตั้งค่า, Admin เข้าได้ทุกแถบ) — เว้นว่างช่องรหัสผ่านเวลาบันทึกแก้ไขผู้ใช้เดิม เพื่อไม่เปลี่ยนรหัสผ่าน</p>
+      <p style="color:var(--muted);font-size:13px;">เพิ่ม/แก้ไข/ลบผู้ใช้งานระบบ พร้อมกำหนดรหัสผ่านและสิทธิ์การใช้งาน (User เข้าได้ทุกแถบยกเว้นตั้งค่า, Admin เข้าได้ทุกแถบ) — เว้นว่างช่องรหัสผ่านเวลาบันทึกแก้ไขผู้ใช้เดิม เพื่อไม่เปลี่ยนรหัสผ่าน<br>กำหนด "หน่วยงานที่ดูแล" (เลือกได้หลายหน่วยงาน) เพื่อจำกัดสิทธิ์ User ให้แก้ไข/เพิ่ม/ลบทรัพย์สินได้เฉพาะหน่วยงานที่ได้รับมอบหมายเท่านั้น (ยังดูข้อมูลทั้งหมดได้ปกติที่แถบ "ข้อมูลทั้งหมด") — Admin ไม่ถูกจำกัด ไม่ต้องเลือกหน่วยงาน</p>
       <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnUserAddNew">+ เพิ่มผู้ใช้ใหม่</button></div>
       <div id="userTableHost">กำลังโหลด...</div>
     </div>
   `;
 
-  loadDeptCodes();
+  loadDeptCodes().then(loadUsers);
   loadSourceLink();
-  loadUsers();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
@@ -2401,7 +2437,7 @@ function renderSettings(root){
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
 
   function loadDeptCodes(){
-    apiGet({action:'getDeptCodes'}).then(res=>{
+    return apiGet({action:'getDeptCodes'}).then(res=>{
       if(!res.ok){ document.getElementById('deptTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
       STATE.deptCodes = res.data;
       renderDeptTable();
@@ -2526,31 +2562,47 @@ function renderSettings(root){
   }
 
   function renderUsersTable(){
-    const rowsHtml = userList.map((u,i)=>`
+    const rowsHtml = userList.map((u,i)=>{
+      const depts = u.Departments || [];
+      const isAdmin = u.Role==='admin';
+      return `
       <tr>
         <td><input type="text" data-ufield="Username" data-ui="${i}" value="${esc(u.Username)}" ${u.__isNew ? '' : 'readonly style="background:#f4f6f9;"'}></td>
         <td>
-          <select data-ufield="Role" data-ui="${i}">
-            <option value="user" ${u.Role!=='admin'?'selected':''}>User</option>
-            <option value="admin" ${u.Role==='admin'?'selected':''}>Admin</option>
+          <select data-ufield="Role" data-ui="${i}" onchange="toggleUserDeptSelect(${i})">
+            <option value="user" ${!isAdmin?'selected':''}>User</option>
+            <option value="admin" ${isAdmin?'selected':''}>Admin</option>
           </select>
+        </td>
+        <td>
+          <select data-ufield="Departments" data-ui="${i}" multiple size="4" style="min-width:160px;" ${isAdmin?'disabled':''}>
+            ${STATE.deptCodes.map(d=>`<option value="${esc(d.DeptName)}" ${depts.indexOf(d.DeptName)!==-1?'selected':''}>${esc(d.DeptName)}</option>`).join('')}
+          </select>
+          <div style="font-size:11px;color:var(--muted);">${isAdmin ? 'Admin ไม่จำกัดหน่วยงาน' : 'กด Ctrl/Cmd ค้างเพื่อเลือกหลายหน่วยงาน'}</div>
         </td>
         <td><input type="password" data-ufield="Password" data-ui="${i}" placeholder="${u.__isNew ? 'ระบุรหัสผ่าน' : 'เว้นว่าง = ไม่เปลี่ยน'}"></td>
         <td class="no-print" style="white-space:nowrap;">
           <button class="btn btn-secondary btn-sm" onclick="saveUserRow(${i})">บันทึก</button>
           <button class="btn btn-red btn-sm" onclick="deleteUserRow(${i})">ลบ</button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
     document.getElementById('userTableHost').innerHTML = `
       <div style="overflow-x:auto;"><table>
-        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>รหัสผ่าน</th><th class="no-print">จัดการ</th></tr>
-        ${rowsHtml || '<tr><td colspan="4" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
+        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th class="no-print">จัดการ</th></tr>
+        ${rowsHtml || '<tr><td colspan="5" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
       </table></div>
     `;
   }
 
+  window.toggleUserDeptSelect = (i)=>{
+    const roleEl = document.querySelector(`[data-ufield="Role"][data-ui="${i}"]`);
+    const deptEl = document.querySelector(`[data-ufield="Departments"][data-ui="${i}"]`);
+    if(deptEl) deptEl.disabled = roleEl.value === 'admin';
+  };
+
   function addBlankUserRow(){
-    userList.push({ Username:'', Role:'user', __isNew:true });
+    userList.push({ Username:'', Role:'user', Departments:[], __isNew:true });
     renderUsersTable();
   }
 
@@ -2558,12 +2610,14 @@ function renderSettings(root){
     const u = userList[i];
     const usernameEl = document.querySelector(`[data-ufield="Username"][data-ui="${i}"]`);
     const roleEl = document.querySelector(`[data-ufield="Role"][data-ui="${i}"]`);
+    const deptEl = document.querySelector(`[data-ufield="Departments"][data-ui="${i}"]`);
     const pwEl = document.querySelector(`[data-ufield="Password"][data-ui="${i}"]`);
     u.Username = usernameEl.value.trim();
     u.Role = roleEl.value;
+    u.Departments = Array.from(deptEl.selectedOptions).map(o=>o.value);
     const password = pwEl.value;
     if(!u.Username){ toast('กรุณาระบุชื่อผู้ใช้','err'); return; }
-    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Password: password } }).then(res=>{
+    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, Password: password } }).then(res=>{
       if(!res.ok){ toast(res.error||'บันทึกผู้ใช้ไม่สำเร็จ','err'); return; }
       toast('บันทึกผู้ใช้สำเร็จ','ok');
       loadUsers();
