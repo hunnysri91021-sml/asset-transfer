@@ -354,14 +354,17 @@ function addToTransferQueue_(body) {
   const disposed = getDisposedAssetStatus_();
   if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถโอนย้ายได้' };
 
-  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][idx.AssetID]) === assetId) return { ok: true, data: { alreadyQueued: true } };
-  }
-  sh.appendRow([assetId, body.addedBy || '', new Date()]);
-  return { ok: true, data: { alreadyQueued: false } };
+  // ล็อกช่วงตรวจสอบรายการซ้ำ + เพิ่มแถว กันซ้ำเมื่อมีคนกดเพิ่มทรัพย์สินเดียวกันเข้าคิวพร้อมกัน
+  return withLock_(() => {
+    const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+    const values = sh.getDataRange().getValues();
+    const idx = indexMap_(values[0]);
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][idx.AssetID]) === assetId) return { ok: true, data: { alreadyQueued: true } };
+    }
+    sh.appendRow([assetId, body.addedBy || '', new Date()]);
+    return { ok: true, data: { alreadyQueued: false } };
+  });
 }
 
 function removeFromTransferQueue_(body) {
@@ -888,32 +891,36 @@ function createTransfer_(body) {
   if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
-  const runningNo = getNextRunningNo_(fromDeptCode, SHEETS.TRANSFERS, dept && dept.StartSeqTransfer);
   const transferId = Utilities.getUuid();
   const token = Utilities.getUuid();
   const now = new Date();
   const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
-  const tSheet = getSS_().getSheetByName(SHEETS.TRANSFERS);
-  tSheet.appendRow([
-    transferId,
-    runningNo,
-    now,
-    body.subject || 'โอนย้าย',
-    body.subjectOther || '',
-    body.purpose || '',
-    body.fromDept || '',
-    fromDeptCode,
-    body.toDept || '',
-    status,
-    body.approverName || '',
-    body.approverEmail || '',
-    token,
-    skipApproval ? now : '',
-    skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
-    body.createdBy || '',
-    body.createdByEmail || ''
-  ]);
+  // ล็อกช่วงออกเลขที่เอกสาร + บันทึกแถวหลัก กันเลขที่ซ้ำเมื่อมีคนสร้างเอกสารพร้อมกันหลายคน
+  const runningNo = withLock_(() => {
+    const rn = getNextRunningNo_(fromDeptCode, SHEETS.TRANSFERS, dept && dept.StartSeqTransfer);
+    const tSheet = getSS_().getSheetByName(SHEETS.TRANSFERS);
+    tSheet.appendRow([
+      transferId,
+      rn,
+      now,
+      body.subject || 'โอนย้าย',
+      body.subjectOther || '',
+      body.purpose || '',
+      body.fromDept || '',
+      fromDeptCode,
+      body.toDept || '',
+      status,
+      body.approverName || '',
+      body.approverEmail || '',
+      token,
+      skipApproval ? now : '',
+      skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
+      body.createdBy || '',
+      body.createdByEmail || ''
+    ]);
+    return rn;
+  });
 
   const iSheet = getSS_().getSheetByName(SHEETS.ITEMS);
   const itemRows = items.map((it, i) => [
@@ -1135,30 +1142,34 @@ function createSale_(body) {
   if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
-  const runningNo = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
   const saleId = Utilities.getUuid();
   const token = Utilities.getUuid();
   const now = new Date();
   const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
-  const sSheet = getSS_().getSheetByName(SHEETS.SALES);
-  sSheet.appendRow([
-    saleId,
-    runningNo,
-    now,
-    body.fromDept || '',
-    fromDeptCode,
-    body.buyer || '',
-    body.remark || '',
-    status,
-    body.approverName || '',
-    body.approverEmail || '',
-    token,
-    skipApproval ? now : '',
-    skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
-    body.createdBy || '',
-    body.createdByEmail || ''
-  ]);
+  // ล็อกช่วงออกเลขที่เอกสาร + บันทึกแถวหลัก กันเลขที่ซ้ำเมื่อมีคนสร้างเอกสารพร้อมกันหลายคน
+  const runningNo = withLock_(() => {
+    const rn = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
+    const sSheet = getSS_().getSheetByName(SHEETS.SALES);
+    sSheet.appendRow([
+      saleId,
+      rn,
+      now,
+      body.fromDept || '',
+      fromDeptCode,
+      body.buyer || '',
+      body.remark || '',
+      status,
+      body.approverName || '',
+      body.approverEmail || '',
+      token,
+      skipApproval ? now : '',
+      skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
+      body.createdBy || '',
+      body.createdByEmail || ''
+    ]);
+    return rn;
+  });
 
   const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
   const itemRows = items.map((it, i) => [
@@ -1313,30 +1324,34 @@ function createWriteOff_(body) {
   if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
-  const runningNo = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS, dept && dept.StartSeqWriteOff);
   const writeOffId = Utilities.getUuid();
   const token = Utilities.getUuid();
   const now = new Date();
   const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
-  const wSheet = getSS_().getSheetByName(SHEETS.WRITEOFFS);
-  wSheet.appendRow([
-    writeOffId,
-    runningNo,
-    now,
-    body.fromDept || '',
-    fromDeptCode,
-    body.reason || '',
-    body.remark || '',
-    status,
-    body.approverName || '',
-    body.approverEmail || '',
-    token,
-    skipApproval ? now : '',
-    skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
-    body.createdBy || '',
-    body.createdByEmail || ''
-  ]);
+  // ล็อกช่วงออกเลขที่เอกสาร + บันทึกแถวหลัก กันเลขที่ซ้ำเมื่อมีคนสร้างเอกสารพร้อมกันหลายคน
+  const runningNo = withLock_(() => {
+    const rn = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS, dept && dept.StartSeqWriteOff);
+    const wSheet = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+    wSheet.appendRow([
+      writeOffId,
+      rn,
+      now,
+      body.fromDept || '',
+      fromDeptCode,
+      body.reason || '',
+      body.remark || '',
+      status,
+      body.approverName || '',
+      body.approverEmail || '',
+      token,
+      skipApproval ? now : '',
+      skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
+      body.createdBy || '',
+      body.createdByEmail || ''
+    ]);
+    return rn;
+  });
 
   const iSheet = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
   const itemRows = items.map((it, i) => [
@@ -1631,6 +1646,17 @@ function logActivity_(transferId, action, by, detail) {
 // ============================================================
 // UTIL
 // ============================================================
+// กันชนกันตอนมีคนใช้งานพร้อมกันหลายคน (เช่น ออกเลขที่เอกสารซ้ำ) — ล็อกให้ทำงานทีละคนเฉพาะช่วงวิกฤต
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function indexMap_(headers) {
   const idx = {};
   headers.forEach((h, i) => { idx[h] = i; });
