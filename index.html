@@ -266,6 +266,12 @@ function statusBadge(s){
   const cls = { Draft:'draft', PendingApproval:'pending', Approved:'approved', Rejected:'rejected', Voided:'draft' };
   return '<span class="badge badge-'+(cls[s]||'draft')+'">'+(STATUS_LABELS[s]||s)+'</span>';
 }
+// เหมือน statusBadge แต่สถานะ Approved ของใบขายออกให้อ่านว่า "ขายแล้ว" แทน "อนุมัติแล้ว" เพื่อให้ตรงกับสถานะทรัพย์สินจริง
+function saleStatusBadge(s){
+  const cls = { Draft:'draft', PendingApproval:'pending', Approved:'approved', Rejected:'rejected', Voided:'draft' };
+  const label = s === 'Approved' ? 'ขายแล้ว' : (STATUS_LABELS[s]||s);
+  return '<span class="badge badge-'+(cls[s]||'draft')+'">'+label+'</span>';
+}
 function deptSkipsApproval(deptName){
   const d = STATE.deptCodes.find(x=>x.DeptName===deptName);
   return !!(d && d.SkipApprovalEmail);
@@ -1532,7 +1538,7 @@ function renderSaleList(root){
         <select id="fSaleStatus" style="max-width:160px;">
           <option value="">ทุกสถานะ</option>
           <option value="PendingApproval">รออนุมัติ</option>
-          <option value="Approved">อนุมัติแล้ว</option>
+          <option value="Approved">ขายแล้ว</option>
           <option value="Rejected">ไม่อนุมัติ</option>
         </select>
         <input type="date" id="fSaleFrom" style="max-width:150px;">
@@ -1635,7 +1641,7 @@ function renderSaleList(root){
     const header = ['เลขที่','วันที่','หน่วยงาน','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
     const dataRows = STATE.sales.map(s => [
       s.RunningNo, fmtDate(s.CreatedAt), s.FromDept, s.Buyer||'', s.ItemCount,
-      Number(s.TotalSalePrice)||0, STATUS_LABELS[s.Status]||s.Status, s.ApproverName||s.ApproverEmail||'', s.AllImages||''
+      Number(s.TotalSalePrice)||0, (s.Status==='Approved'?'ขายแล้ว':(STATUS_LABELS[s.Status]||s.Status)), s.ApproverName||s.ApproverEmail||'', s.AllImages||''
     ]);
     exportExcel('รายการขายออก.xlsx', [{ name:'ขายออก', header, rows: dataRows }]);
   }
@@ -1669,7 +1675,7 @@ function renderSaleList(root){
         <td>${esc(s.Buyer||'-')}</td>
         <td style="text-align:center;">${s.ItemCount}</td>
         <td class="money">${fmtMoney(s.TotalSalePrice)}</td>
-        <td>${statusBadge(s.Status)}</td>
+        <td>${saleStatusBadge(s.Status)}</td>
         <td>${esc(s.ApproverName||s.ApproverEmail||'-')}</td>
         <td class="no-print"><button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button></td>
       </tr>`;
@@ -2766,7 +2772,7 @@ function buildSaleDocHtml(s, withToolbar){
     <div class="toolbar no-print">
       <button class="btn btn-secondary btn-sm" onclick="STATE.view='saleList';render();">← กลับรายการ</button>
       <button class="btn btn-primary btn-sm" id="btnPrintSaleNow">🖨️ พิมพ์ / บันทึก PDF</button>
-      <span style="margin-left:auto;">${statusBadge(s.Status)}</span>
+      <span style="margin-left:auto;">${saleStatusBadge(s.Status)}</span>
     </div>` : ''}
     <div class="card" id="printArea">
       <div class="doc">
@@ -2801,7 +2807,7 @@ function buildSaleDocHtml(s, withToolbar){
 
         ${s.Status !== 'Draft' ? `
         <div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">
-          <b>สถานะการอนุมัติ:</b> ${statusBadge(s.Status)} &nbsp;
+          <b>สถานะการอนุมัติ:</b> ${saleStatusBadge(s.Status)} &nbsp;
           ${s.ApproverName || s.ApproverEmail ? 'โดย '+esc(s.ApproverName||s.ApproverEmail) : ''}
           ${s.ApprovedAt ? ' เมื่อ '+fmtDate(s.ApprovedAt) : ''}
           ${s.ApproverComment ? '<br><b>ความเห็น:</b> '+esc(s.ApproverComment) : ''}
@@ -2949,7 +2955,7 @@ function renderApproveSale(){
           </div>
         </div>`;
     } else {
-      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${statusBadge(s.Status)}</div></div>`;
+      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${saleStatusBadge(s.Status)}</div></div>`;
     }
     root.innerHTML = buildSaleDocHtml(s, false) + actionHtml;
 
