@@ -1254,7 +1254,7 @@ function renderCreate(root){
       <div class="row">
         <div>
           <label>ชื่อผู้ขอ (ผู้บันทึกรายการ)</label>
-          <input type="text" id="cCreatedBy" value="${esc(h.createdBy||'')}">
+          <input type="text" id="cCreatedBy" value="${esc(h.createdBy||STATE.username||'')}">
         </div>
         <div>
           <label>อีเมลผู้ขอ (สำหรับรับผลอนุมัติ)</label>
@@ -1714,7 +1714,7 @@ function renderSaleCreate(root){
       <div class="row">
         <div>
           <label>ชื่อผู้บันทึก</label>
-          <input type="text" id="sCreatedBy" value="${esc(h.createdBy||'')}">
+          <input type="text" id="sCreatedBy" value="${esc(h.createdBy||STATE.username||'')}">
         </div>
         <div>
           <label>อีเมลผู้บันทึก (สำหรับรับผลอนุมัติ)</label>
@@ -2173,7 +2173,7 @@ function renderWriteOffCreate(root){
       <div class="row">
         <div>
           <label>ชื่อผู้บันทึก</label>
-          <input type="text" id="wCreatedBy" value="${esc(h.createdBy||'')}">
+          <input type="text" id="wCreatedBy" value="${esc(h.createdBy||STATE.username||'')}">
         </div>
         <div>
           <label>อีเมลผู้บันทึก (สำหรับรับผลอนุมัติ)</label>
