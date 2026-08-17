@@ -1984,7 +1984,7 @@ function pdfDocStyle_() {
     'body{font-family:"Sarabun","Angsana New",sans-serif;font-size:14px;line-height:1.6;color:#222;padding:28px 34px;}' +
     '.doc-header{text-align:center;font-weight:700;font-size:18px;margin-bottom:2px;}' +
     '.doc-title{text-align:center;font-weight:700;font-size:17px;margin:10px 0 16px;text-decoration:underline;}' +
-    '.doc-meta{display:flex;justify-content:flex-end;gap:24px;font-size:13px;margin-bottom:10px;}' +
+    '.doc-meta{text-align:right;font-size:13px;margin-bottom:10px;}' +
     '.doc-field{margin:4px 0;font-size:13.5px;}' +
     '.doc-field b{display:inline-block;min-width:70px;}' +
     'table.doc-table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12.5px;table-layout:fixed;}' +
@@ -1992,11 +1992,9 @@ function pdfDocStyle_() {
     'table.doc-table td{border:1px solid #dde3ec;padding:8px;text-align:center;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word;}' +
     'table.doc-table td.left{text-align:left;}' +
     'table.doc-table td.money{text-align:right;}' +
-    '.doc-img-gallery{display:flex;flex-wrap:wrap;gap:3px;justify-content:center;}' +
-    '.doc-img-gallery img{width:26px;height:26px;object-fit:cover;border-radius:3px;border:1px solid #ddd;}' +
+    '.doc-img-gallery{text-align:center;}' +
+    '.doc-img-gallery img{width:26px;height:26px;object-fit:cover;border-radius:3px;border:1px solid #ddd;margin:1px;}' +
     '.doc-note{font-size:11.5px;color:#555;margin-top:16px;border-top:1px dashed #ccc;padding-top:10px;}' +
-    '.doc-sign{display:flex;justify-content:space-between;margin-top:30px;font-size:13px;}' +
-    '.doc-sign div{width:45%;text-align:center;}' +
     '.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}' +
     '</style>';
 }
@@ -2012,6 +2010,22 @@ function pdfStatusBadge_(status, isSale) {
   const colors = { Draft: ['#e2e3e5', '#555'], PendingApproval: ['#fff3cd', '#b8860b'], Approved: ['#d4edda', '#1a7d3c'], Rejected: ['#f8d7da', '#c0392b'], Voided: ['#e2e3e5', '#555'] };
   const c = colors[status] || colors.Draft;
   return '<span class="badge" style="background:' + c[0] + ';color:' + c[1] + ';">' + escapeHtml_(labels[status] || status) + '</span>';
+}
+
+// ใช้ตารางไม่มีเส้นขอบแทน .doc-sign แบบ flexbox เดิม เพราะ Google Docs (ตัวแปลง HTML เป็น PDF)
+// ไม่รองรับ display:flex ดีนัก ทำให้เส้นขีดกับชื่อ/วันที่ใต้เส้นจัดกึ่งกลางไม่ตรงกัน — ตารางแปลงได้เสถียรกว่ามาก
+function pdfSignBlock_(leftLabel, leftName, rightLabel, rightName) {
+  const cell = (label, name) =>
+    '<td style="width:45%;text-align:center;border:none;padding:0;">' +
+    '__________________<br>' +
+    '(' + escapeHtml_(label) + ') ' + escapeHtml_(name || '') + '<br>' +
+    'วันที่ ..........................' +
+    '</td>';
+  return '<table style="width:100%;border:none;margin-top:30px;font-size:13px;"><tr>' +
+    cell(leftLabel, leftName) +
+    '<td style="width:10%;border:none;"></td>' +
+    cell(rightLabel, rightName) +
+    '</tr></table>';
 }
 
 function pdfApprovalFooter_(obj, isSale) {
@@ -2036,7 +2050,7 @@ function buildTransferPdfHtml_(t) {
   return '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
     '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
     '<div class="doc-title">ใบโอนย้ายทรัพย์สิน</div>' +
-    '<div class="doc-meta"><div><b>เลขที่</b> ' + escapeHtml_(t.RunningNo) + '</div><div><b>วันที่</b> ' + fmtDateServer_(t.CreatedAt) + '</div></div>' +
+    '<div class="doc-meta"><b>เลขที่</b> ' + escapeHtml_(t.RunningNo) + ' &nbsp;&nbsp;&nbsp; <b>วันที่</b> ' + fmtDateServer_(t.CreatedAt) + '</div>' +
     '<div class="doc-field"><b>เรียน</b> ผช.ผู้จัดการส่วนบัญชีและการเงิน ทราบ</div>' +
     '<div class="doc-field"><b>เรื่อง</b> ' + (t.Subject === 'อื่นๆ' ? 'อื่นๆ (' + escapeHtml_(t.SubjectOther) + ')' : 'โอนย้าย') + '</div>' +
     '<div class="doc-field"><b>เพื่อ</b> ' + escapeHtml_(t.Purpose || '-') + '</div>' +
@@ -2045,10 +2059,7 @@ function buildTransferPdfHtml_(t) {
     '<th style="width:15%;">ผู้โอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th style="width:15%;">ผู้รับโอน<br>หน่วยงาน/ผู้ลงชื่อ</th><th style="width:15%;">หมายเหตุ</th></tr>' + rows + '</table>' +
     '<div class="doc-note">หมายเหตุ : กรุณากำหนดเลขที่ running number ดังนี้ xxx/001/yy<br>' +
     'xxx หมายถึง หน่วยงาน (ดูรหัสได้ที่เมนู "ตั้งค่ารหัสหน่วยงาน") &nbsp; 001 หมายถึง ลำดับเลขที่เอกสาร &nbsp; yy หมายถึง ปี พ.ศ. 2 หลัก</div>' +
-    '<div class="doc-sign">' +
-    '<div><div style="margin-bottom:4px;white-space:nowrap;overflow:hidden;">__________________</div>(ผู้โอน) ' + escapeHtml_(firstItem.FromSignName || '') + '<br>วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    '<div><div style="margin-bottom:4px;white-space:nowrap;overflow:hidden;">__________________</div>(ผู้รับโอน) ' + escapeHtml_(firstItem.ToSignName || '') + '<br>วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    '</div>' +
+    pdfSignBlock_('ผู้โอน', firstItem.FromSignName, 'ผู้รับโอน', firstItem.ToSignName) +
     '<div style="margin-top:26px;font-size:13px;"><b>รับทราบโดย</b><br>' +
     '1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ <span style="white-space:nowrap;">..........................</span><br>' +
     '2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
@@ -2066,17 +2077,14 @@ function buildSalePdfHtml_(s) {
   return '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
     '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
     '<div class="doc-title">ใบขายออกทรัพย์สิน</div>' +
-    '<div class="doc-meta"><div><b>เลขที่</b> ' + escapeHtml_(s.RunningNo) + '</div><div><b>วันที่</b> ' + fmtDateServer_(s.CreatedAt) + '</div></div>' +
+    '<div class="doc-meta"><b>เลขที่</b> ' + escapeHtml_(s.RunningNo) + ' &nbsp;&nbsp;&nbsp; <b>วันที่</b> ' + fmtDateServer_(s.CreatedAt) + '</div>' +
     '<div class="doc-field"><b>หน่วยงาน</b> ' + escapeHtml_(s.FromDept) + '</div>' +
     '<div class="doc-field"><b>ผู้ซื้อ/ผู้ประมูลได้</b> ' + escapeHtml_(s.Buyer || '-') + '</div>' +
     '<div class="doc-field"><b>หมายเหตุ</b> ' + escapeHtml_(s.Remark || '-') + '</div>' +
     '<table class="doc-table"><tr><th style="width:5%;">ลำดับ</th><th style="width:15%;">รูปภาพ</th><th style="width:10%;">รหัส</th><th style="width:21%;">รายการ</th>' +
     '<th style="width:12%;">ราคาซาก</th><th style="width:12%;">ราคาประมูล</th><th style="width:12%;">ราคาขาย</th><th style="width:13%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="6" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
-    '<div class="doc-sign">' +
-    '<div><div style="margin-bottom:4px;white-space:nowrap;overflow:hidden;">__________________</div>(ผู้บันทึก) ' + escapeHtml_(s.CreatedBy || '') + '<br>วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    '<div><div style="margin-bottom:4px;white-space:nowrap;overflow:hidden;">__________________</div>(ผู้อนุมัติ) ' + escapeHtml_(s.ApproverName || '') + '<br>วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    '</div>' +
+    pdfSignBlock_('ผู้บันทึก', s.CreatedBy, 'ผู้อนุมัติ', s.ApproverName) +
     pdfApprovalFooter_(s, true) +
     '</body></html>';
 }
@@ -2090,17 +2098,14 @@ function buildWriteOffPdfHtml_(w) {
   return '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
     '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
     '<div class="doc-title">ใบตัดชำรุดทรัพย์สิน</div>' +
-    '<div class="doc-meta"><div><b>เลขที่</b> ' + escapeHtml_(w.RunningNo) + '</div><div><b>วันที่</b> ' + fmtDateServer_(w.CreatedAt) + '</div></div>' +
+    '<div class="doc-meta"><b>เลขที่</b> ' + escapeHtml_(w.RunningNo) + ' &nbsp;&nbsp;&nbsp; <b>วันที่</b> ' + fmtDateServer_(w.CreatedAt) + '</div>' +
     '<div class="doc-field"><b>หน่วยงาน</b> ' + escapeHtml_(w.FromDept) + '</div>' +
     '<div class="doc-field"><b>สาเหตุชำรุด</b> ' + escapeHtml_(w.Reason || '-') + '</div>' +
     '<div class="doc-field"><b>หมายเหตุ</b> ' + escapeHtml_(w.Remark || '-') + '</div>' +
     '<table class="doc-table"><tr><th style="width:6%;">ลำดับ</th><th style="width:16%;">รูปภาพ</th><th style="width:12%;">รหัส</th><th style="width:30%;">รายการ</th>' +
     '<th style="width:16%;">ราคาซาก</th><th style="width:20%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="4" style="text-align:right;font-weight:600;">รวมราคาซาก</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
-    '<div class="doc-sign">' +
-    '<div><div style="margin-bottom:4px;white-space:nowrap;overflow:hidden;">__________________</div>(ผู้บันทึก) ' + escapeHtml_(w.CreatedBy || '') + '<br>วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    '<div><div style="margin-bottom:4px;white-space:nowrap;overflow:hidden;">__________________</div>(ผู้อนุมัติ) ' + escapeHtml_(w.ApproverName || '') + '<br>วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    '</div>' +
+    pdfSignBlock_('ผู้บันทึก', w.CreatedBy, 'ผู้อนุมัติ', w.ApproverName) +
     pdfApprovalFooter_(w, false) +
     '</body></html>';
 }
