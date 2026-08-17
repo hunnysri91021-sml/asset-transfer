@@ -622,6 +622,9 @@ function renderAssetList(root){
   const manageMode = STATE.assetListTab === 'manage';
   const isAdmin = STATE.role === 'admin';
   const noDeptsAssigned = manageMode && !isAdmin && !(STATE.myDepartments||[]).length;
+  // เก็บค่าตัวกรองไว้ในตัวแปร JS เอง แทนการอ่านจาก <select>.value ตรงๆ เพราะบางเบราว์เซอร์จะพยายาม
+  // "จำ" ค่าฟอร์มเดิมแล้วเซ็ตกลับให้ตอนสร้าง DOM ใหม่ (เช่นตอนสลับแถบ) ทำให้ตัวกรองค้างค่าเดิมโดยไม่ได้ตั้งใจ
+  let selectedDivision = '', selectedWorkGroup = '', selectedLocation = '';
 
   root.innerHTML = `
     <div class="card">
@@ -639,9 +642,9 @@ function renderAssetList(root){
           <option value="Sold">ขายแล้ว</option>
           <option value="WrittenOff">ตัดชำรุด</option>
         </select>
-        <select id="alDivision" style="max-width:160px;"><option value="">ทุกฝ่าย</option></select>
-        <select id="alWorkGroup" style="max-width:160px;"><option value="">ทุกกลุ่มงาน</option></select>
-        <select id="alLocation" style="max-width:160px;"><option value="">ทุกสถานที่</option></select>
+        <select id="alDivision" autocomplete="off" style="max-width:160px;"><option value="">ทุกฝ่าย</option></select>
+        <select id="alWorkGroup" autocomplete="off" style="max-width:160px;"><option value="">ทุกกลุ่มงาน</option></select>
+        <select id="alLocation" autocomplete="off" style="max-width:160px;"><option value="">ทุกสถานที่</option></select>
         <button class="btn btn-secondary btn-sm" id="btnAlFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
@@ -664,9 +667,9 @@ function renderAssetList(root){
   document.getElementById('btnAlFilter').onclick = load;
   document.getElementById('btnAlRefresh').onclick = load;
   document.getElementById('alStatus').onchange = renderTable;
-  document.getElementById('alDivision').onchange = renderTable;
-  document.getElementById('alWorkGroup').onchange = renderTable;
-  document.getElementById('alLocation').onchange = renderTable;
+  document.getElementById('alDivision').onchange = (e)=>{ selectedDivision = e.target.value; renderTable(); };
+  document.getElementById('alWorkGroup').onchange = (e)=>{ selectedWorkGroup = e.target.value; renderTable(); };
+  document.getElementById('alLocation').onchange = (e)=>{ selectedLocation = e.target.value; renderTable(); };
   document.getElementById('btnAlExport').onclick = exportAssetList;
   if(manageMode){
     document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
@@ -721,7 +724,6 @@ function renderAssetList(root){
     const divSel = document.getElementById('alDivision');
     const wgSel = document.getElementById('alWorkGroup');
     const locSel = document.getElementById('alLocation');
-    const curDiv = divSel.value, curWg = wgSel.value, curLoc = locSel.value;
     const scope = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
     const divisions = [...new Set(scope.map(a=>a.Division).filter(Boolean))].sort();
     const workGroups = [...new Set(scope.map(a=>a.WorkGroup).filter(Boolean))].sort();
@@ -729,9 +731,12 @@ function renderAssetList(root){
     divSel.innerHTML = '<option value="">ทุกฝ่าย</option>' + divisions.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
     wgSel.innerHTML = '<option value="">ทุกกลุ่มงาน</option>' + workGroups.map(w=>`<option value="${esc(w)}">${esc(w)}</option>`).join('');
     locSel.innerHTML = '<option value="">ทุกสถานที่</option>' + locations.map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join('');
-    if(divisions.indexOf(curDiv)!==-1) divSel.value = curDiv;
-    if(workGroups.indexOf(curWg)!==-1) wgSel.value = curWg;
-    if(locations.indexOf(curLoc)!==-1) locSel.value = curLoc;
+    if(divisions.indexOf(selectedDivision)===-1) selectedDivision = '';
+    if(workGroups.indexOf(selectedWorkGroup)===-1) selectedWorkGroup = '';
+    if(locations.indexOf(selectedLocation)===-1) selectedLocation = '';
+    divSel.value = selectedDivision;
+    wgSel.value = selectedWorkGroup;
+    locSel.value = selectedLocation;
   }
 
   function deptScopedRows(rows){
@@ -741,14 +746,11 @@ function renderAssetList(root){
 
   function filteredRows(){
     const statusFilter = document.getElementById('alStatus').value;
-    const divisionFilter = document.getElementById('alDivision').value;
-    const workGroupFilter = document.getElementById('alWorkGroup').value;
-    const locationFilter = document.getElementById('alLocation').value;
     let rows = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
     if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
-    if(divisionFilter) rows = rows.filter(a => a.Division === divisionFilter);
-    if(workGroupFilter) rows = rows.filter(a => a.WorkGroup === workGroupFilter);
-    if(locationFilter) rows = rows.filter(a => a.Location === locationFilter);
+    if(selectedDivision) rows = rows.filter(a => a.Division === selectedDivision);
+    if(selectedWorkGroup) rows = rows.filter(a => a.WorkGroup === selectedWorkGroup);
+    if(selectedLocation) rows = rows.filter(a => a.Location === selectedLocation);
     return rows;
   }
 
