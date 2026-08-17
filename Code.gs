@@ -1088,6 +1088,10 @@ function createTransfer_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
 
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  if (!canManageDept_(user, body.fromDept)) return { ok: false, error: 'ไม่มีสิทธิ์สร้างใบโอนย้ายให้หน่วยงานนี้' };
+
   const dept = getDeptByName_(body.fromDept);
   const skipApproval = !!(dept && dept.SkipApprovalEmail);
   if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
@@ -1341,6 +1345,10 @@ function createSale_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
 
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  if (!canManageDept_(user, body.fromDept)) return { ok: false, error: 'ไม่มีสิทธิ์สร้างใบขายออกให้หน่วยงานนี้' };
+
   const dept = getDeptByName_(body.fromDept);
   const skipApproval = !!(dept && dept.SkipApprovalEmail);
   if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
@@ -1533,6 +1541,10 @@ function findWriteOffRow_(writeOffId) {
 function createWriteOff_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
+
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  if (!canManageDept_(user, body.fromDept)) return { ok: false, error: 'ไม่มีสิทธิ์สร้างใบตัดชำรุดให้หน่วยงานนี้' };
 
   const dept = getDeptByName_(body.fromDept);
   const skipApproval = !!(dept && dept.SkipApprovalEmail);

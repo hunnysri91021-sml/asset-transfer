@@ -1359,7 +1359,9 @@ function renderCreate(root){
       if(!res.ok){ toast(res.error,'err'); return; }
       STATE.deptCodes = res.data;
       const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
-      document.getElementById('cFromDept').innerHTML = opts;
+      const fromDepts = STATE.role==='admin' ? res.data : res.data.filter(d=>(STATE.myDepartments||[]).indexOf(d.DeptName)!==-1);
+      const fromOpts = '<option value="">-- เลือก --</option>' + fromDepts.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
+      document.getElementById('cFromDept').innerHTML = fromOpts;
       document.getElementById('cToDept').innerHTML = opts;
       document.getElementById('cFromDept').value = h.fromDept || '';
       document.getElementById('cToDept').value = h.toDept || '';
@@ -1515,6 +1517,7 @@ function doSubmitTransfer(){
   const h = STATE.transferHeader;
   const payload = {
     action:'createTransfer',
+    password: STATE.adminPassword,
     subject: h.subject, subjectOther: h.subjectOther, purpose: h.purpose,
     fromDept: h.fromDept, toDept: h.toDept,
     createdBy: h.createdBy, createdByEmail: h.createdByEmail,
@@ -1806,7 +1809,8 @@ function renderSaleCreate(root){
     apiGet({action:'getDeptCodes'}).then(res=>{
       if(!res.ok){ toast(res.error,'err'); return; }
       STATE.deptCodes = res.data;
-      const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
+      const fromDepts = STATE.role==='admin' ? res.data : res.data.filter(d=>(STATE.myDepartments||[]).indexOf(d.DeptName)!==-1);
+      const opts = '<option value="">-- เลือก --</option>' + fromDepts.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
       document.getElementById('sFromDept').innerHTML = opts;
       document.getElementById('sFromDept').value = h.fromDept || '';
       document.getElementById('sFromDept').addEventListener('change', ()=>{
@@ -1976,6 +1980,7 @@ function doSubmitSale(){
   const h = STATE.saleHeader;
   const payload = {
     action:'createSale',
+    password: STATE.adminPassword,
     fromDept: h.fromDept, buyer: h.buyer, remark: h.remark,
     createdBy: h.createdBy, createdByEmail: h.createdByEmail,
     approverName: h.approverName, approverEmail: h.approverEmail,
@@ -2260,7 +2265,8 @@ function renderWriteOffCreate(root){
     apiGet({action:'getDeptCodes'}).then(res=>{
       if(!res.ok){ toast(res.error,'err'); return; }
       STATE.deptCodes = res.data;
-      const opts = '<option value="">-- เลือก --</option>' + res.data.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
+      const fromDepts = STATE.role==='admin' ? res.data : res.data.filter(d=>(STATE.myDepartments||[]).indexOf(d.DeptName)!==-1);
+      const opts = '<option value="">-- เลือก --</option>' + fromDepts.map(d=>`<option value="${esc(d.DeptName)}">${esc(d.DeptName)} (${esc(d.Code)})</option>`).join('');
       document.getElementById('wFromDept').innerHTML = opts;
       document.getElementById('wFromDept').value = h.fromDept || '';
       document.getElementById('wFromDept').addEventListener('change', ()=>{
@@ -2405,6 +2411,7 @@ function doSubmitWriteOff(){
   const h = STATE.writeOffHeader;
   const payload = {
     action:'createWriteOff',
+    password: STATE.adminPassword,
     fromDept: h.fromDept, reason: h.reason, remark: h.remark,
     createdBy: h.createdBy, createdByEmail: h.createdByEmail,
     approverName: h.approverName, approverEmail: h.approverEmail,
