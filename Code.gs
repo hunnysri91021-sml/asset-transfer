@@ -1997,8 +1997,6 @@ function pdfDocStyle_() {
     '.doc-note{font-size:11.5px;color:#555;margin-top:16px;border-top:1px dashed #ccc;padding-top:10px;}' +
     '.doc-sign{display:flex;justify-content:space-between;margin-top:30px;font-size:13px;}' +
     '.doc-sign div{width:45%;text-align:center;}' +
-    '.doc-sign .line{border-bottom:1px dotted #333;height:40px;}' +
-    '.dateline{display:inline-block;width:110px;border-bottom:1px dotted #333;height:13px;vertical-align:top;}' +
     '.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}' +
     '</style>';
 }
@@ -2048,12 +2046,12 @@ function buildTransferPdfHtml_(t) {
     '<div class="doc-note">หมายเหตุ : กรุณากำหนดเลขที่ running number ดังนี้ xxx/001/yy<br>' +
     'xxx หมายถึง หน่วยงาน (ดูรหัสได้ที่เมนู "ตั้งค่ารหัสหน่วยงาน") &nbsp; 001 หมายถึง ลำดับเลขที่เอกสาร &nbsp; yy หมายถึง ปี พ.ศ. 2 หลัก</div>' +
     '<div class="doc-sign">' +
-    '<div><div class="line"></div>(ผู้โอน) ' + escapeHtml_(firstItem.FromSignName || '') + '<br>วันที่ <span class="dateline"></span></div>' +
-    '<div><div class="line"></div>(ผู้รับโอน) ' + escapeHtml_(firstItem.ToSignName || '') + '<br>วันที่ <span class="dateline"></span></div>' +
+    '<div><div style="margin-bottom:4px;">________________________</div>(ผู้โอน) ' + escapeHtml_(firstItem.FromSignName || '') + '<br>วันที่ ..........................</div>' +
+    '<div><div style="margin-bottom:4px;">________________________</div>(ผู้รับโอน) ' + escapeHtml_(firstItem.ToSignName || '') + '<br>วันที่ ..........................</div>' +
     '</div>' +
     '<div style="margin-top:26px;font-size:13px;"><b>รับทราบโดย</b><br>' +
-    '1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span><br>' +
-    '2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span></div>' +
+    '1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ ..........................<br>' +
+    '2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่ ..........................</div>' +
     pdfApprovalFooter_(t, false) +
     '</body></html>';
 }
@@ -2076,8 +2074,8 @@ function buildSalePdfHtml_(s) {
     '<th style="width:12%;">ราคาซาก</th><th style="width:12%;">ราคาประมูล</th><th style="width:12%;">ราคาขาย</th><th style="width:13%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="6" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
     '<div class="doc-sign">' +
-    '<div><div class="line"></div>(ผู้บันทึก) ' + escapeHtml_(s.CreatedBy || '') + '<br>วันที่ <span class="dateline"></span></div>' +
-    '<div><div class="line"></div>(ผู้อนุมัติ) ' + escapeHtml_(s.ApproverName || '') + '<br>วันที่ <span class="dateline"></span></div>' +
+    '<div><div style="margin-bottom:4px;">________________________</div>(ผู้บันทึก) ' + escapeHtml_(s.CreatedBy || '') + '<br>วันที่ ..........................</div>' +
+    '<div><div style="margin-bottom:4px;">________________________</div>(ผู้อนุมัติ) ' + escapeHtml_(s.ApproverName || '') + '<br>วันที่ ..........................</div>' +
     '</div>' +
     pdfApprovalFooter_(s, true) +
     '</body></html>';
@@ -2100,8 +2098,8 @@ function buildWriteOffPdfHtml_(w) {
     '<th style="width:16%;">ราคาซาก</th><th style="width:20%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="4" style="text-align:right;font-weight:600;">รวมราคาซาก</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
     '<div class="doc-sign">' +
-    '<div><div class="line"></div>(ผู้บันทึก) ' + escapeHtml_(w.CreatedBy || '') + '<br>วันที่ <span class="dateline"></span></div>' +
-    '<div><div class="line"></div>(ผู้อนุมัติ) ' + escapeHtml_(w.ApproverName || '') + '<br>วันที่ <span class="dateline"></span></div>' +
+    '<div><div style="margin-bottom:4px;">________________________</div>(ผู้บันทึก) ' + escapeHtml_(w.CreatedBy || '') + '<br>วันที่ ..........................</div>' +
+    '<div><div style="margin-bottom:4px;">________________________</div>(ผู้อนุมัติ) ' + escapeHtml_(w.ApproverName || '') + '<br>วันที่ ..........................</div>' +
     '</div>' +
     pdfApprovalFooter_(w, false) +
     '</body></html>';
