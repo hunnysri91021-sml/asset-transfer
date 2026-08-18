@@ -1085,6 +1085,7 @@ function renderList(root){
       <h2>รายการรอออกใบโอนย้าย</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวโอนย้าย") รอรวมออกเป็นใบโอนย้าย — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
       <div class="toolbar no-print">
+        <input type="text" id="qSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <span id="queueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnCreateFromQueue">สร้างใบโอนย้ายจากรายการที่เลือก</button>
         <button class="btn btn-secondary btn-sm" id="btnQueueRefresh">↻ รีเฟรช</button>
@@ -1119,6 +1120,7 @@ function renderList(root){
   document.getElementById('btnListExport').onclick = exportTransferList;
   document.getElementById('btnCreateFromQueue').onclick = createTransferFromQueue;
   document.getElementById('btnQueueRefresh').onclick = loadQueue;
+  document.getElementById('qSearch').oninput = renderQueueTable;
   loadList();
   loadQueue();
 
@@ -1135,8 +1137,11 @@ function renderList(root){
   function renderQueueTable(){
     const host = document.getElementById('queueTableHost');
     if(!STATE.transferQueue.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการรอโอนย้าย — เพิ่มได้จากหน้า "รายการทรัพย์สิน"</div>'; updateQueueSelCount(); return; }
+    const qq = (document.getElementById('qSearch').value||'').trim().toLowerCase();
+    const rows = qq ? STATE.transferQueue.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : STATE.transferQueue;
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ค้นหา</div>'; updateQueueSelCount(); return; }
     let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="queueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
-    STATE.transferQueue.forEach(q=>{
+    rows.forEach(q=>{
       const disabled = (q.AssetStatus||'Active')!=='Active';
       const checked = STATE.selectedQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
       html += `<tr>
@@ -1154,7 +1159,7 @@ function renderList(root){
     host.innerHTML = html;
 
     document.getElementById('queueSelectAll').onchange = (e)=>{
-      const ids = STATE.transferQueue.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
+      const ids = rows.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
       if(e.target.checked){ ids.forEach(id=>{ if(STATE.selectedQueueAssetIds.indexOf(id)===-1) STATE.selectedQueueAssetIds.push(id); }); }
       else { STATE.selectedQueueAssetIds = STATE.selectedQueueAssetIds.filter(id=>ids.indexOf(id)===-1); }
       renderQueueTable();
@@ -1569,6 +1574,7 @@ function renderSaleList(root){
       <h2>รายการรอออกใบขายออก</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวขาย") รอรวมออกเป็นใบขายออก — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
       <div class="toolbar no-print">
+        <input type="text" id="saleQSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <span id="saleQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueue">สร้างใบขายออกจากรายการที่เลือก</button>
         <button class="btn btn-secondary btn-sm" id="btnSaleQueueRefresh">↻ รีเฟรช</button>
@@ -1603,6 +1609,7 @@ function renderSaleList(root){
   document.getElementById('btnSaleExport').onclick = exportSaleList;
   document.getElementById('btnCreateFromSaleQueue').onclick = createSaleFromQueue;
   document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
+  document.getElementById('saleQSearch').oninput = renderSaleQueueTable;
   loadSaleList();
   loadSaleQueue();
 
@@ -1619,8 +1626,11 @@ function renderSaleList(root){
   function renderSaleQueueTable(){
     const host = document.getElementById('saleQueueTableHost');
     if(!STATE.saleQueue.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการรอขายออก — เพิ่มได้จากหน้า "รายการทรัพย์สิน"</div>'; updateSaleQueueSelCount(); return; }
+    const qq = (document.getElementById('saleQSearch').value||'').trim().toLowerCase();
+    const rows = qq ? STATE.saleQueue.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : STATE.saleQueue;
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ค้นหา</div>'; updateSaleQueueSelCount(); return; }
     let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="saleQueueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
-    STATE.saleQueue.forEach(q=>{
+    rows.forEach(q=>{
       const disabled = (q.AssetStatus||'Active')!=='Active';
       const checked = STATE.selectedSaleQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
       html += `<tr>
@@ -1639,7 +1649,7 @@ function renderSaleList(root){
     host.innerHTML = html;
 
     document.getElementById('saleQueueSelectAll').onchange = (e)=>{
-      const ids = STATE.saleQueue.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
+      const ids = rows.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
       if(e.target.checked){ ids.forEach(id=>{ if(STATE.selectedSaleQueueAssetIds.indexOf(id)===-1) STATE.selectedSaleQueueAssetIds.push(id); }); }
       else { STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id=>ids.indexOf(id)===-1); }
       renderSaleQueueTable();
@@ -2031,6 +2041,7 @@ function renderWriteOffList(root){
       <h2>รายการรอตัดชำรุด</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวตัดชำรุด") รอรวมออกเป็นใบตัดชำรุด — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
       <div class="toolbar no-print">
+        <input type="text" id="woQSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <span id="writeOffQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnCreateFromWriteOffQueue">สร้างใบตัดชำรุดจากรายการที่เลือก</button>
         <button class="btn btn-secondary btn-sm" id="btnWriteOffQueueRefresh">↻ รีเฟรช</button>
@@ -2065,6 +2076,7 @@ function renderWriteOffList(root){
   document.getElementById('btnWoExport').onclick = exportWoList;
   document.getElementById('btnCreateFromWriteOffQueue').onclick = createWriteOffFromQueue;
   document.getElementById('btnWriteOffQueueRefresh').onclick = loadWriteOffQueue;
+  document.getElementById('woQSearch').oninput = renderWriteOffQueueTable;
   loadWoList();
   loadWriteOffQueue();
 
@@ -2081,8 +2093,11 @@ function renderWriteOffList(root){
   function renderWriteOffQueueTable(){
     const host = document.getElementById('writeOffQueueTableHost');
     if(!STATE.writeOffQueue.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการรอตัดชำรุด — เพิ่มได้จากหน้า "รายการทรัพย์สิน"</div>'; updateWriteOffQueueSelCount(); return; }
+    const qq = (document.getElementById('woQSearch').value||'').trim().toLowerCase();
+    const rows = qq ? STATE.writeOffQueue.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : STATE.writeOffQueue;
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ค้นหา</div>'; updateWriteOffQueueSelCount(); return; }
     let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="writeOffQueueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
-    STATE.writeOffQueue.forEach(q=>{
+    rows.forEach(q=>{
       const disabled = (q.AssetStatus||'Active')!=='Active';
       const checked = STATE.selectedWriteOffQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
       html += `<tr>
@@ -2101,7 +2116,7 @@ function renderWriteOffList(root){
     host.innerHTML = html;
 
     document.getElementById('writeOffQueueSelectAll').onchange = (e)=>{
-      const ids = STATE.writeOffQueue.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
+      const ids = rows.filter(q=>(q.AssetStatus||'Active')==='Active').map(q=>q.AssetID);
       if(e.target.checked){ ids.forEach(id=>{ if(STATE.selectedWriteOffQueueAssetIds.indexOf(id)===-1) STATE.selectedWriteOffQueueAssetIds.push(id); }); }
       else { STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id=>ids.indexOf(id)===-1); }
       renderWriteOffQueueTable();
