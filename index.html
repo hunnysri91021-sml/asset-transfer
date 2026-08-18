@@ -1128,7 +1128,7 @@ function renderList(root){
     document.getElementById('queueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet({action:'getTransferQueue'}).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดคิวไม่สำเร็จ','err'); return; }
-      STATE.transferQueue = res.data;
+      STATE.transferQueue = deptFilterRows(res.data, ['Department']);
       STATE.selectedQueueAssetIds = STATE.selectedQueueAssetIds.filter(id => STATE.transferQueue.some(q=>q.AssetID===id));
       renderQueueTable();
     });
@@ -1617,7 +1617,7 @@ function renderSaleList(root){
     document.getElementById('saleQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet({action:'getSaleQueue'}).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดคิวไม่สำเร็จ','err'); return; }
-      STATE.saleQueue = res.data;
+      STATE.saleQueue = deptFilterRows(res.data, ['Department']);
       STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id => STATE.saleQueue.some(q=>q.AssetID===id));
       renderSaleQueueTable();
     });
@@ -2084,7 +2084,7 @@ function renderWriteOffList(root){
     document.getElementById('writeOffQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet({action:'getWriteOffQueue'}).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดคิวไม่สำเร็จ','err'); return; }
-      STATE.writeOffQueue = res.data;
+      STATE.writeOffQueue = deptFilterRows(res.data, ['Department']);
       STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id => STATE.writeOffQueue.some(q=>q.AssetID===id));
       renderWriteOffQueueTable();
     });
