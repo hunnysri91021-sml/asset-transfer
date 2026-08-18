@@ -823,9 +823,12 @@ function renderAssetList(root){
           <button class="btn btn-secondary btn-sm" data-editid="${esc(a.AssetID)}">แก้ไข</button>
           ${(a.AssetStatus||'Active')==='Active' ? (()=>{
             const queued = STATE.assetQueuedPurposes[a.AssetID] || [];
-            const btn = (purpose, label, queuedLabel) => queued.indexOf(purpose)!==-1
-              ? `<span class="badge badge-pending">${queuedLabel}</span>`
-              : `<button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="${purpose}">${label}</button>`;
+            // เลือกได้เพียงคิวเดียวต่อทรัพย์สิน — ถ้าอยู่ในคิวประเภทอื่นแล้ว ไม่แสดงปุ่มเพิ่มคิวประเภทอื่นให้เลือกซ้ำ
+            const btn = (purpose, label, queuedLabel) => {
+              if (queued.indexOf(purpose)!==-1) return `<span class="badge badge-pending">${queuedLabel}</span>`;
+              if (queued.length) return '';
+              return `<button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="${purpose}">${label}</button>`;
+            };
             return btn('transfer','+ คิวโอนย้าย','⏳ รอโอนย้าย')
               + btn('sale','+ คิวขาย','⏳ รอขาย')
               + btn('writeoff','+ คิวตัดชำรุด','⏳ รอตัดชำรุด');
