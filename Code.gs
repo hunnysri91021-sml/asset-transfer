@@ -238,9 +238,6 @@ function doPost(e) {
       case 'uploadImage':
         result = uploadImage_(body);
         break;
-      case 'updateAssetImage':
-        result = updateAssetImage_(body);
-        break;
       case 'login':
         result = login_(body);
         break;
@@ -469,23 +466,6 @@ function setAssetsTag_(assetIds, tagValue) {
       sh.getRange(i + 1, idx.Tag + 1).setValue(tagValue);
     }
   }
-}
-
-function updateAssetImage_(body) {
-  const assetId = String(body.assetId || '');
-  if (!assetId) return { ok: false, error: 'assetId required' };
-  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
-  const values = sh.getDataRange().getValues();
-  const headers = values[0];
-  const idx = indexMap_(headers);
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][idx.AssetID]) === assetId) {
-      sh.getRange(i + 1, idx.ImageURLOverride + 1).setValue(body.imageUrl || '');
-      sh.getRange(i + 1, idx.UpdatedAt + 1).setValue(new Date());
-      return { ok: true };
-    }
-  }
-  return { ok: false, error: 'Asset not found: ' + assetId };
 }
 
 // ทรัพย์สินที่มีใบขายออก หรือใบตัดชำรุด ซึ่งอนุมัติแล้ว ถือว่าสิ้นสภาพการใช้งานจริง จึงซ่อนจากรายการหลัก
@@ -1669,6 +1649,8 @@ function decideWriteOff_(body) {
 // IMAGE UPLOAD (Google Drive)
 // ============================================================
 function uploadImage_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนอัปโหลดรูปภาพ' };
   try {
     const folder = getOrCreateFolder_(CONFIG.DRIVE_FOLDER_NAME);
     const contentType = body.contentType || 'image/jpeg';

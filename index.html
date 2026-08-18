@@ -538,7 +538,7 @@ function uploadAssetModalImage(input){
   const reader = new FileReader();
   reader.onload = ()=>{
     toast('กำลังอัปโหลดรูป...');
-    apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: document.getElementById('amAssetID').value || 'asset' })
+    apiPost({ action:'uploadImage', password: STATE.adminPassword, base64: reader.result, contentType: file.type, fileName: document.getElementById('amAssetID').value || 'asset' })
       .then(res=>{
         if(res.ok){
           document.getElementById('amImageURL').value = res.data.url;
@@ -1485,7 +1485,7 @@ function renderCreate(root){
     const reader = new FileReader();
     reader.onload = ()=>{
       toast('กำลังอัปโหลดรูป...');
-      apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftItems[i].assetId })
+      apiPost({ action:'uploadImage', password: STATE.adminPassword, base64: reader.result, contentType: file.type, fileName: STATE.draftItems[i].assetId })
         .then(res=>{
           if(res.ok){
             STATE.draftItems[i].images.push(res.data.url);
@@ -1951,7 +1951,7 @@ function renderSaleCreate(root){
     const reader = new FileReader();
     reader.onload = ()=>{
       toast('กำลังอัปโหลดรูป...');
-      apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftSaleItems[i].assetId })
+      apiPost({ action:'uploadImage', password: STATE.adminPassword, base64: reader.result, contentType: file.type, fileName: STATE.draftSaleItems[i].assetId })
         .then(res=>{
           if(res.ok){
             STATE.draftSaleItems[i].images.push(res.data.url);
@@ -2382,7 +2382,7 @@ function renderWriteOffCreate(root){
     const reader = new FileReader();
     reader.onload = ()=>{
       toast('กำลังอัปโหลดรูป...');
-      apiPost({ action:'uploadImage', base64: reader.result, contentType: file.type, fileName: STATE.draftWriteOffItems[i].assetId })
+      apiPost({ action:'uploadImage', password: STATE.adminPassword, base64: reader.result, contentType: file.type, fileName: STATE.draftWriteOffItems[i].assetId })
         .then(res=>{
           if(res.ok){
             STATE.draftWriteOffItems[i].images.push(res.data.url);
