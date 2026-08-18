@@ -48,7 +48,7 @@ const SHEETS = {
 const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
-  USERS: ['Username', 'Password', 'Role', 'Departments', 'CreatedAt'],
+  USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
@@ -546,7 +546,8 @@ function login_(body) {
       return { ok: true, data: {
         username,
         role: values[i][idx.Role] === 'admin' ? 'admin' : 'user',
-        departments: parseDepartments_(values[i][idx.Departments])
+        departments: parseDepartments_(values[i][idx.Departments]),
+        canViewPrices: values[i][idx.Role] === 'admin' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
       } };
     }
   }
@@ -569,7 +570,8 @@ function getRequestingUser_(pw) {
       return {
         username: values[i][idx.Username],
         role: String(values[i][idx.Role]) === 'admin' ? 'admin' : 'user',
-        departments: parseDepartments_(values[i][idx.Departments])
+        departments: parseDepartments_(values[i][idx.Departments]),
+        canViewPrices: String(values[i][idx.Role]) === 'admin' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
       };
     }
   }
@@ -593,6 +595,7 @@ function getUsers_(body) {
     Username: r[idx.Username],
     Role: r[idx.Role],
     Departments: parseDepartments_(r[idx.Departments]),
+    CanViewPrices: String(r[idx.CanViewPrices]).toLowerCase() === 'true',
     CreatedAt: r[idx.CreatedAt] instanceof Date ? r[idx.CreatedAt].toISOString() : r[idx.CreatedAt]
   }));
   return { ok: true, data: users };
@@ -606,6 +609,7 @@ function adminSaveUser_(body) {
   const role = u.Role === 'admin' ? 'admin' : 'user';
   const newPassword = String(u.Password || '').trim();
   const departments = Array.isArray(u.Departments) ? u.Departments.map(d => String(d).trim()).filter(Boolean).join(',') : '';
+  const canViewPrices = u.CanViewPrices ? 'true' : 'false';
 
   const sh = getSS_().getSheetByName(SHEETS.USERS);
   const values = sh.getDataRange().getValues();
@@ -619,12 +623,13 @@ function adminSaveUser_(body) {
   if (rowNum === -1) {
     if (!newPassword) return { ok: false, error: 'กรุณาระบุรหัสผ่านสำหรับผู้ใช้ใหม่' };
     // เขียนตามตำแหน่งคอลัมน์จริงในชีต (idx) แทนการอิงลำดับคงที่ เพื่อไม่ให้ค่าคลาดเคลื่อนคอลัมน์
-    // ถ้าชีตยังไม่มีคอลัมน์ Departments (ยังไม่ได้รัน setup() ใหม่)
+    // ถ้าชีตยังไม่มีคอลัมน์ Departments/CanViewPrices (ยังไม่ได้รัน setup() ใหม่)
     const newRow = headers.map(() => '');
     newRow[idx.Username] = username;
     newRow[idx.Password] = newPassword;
     newRow[idx.Role] = role;
     if (idx.Departments !== undefined) newRow[idx.Departments] = departments;
+    if (idx.CanViewPrices !== undefined) newRow[idx.CanViewPrices] = canViewPrices;
     newRow[idx.CreatedAt] = new Date();
     sh.appendRow(newRow);
     logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
@@ -632,6 +637,7 @@ function adminSaveUser_(body) {
   }
   sh.getRange(rowNum, idx.Role + 1).setValue(role);
   if (idx.Departments !== undefined) sh.getRange(rowNum, idx.Departments + 1).setValue(departments);
+  if (idx.CanViewPrices !== undefined) sh.getRange(rowNum, idx.CanViewPrices + 1).setValue(canViewPrices);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
   return { ok: true, data: { created: false } };
