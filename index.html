@@ -84,10 +84,11 @@
   .asset-table{table-layout:fixed;width:100%;font-size:11.5px;}
   .asset-table th,.asset-table td{padding:4px 5px;word-wrap:break-word;overflow-wrap:break-word;}
   .asset-table .btn-sm{padding:3px 6px;font-size:10.5px;margin:1px;}
+  .asset-table select{font-size:11.5px;padding:3px 4px;}
   .lightbox-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:zoom-out;}
   .lightbox-img{max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,0.5);cursor:default;}
   .lightbox-close{position:absolute;top:20px;right:24px;background:rgba(255,255,255,0.15);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;}
-  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;}
   .badge-pending{background:#fff3cd;color:var(--amber);}
   .badge-approved{background:#d4edda;color:var(--green);}
   .badge-rejected{background:#f8d7da;color:var(--red);}
@@ -225,6 +226,7 @@ let STATE = {
   printWriteOffId: null,
   approveWriteOffCtx: null,
   myDepartments: [],
+  canViewPrices: false,
   assetListTab: 'all'
 };
 
@@ -254,6 +256,15 @@ function toast(msg, type){
 function fmtMoney(n){
   n = parseFloat(String(n).replace(/,/g,'')) || 0;
   return n.toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+// ราคาซาก/มูลค่าตามบัญชี ซ่อนได้เป็นรายคนตามสิทธิ์ที่ Admin กำหนด (STATE.canViewPrices) — Admin เห็นเสมอ
+function canSeePrice(){ return STATE.role==='admin' || !!STATE.canViewPrices; }
+function fmtMoneyOrHidden(n){ return canSeePrice() ? fmtMoney(n) : '••••••'; }
+// รายการโอนย้าย/ขาย/ตัดชำรุด — ผู้ใช้ทั่วไปเห็นเฉพาะหน่วยงานของตนเอง (STATE.myDepartments), Admin เห็นทั้งหมด
+function deptFilterRows(rows, fields){
+  if(STATE.role === 'admin') return rows;
+  const mine = STATE.myDepartments || [];
+  return rows.filter(r => fields.some(f => mine.indexOf(r[f]) !== -1));
 }
 function fmtDate(d){
   if(!d) return '-';
@@ -348,6 +359,7 @@ function checkAuth(){
       STATE.role = obj.role;
       STATE.username = obj.username || '';
       STATE.myDepartments = obj.departments || [];
+      STATE.canViewPrices = !!obj.canViewPrices;
       return true;
     }
   }catch(e){}
@@ -389,7 +401,8 @@ function renderLogin(){
       STATE.role = res.data.role;
       STATE.username = res.data.username;
       STATE.myDepartments = res.data.departments || [];
-      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [] }));
+      STATE.canViewPrices = !!res.data.canViewPrices;
+      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [], canViewPrices: !!res.data.canViewPrices }));
       STATE.view = 'dashboard';
       enterApp();
     });
@@ -402,6 +415,7 @@ function logout(){
   STATE.role = null;
   STATE.username = null;
   STATE.myDepartments = [];
+  STATE.canViewPrices = false;
   STATE.view = 'dashboard';
   enterApp();
 }
@@ -569,10 +583,10 @@ function openAssetEditModal(asset, onSaved){
         </div>
         <div class="row">
           <div><label>ราคาซื้อ</label><input type="text" inputmode="decimal" id="amPurchasePrice" value="${esc(a.PurchasePrice||'')}"></div>
-          <div><label>มูลค่าตามบัญชี</label><input type="text" inputmode="decimal" id="amBookValue" value="${esc(a.BookValue||'')}"></div>
+          <div><label>มูลค่าตามบัญชี</label><input type="${canSeePrice()?'text':'password'}" inputmode="decimal" id="amBookValue" value="${esc(a.BookValue||'')}" ${canSeePrice()?'':'readonly'}></div>
         </div>
         <div class="row">
-          <div><label>ราคาซาก (คำนวณอัตโนมัติ)</label><input type="text" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.ScrapPrice||0))} บาท" disabled style="background:#f4f6f9;"></div>
+          <div><label>ราคาซาก (คำนวณอัตโนมัติ)</label><input type="${canSeePrice()?'text':'password'}" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.ScrapPrice||0))} บาท" disabled style="background:#f4f6f9;"></div>
           <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
         </div>
         <label>แท็กสถานะ</label>
@@ -784,7 +798,7 @@ function renderAssetList(root){
       + `<th style="width:6%;">รูป</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
       + '<th style="width:8%;">หน่วยงาน</th><th style="width:7%;">ฝ่าย</th><th style="width:7%;">กลุ่มงาน</th><th style="width:8%;">ผู้ดูแล</th><th style="width:8%;">สถานที่</th>'
       + '<th style="width:8%;">ราคาซื้อ</th><th style="width:8%;">มูลค่าตามบัญชี</th><th style="width:6%;">สถานะ</th><th style="width:8%;">แท็กสถานะ</th>'
-      + (manageMode ? '<th class="no-print" style="width:13%;">จัดการ</th>' : '')
+      + (manageMode ? '<th class="no-print" style="width:10%;">จัดการ</th><th class="no-print" style="width:5%;">ลบ</th>' : '')
       + '</tr>';
     rows.forEach(a=>{
       const checked = STATE.selectedAssetIds.indexOf(a.AssetID)!==-1 ? 'checked' : '';
@@ -800,7 +814,7 @@ function renderAssetList(root){
         <td>${esc(a.Custodian||'-')}</td>
         <td>${esc(a.Location||'-')}</td>
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
-        <td class="money">${fmtMoney(a.BookValue)}</td>
+        <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td>${assetStatusBadge(a.AssetStatus)}</td>
         ${manageMode
           ? `<td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="width:100%;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>`
@@ -816,8 +830,8 @@ function renderAssetList(root){
               + btn('sale','+ คิวขาย','⏳ รอขาย')
               + btn('writeoff','+ คิวตัดชำรุด','⏳ รอตัดชำรุด');
           })() : ''}
-          <button class="btn btn-red btn-sm" data-delid="${esc(a.AssetID)}">ลบ</button>
-        </td>` : ''}
+        </td>
+        <td class="no-print" style="text-align:center;"><button class="btn btn-red btn-sm" data-delid="${esc(a.AssetID)}">ลบ</button></td>` : ''}
       </tr>`;
     });
     html += '</table>';
@@ -981,7 +995,7 @@ function renderDashboard(root){
         <div class="stat-tile">
           <div class="label">${statusLabels[st]}</div>
           <div class="num">${d.count}</div>
-          <div class="sub">มูลค่าตามบัญชีรวม ${fmtMoney(d.book)} บาท</div>
+          <div class="sub">มูลค่าตามบัญชีรวม ${fmtMoneyOrHidden(d.book)} บาท</div>
         </div>`;
     });
     tilesHtml += `
@@ -1003,7 +1017,7 @@ function renderDashboard(root){
     });
     const deptRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
-      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoney(v.book)}</td></tr>`;
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
     }).join('');
 
     const byTag = {};
@@ -1040,15 +1054,15 @@ function renderDashboard(root){
         header: ['สถานะ','จำนวน','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
         rows: ['Active','Sold','WrittenOff'].map(st=>{
           const d = byStatus[st] || { count:0, purchase:0, book:0 };
-          return [statusLabels[st], d.count, d.purchase, d.book];
-        }).concat([['ทั้งหมด', assets.length, assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0), assets.reduce((s,a)=>s+(parseFloat(a.BookValue)||0),0)]])
+          return [statusLabels[st], d.count, d.purchase, canSeePrice() ? d.book : 'ไม่มีสิทธิ์ดู'];
+        }).concat([['ทั้งหมด', assets.length, assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0), canSeePrice() ? assets.reduce((s,a)=>s+(parseFloat(a.BookValue)||0),0) : 'ไม่มีสิทธิ์ดู']])
       };
       const deptSheet = {
         name: 'สรุปตามหน่วยงาน',
         header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งานอยู่','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
         rows: Object.keys(byDept).sort().map(d=>{
           const v = byDept[d];
-          return [d, v.count, v.active, v.purchase, v.book];
+          return [d, v.count, v.active, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
         })
       };
       const tagSheet = {
@@ -1202,7 +1216,7 @@ function renderList(root){
     document.getElementById('listTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet(params).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
-      STATE.transfers = res.data;
+      STATE.transfers = deptFilterRows(res.data, ['FromDept','ToDept']);
       renderListTable();
     });
   }
@@ -1612,7 +1626,7 @@ function renderSaleList(root){
         <td><b>${esc(q.AssetID)}</b></td>
         <td>${esc(q.AssetName)}${disabled?' <span class="badge badge-rejected">ไม่ว่างแล้ว</span>':''}</td>
         <td>${esc(q.Department)}</td>
-        <td class="money">${fmtMoney(q.ScrapPrice)}</td>
+        <td class="money">${fmtMoneyOrHidden(q.ScrapPrice)}</td>
         <td>${esc(q.AddedBy||'-')}</td>
         <td>${fmtDate(q.AddedAt)}</td>
         <td class="no-print"><button class="btn btn-red btn-sm" data-unqueueid="${esc(q.AssetID)}">เอาออก</button></td>
@@ -1687,7 +1701,7 @@ function renderSaleList(root){
     document.getElementById('saleListTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet(params).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
-      STATE.sales = res.data;
+      STATE.sales = deptFilterRows(res.data, ['FromDept']);
       renderSaleListTable();
     });
   }
@@ -2074,7 +2088,7 @@ function renderWriteOffList(root){
         <td><b>${esc(q.AssetID)}</b></td>
         <td>${esc(q.AssetName)}${disabled?' <span class="badge badge-rejected">ไม่ว่างแล้ว</span>':''}</td>
         <td>${esc(q.Department)}</td>
-        <td class="money">${fmtMoney(q.ScrapPrice)}</td>
+        <td class="money">${fmtMoneyOrHidden(q.ScrapPrice)}</td>
         <td>${esc(q.AddedBy||'-')}</td>
         <td>${fmtDate(q.AddedAt)}</td>
         <td class="no-print"><button class="btn btn-red btn-sm" data-unqueueid="${esc(q.AssetID)}">เอาออก</button></td>
@@ -2149,7 +2163,7 @@ function renderWriteOffList(root){
     document.getElementById('woListTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet(params).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
-      STATE.writeOffs = res.data;
+      STATE.writeOffs = deptFilterRows(res.data, ['FromDept']);
       renderWoListTable();
     });
   }
@@ -2650,6 +2664,10 @@ function renderSettings(root){
           <div style="font-size:11px;color:var(--muted);">${isAdmin ? 'Admin ไม่จำกัดหน่วยงาน' : 'กด Ctrl/Cmd ค้างเพื่อเลือกหลายหน่วยงาน'}</div>
         </td>
         <td><input type="password" data-ufield="Password" data-ui="${i}" placeholder="${u.__isNew ? 'ระบุรหัสผ่าน' : 'เว้นว่าง = ไม่เปลี่ยน'}"></td>
+        <td style="text-align:center;">
+          <input type="checkbox" data-ufield="CanViewPrices" data-ui="${i}" ${u.CanViewPrices?'checked':''} ${isAdmin?'disabled':''}>
+          ${isAdmin ? '<div style="font-size:11px;color:var(--muted);">Admin เห็นเสมอ</div>' : ''}
+        </td>
         <td class="no-print" style="white-space:nowrap;">
           <button class="btn btn-secondary btn-sm" onclick="saveUserRow(${i})">บันทึก</button>
           <button class="btn btn-red btn-sm" onclick="deleteUserRow(${i})">ลบ</button>
@@ -2658,8 +2676,8 @@ function renderSettings(root){
     }).join('');
     document.getElementById('userTableHost').innerHTML = `
       <div style="overflow-x:auto;"><table>
-        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th class="no-print">จัดการ</th></tr>
-        ${rowsHtml || '<tr><td colspan="5" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
+        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th>ดูราคาซาก/มูลค่าตามบัญชีได้</th><th class="no-print">จัดการ</th></tr>
+        ${rowsHtml || '<tr><td colspan="6" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
       </table></div>
     `;
   }
@@ -2671,7 +2689,7 @@ function renderSettings(root){
   };
 
   function addBlankUserRow(){
-    userList.push({ Username:'', Role:'user', Departments:[], __isNew:true });
+    userList.push({ Username:'', Role:'user', Departments:[], CanViewPrices:false, __isNew:true });
     renderUsersTable();
   }
 
@@ -2681,12 +2699,14 @@ function renderSettings(root){
     const roleEl = document.querySelector(`[data-ufield="Role"][data-ui="${i}"]`);
     const deptEl = document.querySelector(`[data-ufield="Departments"][data-ui="${i}"]`);
     const pwEl = document.querySelector(`[data-ufield="Password"][data-ui="${i}"]`);
+    const canViewPricesEl = document.querySelector(`[data-ufield="CanViewPrices"][data-ui="${i}"]`);
     u.Username = usernameEl.value.trim();
     u.Role = roleEl.value;
     u.Departments = Array.from(deptEl.selectedOptions).map(o=>o.value);
+    u.CanViewPrices = canViewPricesEl.checked;
     const password = pwEl.value;
     if(!u.Username){ toast('กรุณาระบุชื่อผู้ใช้','err'); return; }
-    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, Password: password } }).then(res=>{
+    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, CanViewPrices: u.CanViewPrices, Password: password } }).then(res=>{
       if(!res.ok){ toast(res.error||'บันทึกผู้ใช้ไม่สำเร็จ','err'); return; }
       toast('บันทึกผู้ใช้สำเร็จ','ok');
       loadUsers();
@@ -2808,7 +2828,7 @@ function buildSaleDocHtml(s, withToolbar){
       <td>${docImgGallery(it.Images)}</td>
       <td>${esc(it.AssetID)}</td>
       <td class="left">${esc(it.AssetName)}</td>
-      <td class="money">${fmtMoney(it.ScrapPrice)}</td>
+      <td class="money">${fmtMoneyOrHidden(it.ScrapPrice)}</td>
       <td class="money">${fmtMoney(it.AuctionPrice)}</td>
       <td class="money">${fmtMoney(it.SalePrice)}</td>
       <td>${esc(it.Remark)}</td>
@@ -2883,7 +2903,7 @@ function buildWriteOffDocHtml(w, withToolbar){
       <td>${docImgGallery(it.Images)}</td>
       <td>${esc(it.AssetID)}</td>
       <td class="left">${esc(it.AssetName)}</td>
-      <td class="money">${fmtMoney(it.ScrapPrice)}</td>
+      <td class="money">${fmtMoneyOrHidden(it.ScrapPrice)}</td>
       <td>${esc(it.Remark)}</td>
     </tr>`).join('');
   const total = (w.Items||[]).reduce((sum,it)=> sum + (parseFloat(it.ScrapPrice)||0), 0);
