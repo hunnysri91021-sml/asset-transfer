@@ -346,6 +346,8 @@ function getAssetsRaw_(q) {
 // ใช้ชีตเดียวกันร่วมกันทั้ง 3 ประเภท แยกด้วยคอลัมน์ Purpose
 // ============================================================
 const QUEUE_PURPOSES = { TRANSFER: 'Transfer', SALE: 'Sale', WRITEOFF: 'WriteOff' };
+// ทรัพย์สิน 1 รายการ อยู่ในคิวรอได้ทีละ 1 ประเภทเท่านั้น (โอนย้าย/ขาย/ตัดชำรุด เลือกได้อย่างใดอย่างหนึ่ง)
+const QUEUE_PURPOSE_LABEL_TH = { Transfer: 'โอนย้าย', Sale: 'ขาย', WriteOff: 'ตัดชำรุด' };
 
 function getAssetQueue_(purpose) {
   const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
@@ -397,8 +399,11 @@ function addToAssetQueue_(body, purpose) {
       return { ok: false, error: 'ชีต TransferQueue ยังไม่มีคอลัมน์ Purpose กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อนใช้งานคิวขาย/คิวตัดชำรุด' };
     }
     for (let i = 1; i < values.length; i++) {
+      if (String(values[i][idx.AssetID]) !== assetId) continue;
       const rowPurpose = idx.Purpose !== undefined ? (values[i][idx.Purpose] || QUEUE_PURPOSES.TRANSFER) : QUEUE_PURPOSES.TRANSFER;
-      if (String(values[i][idx.AssetID]) === assetId && rowPurpose === purpose) return { ok: true, data: { alreadyQueued: true } };
+      if (rowPurpose === purpose) return { ok: true, data: { alreadyQueued: true } };
+      // ทรัพย์สินนี้อยู่ในคิวรอประเภทอื่นอยู่แล้ว — เลือกได้เพียงคิวเดียวต่อทรัพย์สิน
+      return { ok: false, error: 'ทรัพย์สินนี้อยู่ในคิวรอ' + (QUEUE_PURPOSE_LABEL_TH[rowPurpose] || rowPurpose) + 'อยู่แล้ว เลือกได้เพียงคิวเดียวต่อทรัพย์สิน' };
     }
     // เขียนตามตำแหน่งคอลัมน์จริงในชีต (idx) แทนการอิงลำดับคงที่ กันค่าคลาดเคลื่อนคอลัมน์เหมือนที่เคยเกิดกับชีต Users
     const newRow = headers.map(() => '');
