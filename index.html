@@ -812,8 +812,9 @@ function renderAssetList(root){
       if(totalEl) totalEl.textContent = 'รวม '+rows.length+' รายการ';
     }
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; if(manageMode) updateSelCount(); return; }
+    const allSelected = manageMode && rows.every(a=>STATE.selectedAssetIds.indexOf(a.AssetID)!==-1);
     let html = '<table class="asset-table"><tr>'
-      + (manageMode ? '<th class="no-print" style="width:3%;"><input type="checkbox" id="alSelectAll"></th>' : '')
+      + (manageMode ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="alSelectAll" ${allSelected?'checked':''}></th>` : '')
       + `<th style="width:6%;">รูป</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
       + '<th style="width:8%;">หน่วยงาน</th><th style="width:7%;">ฝ่าย</th><th style="width:7%;">กลุ่มงาน</th><th style="width:8%;">ผู้ดูแล</th><th style="width:8%;">สถานที่</th>'
       + '<th style="width:8%;">ราคาซื้อ</th><th style="width:8%;">มูลค่าตามบัญชี</th><th style="width:6%;">สถานะ</th><th style="width:8%;">แท็กสถานะ</th>'
@@ -1161,7 +1162,9 @@ function renderList(root){
     const qq = (document.getElementById('qSearch').value||'').trim().toLowerCase();
     const rows = qq ? STATE.transferQueue.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : STATE.transferQueue;
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ค้นหา</div>'; updateQueueSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="queueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
+    const selectableRows = rows.filter(q=>(q.AssetStatus||'Active')==='Active');
+    const allSelected = selectableRows.length>0 && selectableRows.every(q=>STATE.selectedQueueAssetIds.indexOf(q.AssetID)!==-1);
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="queueSelectAll" ${allSelected?'checked':''}></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(q=>{
       const disabled = (q.AssetStatus||'Active')!=='Active';
       const checked = STATE.selectedQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
@@ -1653,7 +1656,9 @@ function renderSaleList(root){
     const qq = (document.getElementById('saleQSearch').value||'').trim().toLowerCase();
     const rows = qq ? STATE.saleQueue.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : STATE.saleQueue;
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ค้นหา</div>'; updateSaleQueueSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="saleQueueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
+    const selectableRows = rows.filter(q=>(q.AssetStatus||'Active')==='Active');
+    const allSelected = selectableRows.length>0 && selectableRows.every(q=>STATE.selectedSaleQueueAssetIds.indexOf(q.AssetID)!==-1);
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="saleQueueSelectAll" ${allSelected?'checked':''}></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(q=>{
       const disabled = (q.AssetStatus||'Active')!=='Active';
       const checked = STATE.selectedSaleQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
@@ -2123,7 +2128,9 @@ function renderWriteOffList(root){
     const qq = (document.getElementById('woQSearch').value||'').trim().toLowerCase();
     const rows = qq ? STATE.writeOffQueue.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : STATE.writeOffQueue;
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ค้นหา</div>'; updateWriteOffQueueSelCount(); return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="writeOffQueueSelectAll"></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>';
+    const selectableRows = rows.filter(q=>(q.AssetStatus||'Active')==='Active');
+    const allSelected = selectableRows.length>0 && selectableRows.every(q=>STATE.selectedWriteOffQueueAssetIds.indexOf(q.AssetID)!==-1);
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="writeOffQueueSelectAll" ${allSelected?'checked':''}></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาซาก</th><th>เพิ่มโดย</th><th>เมื่อ</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(q=>{
       const disabled = (q.AssetStatus||'Active')!=='Active';
       const checked = STATE.selectedWriteOffQueueAssetIds.indexOf(q.AssetID)!==-1 ? 'checked' : '';
