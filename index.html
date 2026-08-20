@@ -686,6 +686,7 @@ function renderAssetList(root){
       </div>
       ${manageMode ? `
       <div class="toolbar no-print" style="border-top:1px solid var(--border);padding-top:10px;">
+        <span id="alTotalCount" style="font-size:13px;color:var(--muted);">รวม 0 รายการ</span>
         <span id="alSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnAlTransfer">สร้างใบโอนย้าย</button>
         <button class="btn btn-primary btn-sm" id="btnAlSale">สร้างใบขาย</button>
@@ -792,6 +793,10 @@ function renderAssetList(root){
   function renderTable(){
     const host = document.getElementById('alTableHost');
     const rows = filteredRows();
+    if(manageMode){
+      const totalEl = document.getElementById('alTotalCount');
+      if(totalEl) totalEl.textContent = 'รวม '+rows.length+' รายการ';
+    }
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สิน</div>'; if(manageMode) updateSelCount(); return; }
     let html = '<table class="asset-table"><tr>'
       + (manageMode ? '<th class="no-print" style="width:3%;"><input type="checkbox" id="alSelectAll"></th>' : '')
@@ -1107,7 +1112,8 @@ function renderList(root){
         <input type="date" id="fTo" style="max-width:150px;">
         <button class="btn btn-secondary btn-sm" id="btnFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnRefresh">↻ รีเฟรช</button>
-        <button class="btn btn-secondary btn-sm" id="btnListExport" style="margin-left:auto;">⬇ Export Excel</button>
+        <span id="listCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
+        <button class="btn btn-secondary btn-sm" id="btnListExport">⬇ Export Excel</button>
       </div>
       <div id="listTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -1230,6 +1236,7 @@ function renderList(root){
   }
   function renderListTable(){
     const host = document.getElementById('listTableHost');
+    document.getElementById('listCount').textContent = 'รวม '+STATE.transfers.length+' รายการ';
     if(!STATE.transfers.length){ host.innerHTML = '<div class="empty">ยังไม่มีใบโอนย้าย</div>'; return; }
     let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>เรื่อง</th><th>จาก → ไป</th><th>จำนวนรายการ</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
     STATE.transfers.forEach(t=>{
@@ -1596,7 +1603,8 @@ function renderSaleList(root){
         <input type="date" id="fSaleTo" style="max-width:150px;">
         <button class="btn btn-secondary btn-sm" id="btnSaleFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnSaleRefresh">↻ รีเฟรช</button>
-        <button class="btn btn-secondary btn-sm" id="btnSaleExport" style="margin-left:auto;">⬇ Export Excel</button>
+        <span id="saleListCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
+        <button class="btn btn-secondary btn-sm" id="btnSaleExport">⬇ Export Excel</button>
       </div>
       <div id="saleListTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -1720,6 +1728,7 @@ function renderSaleList(root){
   }
   function renderSaleListTable(){
     const host = document.getElementById('saleListTableHost');
+    document.getElementById('saleListCount').textContent = 'รวม '+STATE.sales.length+' รายการ';
     if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการขายออก</div>'; return; }
     let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
     STATE.sales.forEach(s=>{
@@ -2063,7 +2072,8 @@ function renderWriteOffList(root){
         <input type="date" id="fWoTo" style="max-width:150px;">
         <button class="btn btn-secondary btn-sm" id="btnWoFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnWoRefresh">↻ รีเฟรช</button>
-        <button class="btn btn-secondary btn-sm" id="btnWoExport" style="margin-left:auto;">⬇ Export Excel</button>
+        <span id="woListCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
+        <button class="btn btn-secondary btn-sm" id="btnWoExport">⬇ Export Excel</button>
       </div>
       <div id="woListTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -2187,6 +2197,7 @@ function renderWriteOffList(root){
   }
   function renderWoListTable(){
     const host = document.getElementById('woListTableHost');
+    document.getElementById('woListCount').textContent = 'รวม '+STATE.writeOffs.length+' รายการ';
     if(!STATE.writeOffs.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการตัดชำรุด</div>'; return; }
     let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>สาเหตุ</th><th>จำนวนรายการ</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
     STATE.writeOffs.forEach(w=>{
