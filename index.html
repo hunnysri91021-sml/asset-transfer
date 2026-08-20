@@ -938,9 +938,27 @@ function renderAssetList(root){
     document.getElementById('alSelCount').textContent = 'เลือกไว้ '+STATE.selectedAssetIds.length+' รายการ';
     const alertEl = document.getElementById('alStatusAlert');
     if(alertEl){
-      const statuses = new Set(selectedAssetObjs().map(a=>a.AssetStatus||'Active'));
-      alertEl.style.display = statuses.size > 1 ? 'block' : 'none';
+      const sel = selectedAssetObjs();
+      const statuses = new Set(sel.map(a=>a.AssetStatus||'Active'));
+      const queuedPurposes = selectedQueuedPurposes(sel);
+      if(statuses.size > 1){
+        alertEl.textContent = '⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน';
+        alertEl.style.display = 'block';
+      } else if(queuedPurposes.size > 1){
+        alertEl.textContent = '⚠ รายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว';
+        alertEl.style.display = 'block';
+      } else {
+        alertEl.style.display = 'none';
+      }
     }
+  }
+
+  // ทรัพย์สิน 1 รายการอยู่ในคิวรอได้ทีละ 1 ประเภทเท่านั้น (บังคับฝั่ง backend ด้วย) — แต่ถ้าเลือกหลายรายการมารวมกัน
+  // อาจได้ทรัพย์สินที่รอคิวคนละประเภทปนกันมา ฟังก์ชันนี้รวบรวมประเภทคิวที่พบในรายการที่เลือก (ไม่รวมรายการที่ยังไม่เข้าคิว)
+  function selectedQueuedPurposes(selected){
+    const purposes = new Set();
+    selected.forEach(a=>{ (STATE.assetQueuedPurposes[a.AssetID]||[]).forEach(p=>purposes.add(p)); });
+    return purposes;
   }
 
   function selectedAssetObjs(){
@@ -952,6 +970,7 @@ function renderAssetList(root){
     if(!selected.length){ toast('กรุณาเลือกทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
     const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
     if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
+    if(selectedQueuedPurposes(selected).size > 1){ toast('มีรายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว','err'); return; }
 
     if(targetView === 'create'){
       STATE.draftItems = selected.map(a => ({
