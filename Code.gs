@@ -277,6 +277,9 @@ function doPost(e) {
       case 'adminSaveDept':
         result = adminSaveDept_(body);
         break;
+      case 'adminClearAssetQueues':
+        result = adminClearAssetQueues_(body);
+        break;
       case 'adminDeleteDept':
         result = adminDeleteDept_(body);
         break;
@@ -452,6 +455,17 @@ function purgeAssetFromAllQueues_(assetIds) {
   removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.TRANSFER);
   removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.SALE);
   removeFromAssetQueue_({ assetIds: assetIds }, QUEUE_PURPOSES.WRITEOFF);
+}
+
+// Admin ใช้ล้างคิวรอที่ค้างซ้ำมากกว่า 1 ประเภทของทรัพย์สินชิ้นเดียว (ข้อมูลเก่าก่อนมีการบังคับ "เลือกได้คิวเดียว"
+// ใน addToAssetQueue_ หรือกรณีผิดปกติอื่น) — เอาออกจากคิวรอทุกประเภท ให้เลือกเข้าคิวใหม่ได้ถูกต้องอีกครั้ง
+function adminClearAssetQueues_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  purgeAssetFromAllQueues_([assetId]);
+  logActivity_('', 'ADMIN_CLEAR_ASSET_QUEUES', 'admin', 'ล้างคิวรอซ้ำของทรัพย์สิน ' + assetId);
+  return { ok: true };
 }
 
 // AssetStatus (Active/Sold/WrittenOff) คำนวณสดจากเอกสารขาย/ตัดชำรุดที่อนุมัติแล้วเสมอ (ดู getDisposedAssetStatus_)
