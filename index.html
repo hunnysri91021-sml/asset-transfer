@@ -266,6 +266,20 @@ function deptFilterRows(rows, fields){
   const mine = STATE.myDepartments || [];
   return rows.filter(r => fields.some(f => mine.indexOf(r[f]) !== -1));
 }
+// ให้คลิกได้ทั้งแถวเพื่อติ๊ก/ถอนติ๊ก checkbox เลือกแถว ไม่ต้องเล็งที่กล่องเล็กๆ — ยกเว้นคลิกโดนปุ่ม/select/รูปภาพ
+// ในแถวเอง (ให้ทำงานตามปกติของมันแทน ไม่แย่งชิงคลิก) และแถวที่ checkbox ถูก disabled ไว้
+function makeRowsClickable(host, checkboxClass){
+  host.querySelectorAll('tr').forEach(tr=>{
+    const chk = tr.querySelector('.'+checkboxClass);
+    if(!chk || chk.disabled) return;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', (e)=>{
+      if(e.target.closest('input,button,select,a,img')) return;
+      chk.checked = !chk.checked;
+      chk.dispatchEvent(new Event('change', {bubbles:true}));
+    });
+  });
+}
 function fmtDate(d){
   if(!d) return '-';
   const dt = new Date(d);
@@ -902,6 +916,7 @@ function renderAssetList(root){
         updateSelCount();
       };
     });
+    makeRowsClickable(host, 'alRowChk');
     host.querySelectorAll('.alTagSelect').forEach(sel=>{
       sel.onchange = ()=> updateTag(sel.dataset.id, sel.value);
     });
@@ -1178,6 +1193,7 @@ function renderList(root){
         updateQueueSelCount();
       };
     });
+    makeRowsClickable(host, 'queueRowChk');
     host.querySelectorAll('[data-unqueueid]').forEach(btn=>{
       btn.onclick = ()=>{
         const assetId = btn.dataset.unqueueid;
@@ -1670,6 +1686,7 @@ function renderSaleList(root){
         updateSaleQueueSelCount();
       };
     });
+    makeRowsClickable(host, 'saleQueueRowChk');
     host.querySelectorAll('[data-unqueueid]').forEach(btn=>{
       btn.onclick = ()=>{
         const assetId = btn.dataset.unqueueid;
@@ -2139,6 +2156,7 @@ function renderWriteOffList(root){
         updateWriteOffQueueSelCount();
       };
     });
+    makeRowsClickable(host, 'writeOffQueueRowChk');
     host.querySelectorAll('[data-unqueueid]').forEach(btn=>{
       btn.onclick = ()=>{
         const assetId = btn.dataset.unqueueid;
