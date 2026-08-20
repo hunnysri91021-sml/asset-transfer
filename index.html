@@ -707,7 +707,8 @@ function renderAssetList(root){
         <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
-      </div>` : ''}
+      </div>
+      <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
       <div id="alTableHost" style="margin-top:12px;">${noDeptsAssigned ? '<div class="empty">คุณยังไม่ได้รับสิทธิ์ดูแลหน่วยงานใด กรุณาติดต่อ Admin ให้กำหนดหน่วยงานที่ดูแลในแถบ "ตั้งค่า"</div>' : '<div class="empty">กำลังโหลด...</div>'}</div>
     </div>
   `;
@@ -935,6 +936,29 @@ function renderAssetList(root){
 
   function updateSelCount(){
     document.getElementById('alSelCount').textContent = 'เลือกไว้ '+STATE.selectedAssetIds.length+' รายการ';
+    const alertEl = document.getElementById('alStatusAlert');
+    if(alertEl){
+      const sel = selectedAssetObjs();
+      const statuses = new Set(sel.map(a=>a.AssetStatus||'Active'));
+      const queuedPurposes = selectedQueuedPurposes(sel);
+      if(statuses.size > 1){
+        alertEl.textContent = '⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน';
+        alertEl.style.display = 'block';
+      } else if(queuedPurposes.size > 1){
+        alertEl.textContent = '⚠ รายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว';
+        alertEl.style.display = 'block';
+      } else {
+        alertEl.style.display = 'none';
+      }
+    }
+  }
+
+  // ทรัพย์สิน 1 รายการอยู่ในคิวรอได้ทีละ 1 ประเภทเท่านั้น (บังคับฝั่ง backend ด้วย) — แต่ถ้าเลือกหลายรายการมารวมกัน
+  // อาจได้ทรัพย์สินที่รอคิวคนละประเภทปนกันมา ฟังก์ชันนี้รวบรวมประเภทคิวที่พบในรายการที่เลือก (ไม่รวมรายการที่ยังไม่เข้าคิว)
+  function selectedQueuedPurposes(selected){
+    const purposes = new Set();
+    selected.forEach(a=>{ (STATE.assetQueuedPurposes[a.AssetID]||[]).forEach(p=>purposes.add(p)); });
+    return purposes;
   }
 
   function selectedAssetObjs(){
@@ -946,6 +970,7 @@ function renderAssetList(root){
     if(!selected.length){ toast('กรุณาเลือกทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
     const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
     if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
+    if(selectedQueuedPurposes(selected).size > 1){ toast('มีรายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว','err'); return; }
 
     if(targetView === 'create'){
       STATE.draftItems = selected.map(a => ({
