@@ -707,7 +707,8 @@ function renderAssetList(root){
         <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
-      </div>` : ''}
+      </div>
+      <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
       <div id="alTableHost" style="margin-top:12px;">${noDeptsAssigned ? '<div class="empty">คุณยังไม่ได้รับสิทธิ์ดูแลหน่วยงานใด กรุณาติดต่อ Admin ให้กำหนดหน่วยงานที่ดูแลในแถบ "ตั้งค่า"</div>' : '<div class="empty">กำลังโหลด...</div>'}</div>
     </div>
   `;
@@ -935,6 +936,11 @@ function renderAssetList(root){
 
   function updateSelCount(){
     document.getElementById('alSelCount').textContent = 'เลือกไว้ '+STATE.selectedAssetIds.length+' รายการ';
+    const alertEl = document.getElementById('alStatusAlert');
+    if(alertEl){
+      const statuses = new Set(selectedAssetObjs().map(a=>a.AssetStatus||'Active'));
+      alertEl.style.display = statuses.size > 1 ? 'block' : 'none';
+    }
   }
 
   function selectedAssetObjs(){
