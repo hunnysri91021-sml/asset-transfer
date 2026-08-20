@@ -734,8 +734,10 @@ function renderAssetList(root){
     const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','ลิงก์รูปภาพ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน', a.DisplayImage||'']);
+    const queuePurposeLabel = { transfer:'รอโอนย้าย', sale:'รอขาย', writeoff:'รอตัดชำรุด' };
+    const queueStatusOf = a => (STATE.assetQueuedPurposes[a.AssetID]||[]).map(p=>queuePurposeLabel[p]||p).join('/');
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ'];
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
