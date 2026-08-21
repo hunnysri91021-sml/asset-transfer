@@ -1314,7 +1314,8 @@ function renderList(root){
         <td>${esc(t.ApproverName||t.ApproverEmail||'-')}</td>
         <td class="no-print">
           <button class="btn btn-secondary btn-sm" onclick="openPrint('${t.TransferID}')">ดู/พิมพ์</button>
-          ${t.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('transfer','${t.TransferID}',this)">📧 แจ้งบัญชี/GA</button>` : ''}
+          ${t.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('transfer','${t.TransferID}',this)">📧 ${t.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
+          <div style="font-size:11px;color:${t.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${t.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(t.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
         </td>
       </tr>`;
     });
@@ -1337,6 +1338,7 @@ window.sendNotifyEmail = function(docType, id, btn){
     if(btn) btn.disabled = false;
     if(!res.ok){ toast(res.error||'ส่งอีเมลแจ้งเตือนไม่สำเร็จ','err'); return; }
     toast('ส่งอีเมลแจ้งบัญชี/GA สำเร็จ','ok');
+    render();
   });
 };
 
@@ -1824,7 +1826,8 @@ function renderSaleList(root){
         <td>${esc(s.ApproverName||s.ApproverEmail||'-')}</td>
         <td class="no-print">
           <button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button>
-          ${s.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('sale','${s.SaleID}',this)">📧 แจ้งบัญชี/GA</button>` : ''}
+          ${s.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('sale','${s.SaleID}',this)">📧 ${s.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
+          <div style="font-size:11px;color:${s.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${s.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(s.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
         </td>
       </tr>`;
     });
@@ -2298,7 +2301,8 @@ function renderWriteOffList(root){
         <td>${esc(w.ApproverName||w.ApproverEmail||'-')}</td>
         <td class="no-print">
           <button class="btn btn-secondary btn-sm" onclick="openWriteOffPrint('${w.WriteOffID}')">ดู/พิมพ์</button>
-          ${w.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('writeoff','${w.WriteOffID}',this)">📧 แจ้งบัญชี/GA</button>` : ''}
+          ${w.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('writeoff','${w.WriteOffID}',this)">📧 ${w.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
+          <div style="font-size:11px;color:${w.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${w.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(w.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
         </td>
       </tr>`;
     });

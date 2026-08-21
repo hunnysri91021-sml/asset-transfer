@@ -50,11 +50,11 @@ const HEADERS = {
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
-  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
+  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
-  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
+  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL'],
-  WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail'],
+  WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
 };
@@ -897,15 +897,15 @@ function notifyAccountingGA_(body) {
   const recipients = [emails.accounting, emails.ga].filter(Boolean);
   if (!recipients.length) return { ok: false, error: 'ยังไม่ได้ตั้งค่าอีเมลฝ่ายบัญชี/GA กรุณาตั้งค่าในหน้า "ตั้งค่า" ก่อน' };
 
-  let obj;
-  if (docType === 'transfer') obj = getTransferFull_(id);
-  else if (docType === 'sale') obj = getSaleFull_(id);
-  else obj = getWriteOffFull_(id);
-  if (!obj) return { ok: false, error: 'ไม่พบเอกสารนี้' };
-  if (obj.Status !== STATUS.APPROVED) return { ok: false, error: 'แจ้งเตือนได้เฉพาะเอกสารที่อนุมัติแล้วเท่านั้น' };
+  let found, items, sheetName;
+  if (docType === 'transfer') { found = findTransferRow_(id); items = found ? getTransferItems_(id) : []; sheetName = SHEETS.TRANSFERS; }
+  else if (docType === 'sale') { found = findSaleRow_(id); items = found ? getSaleItems_(id) : []; sheetName = SHEETS.SALES; }
+  else { found = findWriteOffRow_(id); items = found ? getWriteOffItems_(id) : []; sheetName = SHEETS.WRITEOFFS; }
+  if (!found) return { ok: false, error: 'ไม่พบเอกสารนี้' };
+  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'แจ้งเตือนได้เฉพาะเอกสารที่อนุมัติแล้วเท่านั้น' };
 
   try {
-    const itemsHtml = (obj.Items || []).map((it, i) => (
+    const itemsHtml = items.map((it, i) => (
       '<tr>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.AssetID) + '</td>' +
@@ -915,16 +915,24 @@ function notifyAccountingGA_(body) {
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:640px;margin:auto;">' +
       '<h2 style="color:#1a3c6e;">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</h2>' +
-      '<h3>' + docLabel + ' เลขที่ ' + escapeHtml_(obj.RunningNo) + ' — อนุมัติแล้ว</h3>' +
+      '<h3>' + docLabel + ' เลขที่ ' + escapeHtml_(found.obj.RunningNo) + ' — อนุมัติแล้ว</h3>' +
       '<p>เรียน ฝ่ายบัญชี และ GA เพื่อทราบ — เอกสารนี้ได้รับการอนุมัติเรียบร้อยแล้ว</p>' +
-      '<p><b>หน่วยงาน:</b> ' + escapeHtml_(obj.FromDept || '-') + '</p>' +
+      '<p><b>หน่วยงาน:</b> ' + escapeHtml_(found.obj.FromDept || '-') + '</p>' +
       '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
       '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th></tr>' +
       itemsHtml +
       '</table>' +
       '</div>';
-    MailApp.sendEmail({ to: recipients.join(','), subject: '[อนุมัติแล้ว] ' + docLabel + ' ' + obj.RunningNo + ' — ' + CONFIG.COMPANY_NAME, htmlBody: html });
-    logActivity_(id, 'NOTIFY_ACCOUNTING_GA', body.by || '', 'แจ้งเตือนฝ่ายบัญชี/GA สำหรับ' + docLabel + ' ' + obj.RunningNo);
+    MailApp.sendEmail({ to: recipients.join(','), subject: '[อนุมัติแล้ว] ' + docLabel + ' ' + found.obj.RunningNo + ' — ' + CONFIG.COMPANY_NAME, htmlBody: html });
+
+    // บันทึกเวลาที่ส่งแจ้งเตือนไว้ในชีตเอกสาร ให้หน้ารายการแสดงสถานะ "ส่งแล้ว/ยังไม่ส่ง" ได้
+    // (guard idx.NotifiedAt !== undefined เผื่อยังไม่ได้รัน setup() ใหม่เพื่อเพิ่มคอลัมน์นี้)
+    if (found.idx.NotifiedAt !== undefined) {
+      const sh = getSS_().getSheetByName(sheetName);
+      sh.getRange(found.rowNum, found.idx.NotifiedAt + 1).setValue(new Date());
+    }
+
+    logActivity_(id, 'NOTIFY_ACCOUNTING_GA', body.by || '', 'แจ้งเตือนฝ่ายบัญชี/GA สำหรับ' + docLabel + ' ' + found.obj.RunningNo);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
