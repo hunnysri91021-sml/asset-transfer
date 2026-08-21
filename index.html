@@ -196,6 +196,7 @@ let STATE = {
   role: null,
   username: null,
   scrapRatePercent: null,
+  scrapRateUseBookValue: false,
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -628,14 +629,17 @@ function openAssetEditModal(asset, onSaved){
   document.getElementById('amImageFile').onchange = function(){ uploadAssetModalImage(this); };
   document.getElementById('amImageCam').onchange = function(){ uploadAssetModalImage(this); };
   document.getElementById('amPurchasePrice').oninput = updateScrapPriceDisplay;
+  document.getElementById('amBookValue').oninput = updateScrapPriceDisplay;
   function updateScrapPriceDisplay(){
     const purchasePrice = parseFloat(document.getElementById('amPurchasePrice').value) || 0;
+    const bookValue = parseFloat(document.getElementById('amBookValue').value) || 0;
+    const base = STATE.scrapRateUseBookValue ? bookValue : purchasePrice;
     const rate = STATE.scrapRatePercent==null ? 5 : STATE.scrapRatePercent;
-    document.getElementById('amScrapPriceDisplay').value = fmtMoney(Math.round(purchasePrice * rate / 100 * 100) / 100) + ' บาท';
+    document.getElementById('amScrapPriceDisplay').value = fmtMoney(Math.round(base * rate / 100 * 100) / 100) + ' บาท';
   }
   if(STATE.scrapRatePercent==null){
     apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
-      if(res.ok){ STATE.scrapRatePercent = res.data.scrapRatePercent; updateScrapPriceDisplay(); }
+      if(res.ok){ STATE.scrapRatePercent = res.data.scrapRatePercent; STATE.scrapRateUseBookValue = !!res.data.scrapRateUseBookValue; updateScrapPriceDisplay(); }
     });
   }
   document.getElementById('btnAssetModalSave').onclick = ()=>{
@@ -2605,7 +2609,11 @@ function renderSettings(root){
             <button class="btn btn-secondary btn-sm" id="btnSaveScrapRate">บันทึก</button>
           </div>
         </div>
-        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ราคาซากของทุกทรัพย์สินคำนวณอัตโนมัติตามหลักบัญชี = ราคาซื้อ x เปอร์เซ็นต์นี้ (ไม่รับค่าที่พิมพ์เองหรือซิงค์จากทีมบัญชีอีกต่อไป) มีผลทันทีกับทุกรายงานและทุกแบบฟอร์มที่อ้างอิงราคาซาก</p>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="scrapRateUseBookValue" style="width:auto;">
+          <label for="scrapRateUseBookValue" style="margin:0;font-weight:400;">ใช้ "มูลค่าตามบัญชี" แทน "ราคาซื้อ" เป็นฐานคำนวณราคาซาก (ค่าเริ่มต้น: ไม่ใช้งาน)</label>
+        </div>
+        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ราคาซากของทุกทรัพย์สินคำนวณอัตโนมัติตามหลักบัญชี = ฐานราคา x เปอร์เซ็นต์นี้ โดยฐานราคาคือ "ราคาซื้อ" ตามค่าเริ่มต้น หรือ "มูลค่าตามบัญชี" ถ้าติ๊กเลือกใช้งานด้านบน (ไม่รับค่าที่พิมพ์เองหรือซิงค์จากทีมบัญชีอีกต่อไป) มีผลทันทีกับทุกรายงานและทุกแบบฟอร์มที่อ้างอิงราคาซาก</p>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>อีเมลแจ้งเตือนฝ่ายบัญชี / GA</label>
@@ -2730,7 +2738,9 @@ function renderSettings(root){
       if(!res.ok) return;
       document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
       STATE.scrapRatePercent = res.data.scrapRatePercent;
+      STATE.scrapRateUseBookValue = !!res.data.scrapRateUseBookValue;
       document.getElementById('scrapRatePercent').value = res.data.scrapRatePercent;
+      document.getElementById('scrapRateUseBookValue').checked = STATE.scrapRateUseBookValue;
       document.getElementById('accountingEmail').value = res.data.accountingEmail || '';
       document.getElementById('gaEmail').value = res.data.gaEmail || '';
     });
@@ -2761,12 +2771,14 @@ function renderSettings(root){
 
   function saveScrapRate(){
     const rate = document.getElementById('scrapRatePercent').value.trim();
+    const useBookValue = document.getElementById('scrapRateUseBookValue').checked;
     const btn = document.getElementById('btnSaveScrapRate');
     btn.disabled = true;
-    apiPost({ action:'adminSaveScrapRate', password: STATE.adminPassword, scrapRatePercent: rate }).then(res=>{
+    apiPost({ action:'adminSaveScrapRate', password: STATE.adminPassword, scrapRatePercent: rate, useBookValue }).then(res=>{
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกเปอร์เซ็นต์ราคาซากไม่สำเร็จ','err'); return; }
       STATE.scrapRatePercent = parseFloat(rate);
+      STATE.scrapRateUseBookValue = useBookValue;
       toast('บันทึกเปอร์เซ็นต์ราคาซากสำเร็จ','ok');
     });
   }
