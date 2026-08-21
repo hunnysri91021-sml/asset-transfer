@@ -341,11 +341,13 @@ function getAssetsRaw_(q) {
   }
   // resolve display image: override wins over original
   rows.forEach(r => { r.DisplayImage = r.ImageURLOverride || r.ImageURL || ''; });
-  // ราคาซาก คำนวณอัตโนมัติตามหลักบัญชี = ราคาซื้อ x เปอร์เซ็นต์ที่ตั้งค่าไว้ (ไม่รับค่าที่พิมพ์เอง/ซิงค์จากภายนอกอีกต่อไป)
+  // ราคาซาก คำนวณอัตโนมัติตามหลักบัญชี = ฐานราคา x เปอร์เซ็นต์ที่ตั้งค่าไว้ (ไม่รับค่าที่พิมพ์เอง/ซิงค์จากภายนอกอีกต่อไป)
+  // ฐานราคา = มูลค่าตามบัญชี (BookValue) ถ้าเปิดใช้งานในหน้าตั้งค่า มิฉะนั้นใช้ราคาซื้อ (PurchasePrice) ตามค่าเริ่มต้น
   const scrapRate = getScrapRatePercent_();
+  const useBookValue = getScrapRateUseBookValue_();
   rows.forEach(r => {
-    const purchasePrice = parseFloat(r.PurchasePrice) || 0;
-    r.ScrapPrice = Math.round(purchasePrice * scrapRate / 100 * 100) / 100;
+    const base = useBookValue ? (parseFloat(r.BookValue) || 0) : (parseFloat(r.PurchasePrice) || 0);
+    r.ScrapPrice = Math.round(base * scrapRate / 100 * 100) / 100;
   });
   return rows;
 }
@@ -797,7 +799,7 @@ function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
 }
 
-// เปอร์เซ็นต์ราคาซาก (ตามหลักบัญชี) ที่ใช้คำนวณ ราคาซาก = ราคาซื้อ x เปอร์เซ็นต์นี้ ค่าเริ่มต้น 5%
+// เปอร์เซ็นต์ราคาซาก (ตามหลักบัญชี) ที่ใช้คำนวณ ราคาซาก = ฐานราคา x เปอร์เซ็นต์นี้ ค่าเริ่มต้น 5%
 const SCRAP_RATE_PROP = 'SCRAP_RATE_PERCENT';
 const DEFAULT_SCRAP_RATE_PERCENT = 5;
 function getScrapRatePercent_() {
@@ -806,12 +808,21 @@ function getScrapRatePercent_() {
   return isNaN(n) ? DEFAULT_SCRAP_RATE_PERCENT : n;
 }
 
+// สลับฐานราคาที่ใช้คำนวณราคาซาก: false (ค่าเริ่มต้น) = ราคาซื้อ (PurchasePrice), true = มูลค่าตามบัญชี (BookValue)
+const SCRAP_RATE_USE_BOOKVALUE_PROP = 'SCRAP_RATE_USE_BOOKVALUE';
+function getScrapRateUseBookValue_() {
+  return PropertiesService.getScriptProperties().getProperty(SCRAP_RATE_USE_BOOKVALUE_PROP) === '1';
+}
+
 function adminSaveScrapRate_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const rate = parseFloat(body.scrapRatePercent);
   if (isNaN(rate) || rate < 0 || rate > 100) return { ok: false, error: 'กรุณาระบุเปอร์เซ็นต์ราคาซากระหว่าง 0-100' };
-  PropertiesService.getScriptProperties().setProperty(SCRAP_RATE_PROP, String(rate));
-  logActivity_('', 'ADMIN_SET_SCRAP_RATE', 'admin', 'ตั้งค่าเปอร์เซ็นต์ราคาซาก ' + rate + '%');
+  const useBookValue = !!body.useBookValue;
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(SCRAP_RATE_PROP, String(rate));
+  props.setProperty(SCRAP_RATE_USE_BOOKVALUE_PROP, useBookValue ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_SCRAP_RATE', 'admin', 'ตั้งค่าเปอร์เซ็นต์ราคาซาก ' + rate + '% ฐานราคา=' + (useBookValue ? 'มูลค่าตามบัญชี' : 'ราคาซื้อ'));
   return { ok: true };
 }
 
@@ -846,7 +857,7 @@ function findSourceSheet_(srcSs) {
 function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const notifyEmails = getNotifyEmails_();
-  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga } };
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_(), scrapRateUseBookValue: getScrapRateUseBookValue_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga } };
 }
 
 function adminSaveSourceSheetLink_(body) {
