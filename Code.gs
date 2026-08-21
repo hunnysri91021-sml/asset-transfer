@@ -280,6 +280,12 @@ function doPost(e) {
       case 'adminClearAssetQueues':
         result = adminClearAssetQueues_(body);
         break;
+      case 'adminSaveNotifyEmails':
+        result = adminSaveNotifyEmails_(body);
+        break;
+      case 'notifyAccountingGA':
+        result = notifyAccountingGA_(body);
+        break;
       case 'adminDeleteDept':
         result = adminDeleteDept_(body);
         break;
@@ -839,7 +845,8 @@ function findSourceSheet_(srcSs) {
 
 function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_() } };
+  const notifyEmails = getNotifyEmails_();
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga } };
 }
 
 function adminSaveSourceSheetLink_(body) {
@@ -851,6 +858,77 @@ function adminSaveSourceSheetLink_(body) {
   PropertiesService.getScriptProperties().setProperty(SOURCE_SHEET_URL_PROP, url);
   logActivity_('', 'ADMIN_SET_SOURCE_LINK', 'admin', 'ตั้งค่าลิงก์ข้อมูลต้นทาง');
   return { ok: true };
+}
+
+// ============================================================
+// NOTIFY ACCOUNTING/GA — ปุ่ม "แจ้งบัญชี/GA" ในตารางรายการใบโอนย้าย/ขายออก/ตัดชำรุด แสดงเฉพาะเอกสารที่อนุมัติแล้ว
+// อีเมลปลายทางตั้งค่าได้จากหน้า "ตั้งค่า" (ไม่ผูกกับ ApproverEmail ของหน่วยงานใดหน่วยงานหนึ่ง เพราะฝ่ายบัญชี/GA
+// ต้องได้รับแจ้งทุกเอกสารโดยไม่ขึ้นกับว่าใครเป็นผู้อนุมัติ)
+const ACCOUNTING_NOTIFY_EMAIL_PROP = 'ACCOUNTING_NOTIFY_EMAIL';
+const GA_NOTIFY_EMAIL_PROP = 'GA_NOTIFY_EMAIL';
+
+function getNotifyEmails_() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    accounting: props.getProperty(ACCOUNTING_NOTIFY_EMAIL_PROP) || '',
+    ga: props.getProperty(GA_NOTIFY_EMAIL_PROP) || ''
+  };
+}
+
+function adminSaveNotifyEmails_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const accounting = String(body.accountingEmail || '').trim();
+  const ga = String(body.gaEmail || '').trim();
+  PropertiesService.getScriptProperties().setProperty(ACCOUNTING_NOTIFY_EMAIL_PROP, accounting);
+  PropertiesService.getScriptProperties().setProperty(GA_NOTIFY_EMAIL_PROP, ga);
+  logActivity_('', 'ADMIN_SET_NOTIFY_EMAILS', 'admin', 'ตั้งค่าอีเมลแจ้งเตือนฝ่ายบัญชี/GA');
+  return { ok: true };
+}
+
+const NOTIFY_DOC_LABELS_TH = { transfer: 'ใบโอนย้ายทรัพย์สิน', sale: 'ใบขายออกทรัพย์สิน', writeoff: 'ใบตัดชำรุดทรัพย์สิน' };
+
+function notifyAccountingGA_(body) {
+  const docType = body.docType;
+  const id = String(body.id || '').trim();
+  const docLabel = NOTIFY_DOC_LABELS_TH[docType];
+  if (!docLabel || !id) return { ok: false, error: 'ข้อมูลเอกสารไม่ถูกต้อง' };
+
+  const emails = getNotifyEmails_();
+  const recipients = [emails.accounting, emails.ga].filter(Boolean);
+  if (!recipients.length) return { ok: false, error: 'ยังไม่ได้ตั้งค่าอีเมลฝ่ายบัญชี/GA กรุณาตั้งค่าในหน้า "ตั้งค่า" ก่อน' };
+
+  let obj;
+  if (docType === 'transfer') obj = getTransferFull_(id);
+  else if (docType === 'sale') obj = getSaleFull_(id);
+  else obj = getWriteOffFull_(id);
+  if (!obj) return { ok: false, error: 'ไม่พบเอกสารนี้' };
+  if (obj.Status !== STATUS.APPROVED) return { ok: false, error: 'แจ้งเตือนได้เฉพาะเอกสารที่อนุมัติแล้วเท่านั้น' };
+
+  try {
+    const itemsHtml = (obj.Items || []).map((it, i) => (
+      '<tr>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.AssetID) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.AssetName) + '</td>' +
+      '</tr>'
+    )).join('');
+    const html =
+      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:640px;margin:auto;">' +
+      '<h2 style="color:#1a3c6e;">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</h2>' +
+      '<h3>' + docLabel + ' เลขที่ ' + escapeHtml_(obj.RunningNo) + ' — อนุมัติแล้ว</h3>' +
+      '<p>เรียน ฝ่ายบัญชี และ GA เพื่อทราบ — เอกสารนี้ได้รับการอนุมัติเรียบร้อยแล้ว</p>' +
+      '<p><b>หน่วยงาน:</b> ' + escapeHtml_(obj.FromDept || '-') + '</p>' +
+      '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
+      '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th></tr>' +
+      itemsHtml +
+      '</table>' +
+      '</div>';
+    MailApp.sendEmail({ to: recipients.join(','), subject: '[อนุมัติแล้ว] ' + docLabel + ' ' + obj.RunningNo + ' — ' + CONFIG.COMPANY_NAME, htmlBody: html });
+    logActivity_(id, 'NOTIFY_ACCOUNTING_GA', body.by || '', 'แจ้งเตือนฝ่ายบัญชี/GA สำหรับ' + docLabel + ' ' + obj.RunningNo);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 }
 
 // ดึงข้อมูลจากชีตต้นทาง จับคู่คอลัมน์ตามชื่อหัวตาราง: อัปเดตแถวที่มี AssetID ตรงกับที่มีอยู่แล้ว
