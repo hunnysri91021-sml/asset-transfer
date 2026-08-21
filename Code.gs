@@ -341,14 +341,8 @@ function getAssetsRaw_(q) {
   }
   // resolve display image: override wins over original
   rows.forEach(r => { r.DisplayImage = r.ImageURLOverride || r.ImageURL || ''; });
-  // ราคาซาก คำนวณอัตโนมัติตามหลักบัญชี = ฐานราคา x เปอร์เซ็นต์ที่ตั้งค่าไว้ (ไม่รับค่าที่พิมพ์เอง/ซิงค์จากภายนอกอีกต่อไป)
-  // ฐานราคา = มูลค่าตามบัญชี (BookValue) ถ้าเปิดใช้งานในหน้าตั้งค่า มิฉะนั้นใช้ราคาซื้อ (PurchasePrice) ตามค่าเริ่มต้น
-  const scrapRate = getScrapRatePercent_();
-  const useBookValue = getScrapRateUseBookValue_();
-  rows.forEach(r => {
-    const base = useBookValue ? (parseFloat(r.BookValue) || 0) : (parseFloat(r.PurchasePrice) || 0);
-    r.ScrapPrice = Math.round(base * scrapRate / 100 * 100) / 100;
-  });
+  // ราคาซาก ใช้ค่าที่บันทึกไว้จริงในคอลัมน์ ScrapPrice ของชีต Assets โดยตรง (rowToObj_ อ่านมาให้แล้วด้านบน)
+  // ไม่คำนวณอัตโนมัติจาก % อีกต่อไป — Admin แก้ไขค่านี้ได้ที่หน้า "รายการทรัพย์สิน" > แก้ไขทรัพย์สิน
   return rows;
 }
 
@@ -667,8 +661,7 @@ function adminDeleteUser_(body) {
   return { ok: false, error: 'ไม่พบผู้ใช้นี้' };
 }
 
-// ScrapPrice ไม่อยู่ในนี้แล้ว เพราะคำนวณอัตโนมัติจาก PurchasePrice x เปอร์เซ็นต์ราคาซาก (ดู getScrapRatePercent_)
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL'];
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];

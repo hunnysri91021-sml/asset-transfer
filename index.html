@@ -601,7 +601,7 @@ function openAssetEditModal(asset, onSaved){
           <div><label>มูลค่าตามบัญชี</label><input type="${canSeePrice()?'text':'password'}" inputmode="decimal" id="amBookValue" value="${esc(a.BookValue||'')}" ${canSeePrice()?'':'readonly'}></div>
         </div>
         <div class="row">
-          <div><label>ราคาซาก (คำนวณอัตโนมัติ)</label><input type="${canSeePrice()?'text':'password'}" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.ScrapPrice||0))} บาท" disabled style="background:#f4f6f9;"></div>
+          <div><label>ราคาซาก</label><input type="${canSeePrice()?'text':'password'}" inputmode="decimal" id="amScrapPrice" value="${esc(a.ScrapPrice||'')}" ${canSeePrice()?'':'readonly'}></div>
           <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
         </div>
         <label>แท็กสถานะ</label>
@@ -628,20 +628,6 @@ function openAssetEditModal(asset, onSaved){
   document.getElementById('assetModalOverlay').onclick = (e)=>{ if(e.target.id==='assetModalOverlay') closeAssetModal(); };
   document.getElementById('amImageFile').onchange = function(){ uploadAssetModalImage(this); };
   document.getElementById('amImageCam').onchange = function(){ uploadAssetModalImage(this); };
-  document.getElementById('amPurchasePrice').oninput = updateScrapPriceDisplay;
-  document.getElementById('amBookValue').oninput = updateScrapPriceDisplay;
-  function updateScrapPriceDisplay(){
-    const purchasePrice = parseFloat(document.getElementById('amPurchasePrice').value) || 0;
-    const bookValue = parseFloat(document.getElementById('amBookValue').value) || 0;
-    const base = STATE.scrapRateUseBookValue ? bookValue : purchasePrice;
-    const rate = STATE.scrapRatePercent==null ? 5 : STATE.scrapRatePercent;
-    document.getElementById('amScrapPriceDisplay').value = fmtMoney(Math.round(base * rate / 100 * 100) / 100) + ' บาท';
-  }
-  if(STATE.scrapRatePercent==null){
-    apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
-      if(res.ok){ STATE.scrapRatePercent = res.data.scrapRatePercent; STATE.scrapRateUseBookValue = !!res.data.scrapRateUseBookValue; updateScrapPriceDisplay(); }
-    });
-  }
   document.getElementById('btnAssetModalSave').onclick = ()=>{
     const assetId = document.getElementById('amAssetID').value.trim();
     if(!assetId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
@@ -657,6 +643,7 @@ function openAssetEditModal(asset, onSaved){
       Custodian: document.getElementById('amCustodian').value.trim(),
       Location: document.getElementById('amLocation').value.trim(),
       Tag: document.getElementById('amTag').value,
+      ScrapPrice: document.getElementById('amScrapPrice').value.trim(),
       MinSalePrice: document.getElementById('amMinSalePrice').value.trim(),
       ImageURL: document.getElementById('amImageURL').value.trim()
     };
@@ -2613,7 +2600,7 @@ function renderSettings(root){
           <input type="checkbox" id="scrapRateUseBookValue" style="width:auto;">
           <label for="scrapRateUseBookValue" style="margin:0;font-weight:400;">ใช้ "มูลค่าตามบัญชี" แทน "ราคาซื้อ" เป็นฐานคำนวณราคาซาก (ค่าเริ่มต้น: ไม่ใช้งาน)</label>
         </div>
-        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ราคาซากของทุกทรัพย์สินคำนวณอัตโนมัติตามหลักบัญชี = ฐานราคา x เปอร์เซ็นต์นี้ โดยฐานราคาคือ "ราคาซื้อ" ตามค่าเริ่มต้น หรือ "มูลค่าตามบัญชี" ถ้าติ๊กเลือกใช้งานด้านบน (ไม่รับค่าที่พิมพ์เองหรือซิงค์จากทีมบัญชีอีกต่อไป) มีผลทันทีกับทุกรายงานและทุกแบบฟอร์มที่อ้างอิงราคาซาก</p>
+        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">⚠ ปัจจุบันไม่ได้ใช้ตั้งค่านี้คำนวณราคาซากแล้ว — ราคาซากของแต่ละทรัพย์สินตอนนี้ใช้ค่าที่กรอกไว้โดยตรงในหน้า "รายการทรัพย์สิน" &gt; แก้ไขทรัพย์สิน (อ่านจากคอลัมน์ ScrapPrice ในชีต Assets) เก็บค่าฟอร์มนี้ไว้เผื่อกลับมาใช้ในอนาคต</p>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>อีเมลแจ้งเตือนฝ่ายบัญชี / GA</label>
