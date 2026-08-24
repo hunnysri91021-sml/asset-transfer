@@ -262,8 +262,8 @@ function doPost(e) {
       case 'adminSaveSourceSheetLink':
         result = adminSaveSourceSheetLink_(body);
         break;
-      case 'adminSaveScrapRate':
-        result = adminSaveScrapRate_(body);
+      case 'adminSyncScrapPriceToBookValue':
+        result = adminSyncScrapPriceToBookValue_(body);
         break;
       case 'adminBackfillAssetTags':
         result = adminBackfillAssetTags_(body);
@@ -661,7 +661,8 @@ function adminDeleteUser_(body) {
   return { ok: false, error: 'ไม่พบผู้ใช้นี้' };
 }
 
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL'];
+// ScrapPrice ไม่อยู่ในนี้แล้ว เพราะบังคับให้เท่ากับ BookValue เสมอ (ดูท้าย adminSaveAsset_)
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
@@ -689,6 +690,7 @@ function adminSaveAsset_(body) {
     const newRow = headers.map(h => {
       if (h === 'AssetID') return assetId;
       if (h === 'UpdatedAt') return new Date();
+      if (h === 'ScrapPrice') return asset.BookValue || '';
       if (ADMIN_ASSET_EDITABLE_FIELDS.indexOf(h) !== -1) return asset[h] || '';
       return '';
     });
@@ -706,6 +708,11 @@ function adminSaveAsset_(body) {
   ADMIN_ASSET_EDITABLE_FIELDS.forEach(f => {
     if (asset[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
   });
+  // ราคาซาก = มูลค่าตามบัญชีเสมอ (ไม่รับค่าที่พิมพ์แยก) — ใช้ค่าที่เพิ่งบันทึกถ้ามี ไม่งั้นใช้ค่าเดิมในชีต
+  if (idx.ScrapPrice !== undefined) {
+    const bookValue = asset.BookValue !== undefined ? asset.BookValue : values[rowNum - 1][idx.BookValue];
+    sh.getRange(rowNum, idx.ScrapPrice + 1).setValue(bookValue);
+  }
   sh.getRange(rowNum, idx.UpdatedAt + 1).setValue(new Date());
   // มีคนแก้ไข/บันทึกรายการนี้แล้ว ถือว่ารับทราบ จึงล้างป้าย "ข้อมูลใหม่จากบัญชี" / "ไม่ตรงกับบัญชี" ทิ้ง
   // (เช็ค idx !== undefined เผื่อยังไม่ได้รัน setup() ใหม่เพื่อเพิ่มคอลัมน์ SyncFlag/SyncNote ในชีต)
@@ -792,31 +799,28 @@ function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
 }
 
-// เปอร์เซ็นต์ราคาซาก (ตามหลักบัญชี) ที่ใช้คำนวณ ราคาซาก = ฐานราคา x เปอร์เซ็นต์นี้ ค่าเริ่มต้น 5%
-const SCRAP_RATE_PROP = 'SCRAP_RATE_PERCENT';
-const DEFAULT_SCRAP_RATE_PERCENT = 5;
-function getScrapRatePercent_() {
-  const v = PropertiesService.getScriptProperties().getProperty(SCRAP_RATE_PROP);
-  const n = parseFloat(v);
-  return isNaN(n) ? DEFAULT_SCRAP_RATE_PERCENT : n;
-}
-
-// สลับฐานราคาที่ใช้คำนวณราคาซาก: false (ค่าเริ่มต้น) = ราคาซื้อ (PurchasePrice), true = มูลค่าตามบัญชี (BookValue)
-const SCRAP_RATE_USE_BOOKVALUE_PROP = 'SCRAP_RATE_USE_BOOKVALUE';
-function getScrapRateUseBookValue_() {
-  return PropertiesService.getScriptProperties().getProperty(SCRAP_RATE_USE_BOOKVALUE_PROP) === '1';
-}
-
-function adminSaveScrapRate_(body) {
+// ราคาซาก (ScrapPrice) ถูกบังคับให้เท่ากับมูลค่าตามบัญชี (BookValue) เสมอ (ดู adminSaveAsset_/adminSyncFromSource_)
+// ใช้ adminSyncScrapPriceToBookValue_ เพื่อไล่แก้ข้อมูลเก่าที่ยังไม่ตรงกันย้อนหลัง
+function adminSyncScrapPriceToBookValue_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const rate = parseFloat(body.scrapRatePercent);
-  if (isNaN(rate) || rate < 0 || rate > 100) return { ok: false, error: 'กรุณาระบุเปอร์เซ็นต์ราคาซากระหว่าง 0-100' };
-  const useBookValue = !!body.useBookValue;
-  const props = PropertiesService.getScriptProperties();
-  props.setProperty(SCRAP_RATE_PROP, String(rate));
-  props.setProperty(SCRAP_RATE_USE_BOOKVALUE_PROP, useBookValue ? '1' : '0');
-  logActivity_('', 'ADMIN_SET_SCRAP_RATE', 'admin', 'ตั้งค่าเปอร์เซ็นต์ราคาซาก ' + rate + '% ฐานราคา=' + (useBookValue ? 'มูลค่าตามบัญชี' : 'ราคาซื้อ'));
-  return { ok: true };
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const idx = indexMap_(headers);
+  if (idx.ScrapPrice === undefined || idx.BookValue === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ ScrapPrice หรือ BookValue ในชีต Assets กรุณารัน setup() ใหม่' };
+  }
+  let fixedCount = 0;
+  for (let i = 1; i < values.length; i++) {
+    const bookValue = values[i][idx.BookValue] || 0;
+    const scrapPrice = values[i][idx.ScrapPrice] || 0;
+    if (String(bookValue) !== String(scrapPrice) && parseFloat(bookValue) !== parseFloat(scrapPrice)) {
+      sh.getRange(i + 1, idx.ScrapPrice + 1).setValue(bookValue);
+      fixedCount++;
+    }
+  }
+  logActivity_('', 'ADMIN_SYNC_SCRAPPRICE', 'admin', 'ซิงค์ราคาซาก = มูลค่าตามบัญชีย้อนหลัง ' + fixedCount + ' รายการ');
+  return { ok: true, data: { fixedCount } };
 }
 
 // setAssetsTag_ เขียนแท็ก "ขาย"/"ชำรุด" ให้อัตโนมัติเฉพาะตอนใบขาย/ตัดชำรุดอนุมัติใหม่นับจากตอนที่เพิ่มฟีเจอร์นี้
@@ -850,7 +854,7 @@ function findSourceSheet_(srcSs) {
 function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const notifyEmails = getNotifyEmails_();
-  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), scrapRatePercent: getScrapRatePercent_(), scrapRateUseBookValue: getScrapRateUseBookValue_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga } };
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga } };
 }
 
 function adminSaveSourceSheetLink_(body) {
@@ -1007,6 +1011,8 @@ function adminSyncFromSource_(body) {
         if (srcIdx[f] === undefined || idx[f] === undefined) return;
         newRow[idx[f]] = srcRow[srcIdx[f]];
       });
+      // ราคาซาก = มูลค่าตามบัญชีเสมอ
+      if (idx.ScrapPrice !== undefined) newRow[idx.ScrapPrice] = newRow[idx.BookValue];
       newRow[idx.UpdatedAt] = new Date();
       newRow[idx.SyncFlag] = 'New';
       newRows.push(newRow);

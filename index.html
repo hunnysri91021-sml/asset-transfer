@@ -195,8 +195,6 @@ let STATE = {
   view: 'dashboard',
   role: null,
   username: null,
-  scrapRatePercent: null,
-  scrapRateUseBookValue: false,
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -601,7 +599,7 @@ function openAssetEditModal(asset, onSaved){
           <div><label>มูลค่าตามบัญชี</label><input type="${canSeePrice()?'text':'password'}" inputmode="decimal" id="amBookValue" value="${esc(a.BookValue||'')}" ${canSeePrice()?'':'readonly'}></div>
         </div>
         <div class="row">
-          <div><label>ราคาซาก</label><input type="${canSeePrice()?'text':'password'}" inputmode="decimal" id="amScrapPrice" value="${esc(a.ScrapPrice||'')}" ${canSeePrice()?'':'readonly'}></div>
+          <div><label>ราคาซาก (= มูลค่าตามบัญชี)</label><input type="${canSeePrice()?'text':'password'}" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.BookValue||0))} บาท" disabled style="background:#f4f6f9;"></div>
           <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
         </div>
         <label>แท็กสถานะ</label>
@@ -628,6 +626,9 @@ function openAssetEditModal(asset, onSaved){
   document.getElementById('assetModalOverlay').onclick = (e)=>{ if(e.target.id==='assetModalOverlay') closeAssetModal(); };
   document.getElementById('amImageFile').onchange = function(){ uploadAssetModalImage(this); };
   document.getElementById('amImageCam').onchange = function(){ uploadAssetModalImage(this); };
+  document.getElementById('amBookValue').oninput = function(){
+    document.getElementById('amScrapPriceDisplay').value = fmtMoney(parseFloat(this.value)||0) + ' บาท';
+  };
   document.getElementById('btnAssetModalSave').onclick = ()=>{
     const assetId = document.getElementById('amAssetID').value.trim();
     if(!assetId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
@@ -643,7 +644,6 @@ function openAssetEditModal(asset, onSaved){
       Custodian: document.getElementById('amCustodian').value.trim(),
       Location: document.getElementById('amLocation').value.trim(),
       Tag: document.getElementById('amTag').value,
-      ScrapPrice: document.getElementById('amScrapPrice').value.trim(),
       MinSalePrice: document.getElementById('amMinSalePrice').value.trim(),
       ImageURL: document.getElementById('amImageURL').value.trim()
     };
@@ -2589,18 +2589,9 @@ function renderSettings(root){
         </div>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>เปอร์เซ็นต์ราคาซาก (%)</label>
-        <div class="row">
-          <div style="max-width:160px;"><input type="text" inputmode="decimal" id="scrapRatePercent" placeholder="5"></div>
-          <div style="flex:2;display:flex;align-items:flex-end;">
-            <button class="btn btn-secondary btn-sm" id="btnSaveScrapRate">บันทึก</button>
-          </div>
-        </div>
-        <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" id="scrapRateUseBookValue" style="width:auto;">
-          <label for="scrapRateUseBookValue" style="margin:0;font-weight:400;">ใช้ "มูลค่าตามบัญชี" แทน "ราคาซื้อ" เป็นฐานคำนวณราคาซาก (ค่าเริ่มต้น: ไม่ใช้งาน)</label>
-        </div>
-        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">⚠ ปัจจุบันไม่ได้ใช้ตั้งค่านี้คำนวณราคาซากแล้ว — ราคาซากของแต่ละทรัพย์สินตอนนี้ใช้ค่าที่กรอกไว้โดยตรงในหน้า "รายการทรัพย์สิน" &gt; แก้ไขทรัพย์สิน (อ่านจากคอลัมน์ ScrapPrice ในชีต Assets) เก็บค่าฟอร์มนี้ไว้เผื่อกลับมาใช้ในอนาคต</p>
+        <label>ราคาซาก = มูลค่าตามบัญชี</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ราคาซากของทุกทรัพย์สินถูกกำหนดให้เท่ากับมูลค่าตามบัญชีเสมอ (ปรับอัตโนมัติทุกครั้งที่แก้ไข/เพิ่มทรัพย์สิน หรือดึงข้อมูลจากบัญชี) หากมีรายการเก่าที่ราคาซากยังไม่ตรงกับมูลค่าตามบัญชี กดปุ่มด้านล่างเพื่อไล่ตรวจสอบและอัปเดตให้ตรงกันย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
+        <button class="btn btn-secondary btn-sm" id="btnSyncScrapPrice">🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง</button>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>อีเมลแจ้งเตือนฝ่ายบัญชี / GA</label>
@@ -2632,10 +2623,20 @@ function renderSettings(root){
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
-  document.getElementById('btnSaveScrapRate').onclick = saveScrapRate;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
+  document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
+
+  function syncScrapPrice(){
+    const btn = document.getElementById('btnSyncScrapPrice');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังซิงค์...';
+    apiPost({ action:'adminSyncScrapPriceToBookValue', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง';
+      if(!res.ok){ toast(res.error||'ซิงค์ราคาซากไม่สำเร็จ','err'); return; }
+      toast('ซิงค์ราคาซากสำเร็จ — แก้ไข '+res.data.fixedCount+' รายการที่ไม่ตรงกัน','ok');
+    });
+  }
 
   function backfillTags(){
     const btn = document.getElementById('btnBackfillTags');
@@ -2724,10 +2725,6 @@ function renderSettings(root){
     apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
       if(!res.ok) return;
       document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
-      STATE.scrapRatePercent = res.data.scrapRatePercent;
-      STATE.scrapRateUseBookValue = !!res.data.scrapRateUseBookValue;
-      document.getElementById('scrapRatePercent').value = res.data.scrapRatePercent;
-      document.getElementById('scrapRateUseBookValue').checked = STATE.scrapRateUseBookValue;
       document.getElementById('accountingEmail').value = res.data.accountingEmail || '';
       document.getElementById('gaEmail').value = res.data.gaEmail || '';
     });
@@ -2756,19 +2753,6 @@ function renderSettings(root){
     });
   }
 
-  function saveScrapRate(){
-    const rate = document.getElementById('scrapRatePercent').value.trim();
-    const useBookValue = document.getElementById('scrapRateUseBookValue').checked;
-    const btn = document.getElementById('btnSaveScrapRate');
-    btn.disabled = true;
-    apiPost({ action:'adminSaveScrapRate', password: STATE.adminPassword, scrapRatePercent: rate, useBookValue }).then(res=>{
-      btn.disabled = false;
-      if(!res.ok){ toast(res.error||'บันทึกเปอร์เซ็นต์ราคาซากไม่สำเร็จ','err'); return; }
-      STATE.scrapRatePercent = parseFloat(rate);
-      STATE.scrapRateUseBookValue = useBookValue;
-      toast('บันทึกเปอร์เซ็นต์ราคาซากสำเร็จ','ok');
-    });
-  }
 
   function syncSource(){
     const btn = document.getElementById('btnSyncSource');
