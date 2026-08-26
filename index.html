@@ -736,29 +736,23 @@ function renderAssetList(root){
 
   function load(){
     const q = document.getElementById('alSearch').value.trim();
-    const params = { action:'getAssetsFull' };
+    const params = { action:'getAssetListBundle' };
     if(q) params.q = q;
     document.getElementById('alTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    Promise.all([
-      apiGet(params),
-      apiGet({action:'getTransferQueue'}),
-      apiGet({action:'getSaleQueue'}),
-      apiGet({action:'getWriteOffQueue'})
-    ]).then(([res, transferQ, saleQ, woQ])=>{
+    apiGet(params).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
-      STATE.assetsFull = res.data;
+      STATE.assetsFull = res.data.assets;
       STATE.selectedAssetIds = [];
       STATE.assetQueuedPurposes = {};
       const mark = (list, purpose)=>{
-        if(!list || !list.ok) return;
-        list.data.forEach(q=>{
+        (list||[]).forEach(q=>{
           if(!STATE.assetQueuedPurposes[q.AssetID]) STATE.assetQueuedPurposes[q.AssetID] = [];
           STATE.assetQueuedPurposes[q.AssetID].push(purpose);
         });
       };
-      mark(transferQ, 'transfer');
-      mark(saleQ, 'sale');
-      mark(woQ, 'writeoff');
+      mark(res.data.transferQueue, 'transfer');
+      mark(res.data.saleQueue, 'sale');
+      mark(res.data.writeOffQueue, 'writeoff');
       populateDeptFilterOptions();
       renderTable();
     });

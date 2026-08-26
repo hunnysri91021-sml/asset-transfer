@@ -145,6 +145,9 @@ function doGet(e) {
       case 'getAssetsFull':
         result = { ok: true, data: getAssetsFull_(e.parameter.q || '') };
         break;
+      case 'getAssetListBundle':
+        result = { ok: true, data: getAssetListBundle_(e.parameter.q || '') };
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -354,6 +357,25 @@ const QUEUE_PURPOSES = { TRANSFER: 'Transfer', SALE: 'Sale', WRITEOFF: 'WriteOff
 // ทรัพย์สิน 1 รายการ อยู่ในคิวรอได้ทีละ 1 ประเภทเท่านั้น (โอนย้าย/ขาย/ตัดชำรุด เลือกได้อย่างใดอย่างหนึ่ง)
 const QUEUE_PURPOSE_LABEL_TH = { Transfer: 'โอนย้าย', Sale: 'ขาย', WriteOff: 'ตัดชำรุด' };
 
+// ประกอบแถวคิวรอ 1 แถวจากข้อมูลคิว (q) + ข้อมูลทรัพย์สินที่เกี่ยวข้อง (a) + สถานะการขาย/ตัดชำรุด (disposed)
+// แยกออกมาเป็นฟังก์ชันกลาง เพื่อให้ getAssetQueue_ (ใช้ทีละประเภท) และ getAssetListBundle_ (ใช้รวมทั้ง 3 ประเภทในคราวเดียว)
+// ได้ผลลัพธ์รูปแบบเดียวกันเป๊ะ ไม่ต้องคัดลอกโค้ดซ้ำ
+function buildQueueRow_(q, a, disposed) {
+  return {
+    AssetID: q.AssetID,
+    AddedBy: q.AddedBy,
+    AddedAt: q.AddedAt,
+    AssetName: a.AssetName || '',
+    Department: a.Department || '',
+    DisplayImage: a.DisplayImage || '',
+    PurchasePrice: a.PurchasePrice || 0,
+    BookValue: a.BookValue || 0,
+    ScrapPrice: a.ScrapPrice || 0,
+    MinSalePrice: a.MinSalePrice || 0,
+    AssetStatus: disposed[String(q.AssetID)] || 'Active'
+  };
+}
+
 function getAssetQueue_(purpose) {
   const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
   const values = sh.getDataRange().getValues();
@@ -368,22 +390,51 @@ function getAssetQueue_(purpose) {
   const assetsById = {};
   getAssetsRaw_().forEach(a => { assetsById[String(a.AssetID)] = a; });
 
-  return queueRows.map(q => {
-    const a = assetsById[String(q.AssetID)] || {};
-    return {
-      AssetID: q.AssetID,
-      AddedBy: q.AddedBy,
-      AddedAt: q.AddedAt,
-      AssetName: a.AssetName || '',
-      Department: a.Department || '',
-      DisplayImage: a.DisplayImage || '',
-      PurchasePrice: a.PurchasePrice || 0,
-      BookValue: a.BookValue || 0,
-      ScrapPrice: a.ScrapPrice || 0,
-      MinSalePrice: a.MinSalePrice || 0,
-      AssetStatus: disposed[String(q.AssetID)] || 'Active'
-    };
-  }).sort((x, y) => new Date(x.AddedAt) - new Date(y.AddedAt));
+  return queueRows
+    .map(q => buildQueueRow_(q, assetsById[String(q.AssetID)] || {}, disposed))
+    .sort((x, y) => new Date(x.AddedAt) - new Date(y.AddedAt));
+}
+
+// เวอร์ชันรวมของ getAssetsFull_ + getTransferQueue_/getSaleQueue_/getWriteOffQueue_ สำหรับหน้า "รายการทรัพย์สิน" โดยเฉพาะ
+// คำนวณ getDisposedAssetStatus_()/getAssetsRaw_()/อ่านชีต TransferQueue "ครั้งเดียว" แล้วประกอบผลลัพธ์ทั้ง 4 ส่วนจากข้อมูลชุดเดียวกัน
+// แทนที่จะให้ 4 request แยกกัน (เดิม) ต่างคนต่างอ่านชีตเดิมซ้ำ — action เดิมทั้ง 4 ยังคงอยู่ตามปกติสำหรับหน้าอื่นที่ใช้แยกกัน
+function getAssetListBundle_(q) {
+  const disposed = getDisposedAssetStatus_();
+  const allAssets = getAssetsRaw_();
+  allAssets.forEach(r => { r.AssetStatus = disposed[String(r.AssetID)] || 'Active'; });
+
+  let assets = allAssets;
+  if (q) {
+    const qq = q.toString().toLowerCase();
+    assets = allAssets.filter(r =>
+      String(r.AssetID).toLowerCase().indexOf(qq) !== -1 ||
+      String(r.AssetName).toLowerCase().indexOf(qq) !== -1 ||
+      String(r.Custodian).toLowerCase().indexOf(qq) !== -1
+    );
+  }
+
+  const assetsById = {};
+  allAssets.forEach(a => { assetsById[String(a.AssetID)] = a; });
+
+  const qsh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const qvalues = qsh.getDataRange().getValues();
+  const qheaders = qvalues.shift();
+  const qidx = indexMap_(qheaders);
+  const allQueueRows = qvalues.filter(r => r[qidx.AssetID]).map(r => rowToObj_(r, qidx));
+
+  function queueByPurpose(purpose) {
+    return allQueueRows
+      .filter(r => (r.Purpose || QUEUE_PURPOSES.TRANSFER) === purpose)
+      .map(r => buildQueueRow_(r, assetsById[String(r.AssetID)] || {}, disposed))
+      .sort((x, y) => new Date(x.AddedAt) - new Date(y.AddedAt));
+  }
+
+  return {
+    assets: assets,
+    transferQueue: queueByPurpose(QUEUE_PURPOSES.TRANSFER),
+    saleQueue: queueByPurpose(QUEUE_PURPOSES.SALE),
+    writeOffQueue: queueByPurpose(QUEUE_PURPOSES.WRITEOFF)
+  };
 }
 
 function addToAssetQueue_(body, purpose) {
