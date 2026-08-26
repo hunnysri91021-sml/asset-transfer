@@ -542,11 +542,36 @@ function setAssetsTag_(assetIds, tagValue) {
 
 // ทรัพย์สินที่มีใบขายออก หรือใบตัดชำรุด ซึ่งอนุมัติแล้ว ถือว่าสิ้นสภาพการใช้งานจริง จึงซ่อนจากรายการหลัก
 // คืนค่า map ของ AssetID -> 'Sold' | 'WrittenOff' (เฉพาะรายการที่สิ้นสภาพแล้ว)
+// getDisposedAssetStatus_ อ่านเต็ม 4 ชีต (Sales/SaleItems/WriteOffs/WriteOffItems) ทุกครั้ง เป็นการคำนวณที่หนักที่สุด
+// ในระบบและถูกเรียกแทบทุกหน้า (Dashboard, รายการทรัพย์สิน, คิวรอโอนย้าย/ขาย/ตัดชำรุด) จึงแคชผลลัพธ์ไว้สั้นๆ
+// ด้วย CacheService (เหมือน getSharePointAccessToken_) แล้วล้างแคชทันทีทุกจุดที่สถานะขาย/ตัดชำรุดเปลี่ยนจริง
+// (ดู invalidateDisposedAssetStatusCache_ — เรียกคู่กับ setAssetsTag_ ทุกจุดตามกติกาใน CLAUDE.md)
+// เพื่อให้ยังคง "เห็นผลทันที" สำหรับการเปลี่ยนแปลงที่เกิดผ่านระบบนี้เอง มีโอกาสเห็นข้อมูลเก่าได้แค่ในกรณีที่หายากมาก
+// (ระบบอื่นเขียนชีตตรงๆ นอกแอปนี้ ภายในหน้าต่างเวลาแคช)
+const DISPOSED_STATUS_CACHE_KEY = 'disposedAssetStatus_v1';
+const DISPOSED_STATUS_CACHE_TTL_SEC = 60;
+
 function getDisposedAssetStatus_() {
+  let cache;
+  try {
+    cache = CacheService.getScriptCache();
+    const cached = cache.get(DISPOSED_STATUS_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
+
   const status = {};
   markDisposedFromDocs_(status, SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', 'Sold');
   markDisposedFromDocs_(status, SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', 'WrittenOff');
+
+  try {
+    if (cache) cache.put(DISPOSED_STATUS_CACHE_KEY, JSON.stringify(status), DISPOSED_STATUS_CACHE_TTL_SEC);
+  } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
+
   return status;
+}
+
+function invalidateDisposedAssetStatusCache_() {
+  try { CacheService.getScriptCache().remove(DISPOSED_STATUS_CACHE_KEY); } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
 }
 
 function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
@@ -807,6 +832,7 @@ function adminRestoreAsset_(body) {
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
   setAssetsTag_([assetId], 'ใช้งาน');
+  invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะใช้งานทรัพย์สิน ' + assetId);
   return { ok: true, data: { voidedCount } };
 }
@@ -1556,6 +1582,7 @@ function createSale_(body) {
     const soldAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIdsNow);
     setAssetsTag_(soldAssetIdsNow, 'ขาย');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
@@ -1606,6 +1633,7 @@ function decideSale_(body) {
     const soldAssetIds = getSaleItems_(saleId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIds);
     setAssetsTag_(soldAssetIds, 'ขาย');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
   }
 
@@ -1751,6 +1779,7 @@ function createWriteOff_(body) {
     const writtenOffAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIdsNow);
     setAssetsTag_(writtenOffAssetIdsNow, 'ชำรุด');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
@@ -1801,6 +1830,7 @@ function decideWriteOff_(body) {
     const writtenOffAssetIds = getWriteOffItems_(writeOffId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIds);
     setAssetsTag_(writtenOffAssetIds, 'ชำรุด');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
   }
 
