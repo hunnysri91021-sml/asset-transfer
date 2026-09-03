@@ -163,6 +163,7 @@
       <div class="nav-group-label">ภาพรวม</div>
       <button data-view="dashboard">ข้อมูลรวม</button>
       <button data-view="assetList">รายการทรัพย์สิน</button>
+      <button data-view="auction">ประมูลขาย</button>
       <div class="nav-group-label">โอนย้าย</div>
       <button data-view="list">รายการใบโอนย้าย</button>
       <button data-view="create">+ สร้างใบโอนย้าย</button>
@@ -509,6 +510,7 @@ function route(){
 const VIEW_TITLES = {
   dashboard: 'ข้อมูลรวม',
   assetList: 'รายการทรัพย์สิน',
+  auction: 'ประมูลขาย',
   list: 'รายการใบโอนย้าย',
   create: 'สร้างใบโอนย้าย',
   print: 'ใบโอนย้ายทรัพย์สิน',
@@ -577,6 +579,7 @@ function render(){
   [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===STATE.view));
 
   if(STATE.view === 'assetList') renderAssetList(root);
+  else if(STATE.view === 'auction') renderAuction(root);
   else if(STATE.view === 'dashboard') renderDashboard(root);
   else if(STATE.view === 'list') renderList(root);
   else if(STATE.view === 'create') renderCreate(root);
@@ -1217,6 +1220,86 @@ function renderDashboard(root){
       exportExcel('ข้อมูลรวมทรัพย์สิน.xlsx', [statusSheet, deptSheet, deptQueueSheet, tagSheet]);
     };
   }
+}
+
+/* ================= AUCTION VIEW (ประมูลขาย) — รวมคิวรอขาย + รอตัดชำรุด ให้ทุกคนดูได้ ================= */
+function renderAuction(root){
+  let showBookValue = false;
+  let auctionRows = [];
+
+  root.innerHTML = `
+    <div class="card">
+      <h2>ประมูลขาย</h2>
+      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล</p>
+      <div class="toolbar no-print">
+        <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
+        <span id="auctionCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
+        <button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>
+      </div>
+      <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+
+  document.getElementById('auctionSearch').oninput = renderAuctionTable;
+  document.getElementById('btnAuctionExport').onclick = exportAuction;
+  const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
+  if(toggleBtn){
+    toggleBtn.onclick = ()=>{
+      showBookValue = !showBookValue;
+      toggleBtn.textContent = showBookValue ? '🙈 ซ่อนมูลค่าตามบัญชี' : '👁 แสดงมูลค่าตามบัญชี';
+      renderAuctionTable();
+    };
+  }
+
+  function load(){
+    document.getElementById('auctionTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiGet({ action:'getAssetListBundle' }).then(res=>{
+      if(!res.ok){ document.getElementById('auctionTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      const saleRows = (res.data.saleQueue||[]).map(a=>Object.assign({}, a, { queueType:'sale' }));
+      const woRows = (res.data.writeOffQueue||[]).map(a=>Object.assign({}, a, { queueType:'writeoff' }));
+      auctionRows = saleRows.concat(woRows).sort((a,b)=> new Date(b.AddedAt) - new Date(a.AddedAt));
+      renderAuctionTable();
+    });
+  }
+
+  function renderAuctionTable(){
+    const host = document.getElementById('auctionTableHost');
+    const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
+    const rows = qq ? auctionRows.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : auctionRows;
+    document.getElementById('auctionCount').textContent = 'รวม '+rows.length+' รายการ';
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่มีทรัพย์สินรอขาย/ตัดชำรุด</div>'; return; }
+    const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคาซาก</th><th>มูลค่าตามบัญชี</th></tr>`;
+    rows.forEach(a=>{
+      html += `<tr>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td><span class="badge badge-pending">${typeLabel[a.queueType]}</span></td>
+        <td class="money">${fmtMoneyOrHidden(a.ScrapPrice)}</td>
+        <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+  }
+
+  function exportAuction(){
+    if(!auctionRows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคาซาก','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
+    const rows = auctionRows.map(a => [
+      a.AssetID, a.AssetName, a.Department, typeLabel[a.queueType],
+      canSeePrice() ? (Number(a.ScrapPrice)||0) : 'ไม่มีสิทธิ์ดู',
+      showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
+      a.DisplayImage||''
+    ]);
+    exportExcel('ประมูลขาย.xlsx', [{ name:'ประมูลขาย', header, rows }]);
+  }
+
+  load();
 }
 
 /* ================= LIST VIEW ================= */
