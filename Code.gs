@@ -250,6 +250,9 @@ function doPost(e) {
       case 'adminGetOnlineUsers':
         result = adminGetOnlineUsers_(body);
         break;
+      case 'adminGetActivityLog':
+        result = adminGetActivityLog_(body);
+        break;
       case 'adminGetUsers':
         result = getUsers_(body);
         break;
@@ -626,14 +629,18 @@ function login_(body) {
   const idx = indexMap_(values[0]);
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
+      const role = values[i][idx.Role] === 'admin' ? 'admin' : 'user';
+      logActivity_('', 'LOGIN', username, 'เข้าสู่ระบบสำเร็จ (' + role + ')');
       return { ok: true, data: {
         username,
-        role: values[i][idx.Role] === 'admin' ? 'admin' : 'user',
+        role,
         departments: parseDepartments_(values[i][idx.Departments]),
         canViewPrices: values[i][idx.Role] === 'admin' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
       } };
     }
   }
+  // บันทึกเฉพาะชื่อผู้ใช้ที่พยายาม ไม่บันทึกรหัสผ่านที่กรอกผิด
+  logActivity_('', 'LOGIN_FAILED', username, 'เข้าสู่ระบบไม่สำเร็จ (ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง)');
   return { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
 }
 
@@ -2382,6 +2389,33 @@ function exportDocToSharePointSafe_(kind, fullObj) {
 function logActivity_(transferId, action, by, detail) {
   const sh = getSS_().getSheetByName(SHEETS.LOG);
   sh.appendRow([new Date(), transferId, action, by, detail]);
+}
+
+// Admin ดูประวัติการใช้งาน (ActivityLog) — ค้นหา/กรองช่วงวันที่ได้ เรียงล่าสุดก่อน จำกัดผลลัพธ์ 300 แถวล่าสุด
+// เพื่อไม่ให้ตอบช้าถ้า log สะสมเยอะ (ยังบอก total ที่ตรงกับตัวกรองไว้ให้ด้วย เผื่ออยากรู้ว่ามีเกิน 300 รายการไหม)
+function adminGetActivityLog_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const sh = getSS_().getSheetByName(SHEETS.LOG);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  let rows = values.map(r => rowToObj_(r, idx));
+
+  const q = String(body.q || '').trim().toLowerCase();
+  if (q) {
+    rows = rows.filter(r =>
+      String(r.By || '').toLowerCase().indexOf(q) !== -1 ||
+      String(r.Action || '').toLowerCase().indexOf(q) !== -1 ||
+      String(r.Detail || '').toLowerCase().indexOf(q) !== -1 ||
+      String(r.TransferID || '').toLowerCase().indexOf(q) !== -1
+    );
+  }
+  if (body.from) { const from = new Date(body.from); rows = rows.filter(r => new Date(r.Timestamp) >= from); }
+  if (body.to) { const to = new Date(body.to + 'T23:59:59'); rows = rows.filter(r => new Date(r.Timestamp) <= to); }
+
+  rows.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp));
+  const total = rows.length;
+  return { ok: true, data: { rows: rows.slice(0, 300), total } };
 }
 
 // ============================================================

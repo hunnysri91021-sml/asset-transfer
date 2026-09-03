@@ -173,6 +173,7 @@
       <button data-view="writeOffList">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
       <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
+      <button data-view="activityLog" id="navActivityLog">ประวัติการใช้งาน</button>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
   </aside>
@@ -513,6 +514,7 @@ const VIEW_TITLES = {
   writeOffList: 'รายการตัดชำรุด',
   writeOffCreate: 'บันทึกตัดชำรุด',
   writeOffPrint: 'ใบตัดชำรุดทรัพย์สิน',
+  activityLog: 'ประวัติการใช้งาน',
   settings: 'ตั้งค่า'
 };
 
@@ -556,9 +558,11 @@ function render(){
   if(roleBadgeEl) roleBadgeEl.textContent = (STATE.username ? STATE.username+' · ' : '') + (STATE.role==='admin' ? 'Admin' : 'User');
   const settingsNavBtn = document.querySelector('#mainNav button[data-view="settings"]');
   if(settingsNavBtn) settingsNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
+  const activityLogNavBtn = document.getElementById('navActivityLog');
+  if(activityLogNavBtn) activityLogNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
-  if(STATE.view === 'settings' && STATE.role !== 'admin') STATE.view = 'dashboard';
+  if((STATE.view === 'settings' || STATE.view === 'activityLog') && STATE.role !== 'admin') STATE.view = 'dashboard';
   [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===STATE.view));
 
   if(STATE.view === 'assetList') renderAssetList(root);
@@ -571,6 +575,7 @@ function render(){
   else if(STATE.view === 'writeOffList') renderWriteOffList(root);
   else if(STATE.view === 'writeOffCreate') renderWriteOffCreate(root);
   else if(STATE.view === 'writeOffPrint') renderWriteOffPrint(root);
+  else if(STATE.view === 'activityLog') renderActivityLog(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
 }
@@ -2595,6 +2600,66 @@ function doSubmitWriteOff(){
     STATE.printWriteOffId = res.data.writeOffId;
     render();
   });
+}
+
+/* ================= ACTIVITY LOG VIEW (Admin) ================= */
+function renderActivityLog(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>ประวัติการใช้งาน</h2>
+      <p style="color:var(--muted);font-size:13px;">บันทึกการเข้าสู่ระบบและการเปลี่ยนแปลงข้อมูลทั้งหมดในระบบ เรียงล่าสุดก่อน (แสดงสูงสุด 300 รายการล่าสุดตามตัวกรอง)</p>
+      <div class="toolbar no-print">
+        <input type="text" id="alogSearch" placeholder="ค้นหาผู้ใช้ / การกระทำ / รายละเอียด..." style="max-width:240px;">
+        <input type="date" id="alogFrom" style="max-width:150px;">
+        <input type="date" id="alogTo" style="max-width:150px;">
+        <button class="btn btn-secondary btn-sm" id="btnAlogFilter">กรอง</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlogRefresh">↻ รีเฟรช</button>
+        <span id="alogCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
+        <button class="btn btn-secondary btn-sm" id="btnAlogExport">⬇ Export Excel</button>
+      </div>
+      <div id="alogTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+
+  let currentRows = [];
+
+  document.getElementById('btnAlogFilter').onclick = loadActivityLog;
+  document.getElementById('btnAlogRefresh').onclick = loadActivityLog;
+  document.getElementById('btnAlogExport').onclick = exportActivityLog;
+
+  function loadActivityLog(){
+    const host = document.getElementById('alogTableHost');
+    host.innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    const payload = {
+      action: 'adminGetActivityLog',
+      password: STATE.adminPassword,
+      q: document.getElementById('alogSearch').value.trim(),
+      from: document.getElementById('alogFrom').value,
+      to: document.getElementById('alogTo').value
+    };
+    apiPost(payload).then(res=>{
+      if(!res.ok){ host.innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      currentRows = res.data.rows || [];
+      const shown = currentRows.length;
+      const total = res.data.total || 0;
+      document.getElementById('alogCount').textContent = total > shown
+        ? `แสดง ${shown} จากทั้งหมด ${total} รายการ (ปรับตัวกรองให้แคบลงเพื่อดูรายการเก่ากว่านี้)`
+        : `รวม ${total} รายการ`;
+      if(!currentRows.length){ host.innerHTML = '<div class="empty">ไม่มีข้อมูล</div>'; return; }
+      host.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>เวลา</th><th>ทำโดย</th><th>การกระทำ</th><th>รายละเอียด</th><th>เอกสารที่เกี่ยวข้อง</th></tr>` +
+        currentRows.map(r => `<tr><td>${esc(fmtDate(r.Timestamp))}</td><td>${esc(r.By||'')}</td><td>${esc(r.Action||'')}</td><td>${esc(r.Detail||'')}</td><td>${esc(r.TransferID||'')}</td></tr>`).join('') +
+        `</table></div>`;
+    });
+  }
+
+  function exportActivityLog(){
+    if(!currentRows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const header = ['เวลา','ทำโดย','การกระทำ','รายละเอียด','เอกสารที่เกี่ยวข้อง'];
+    const rows = currentRows.map(r => [fmtDate(r.Timestamp), r.By||'', r.Action||'', r.Detail||'', r.TransferID||'']);
+    exportExcel('ประวัติการใช้งาน.xlsx', [{ name:'ประวัติการใช้งาน', header, rows }]);
+  }
+
+  loadActivityLog();
 }
 
 /* ================= SETTINGS VIEW (Dept Codes + Admin Asset Data) ================= */
