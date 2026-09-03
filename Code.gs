@@ -618,6 +618,15 @@ function checkAdminPassword_(pw) {
   return false;
 }
 
+// บทบาทผู้ใช้: 'admin' (สิทธิ์เต็ม), 'executive' (ผู้บริหาร — ดูข้อมูลทุกหน่วยงานได้เหมือน admin แต่แก้ไข/สร้าง/อนุมัติไม่ได้),
+// 'user' (ค่าเริ่มต้น — เห็น/แก้ไขได้เฉพาะหน่วยงานที่ได้รับมอบหมาย)
+function normalizeRole_(raw) {
+  const r = String(raw || '').trim().toLowerCase();
+  if (r === 'admin') return 'admin';
+  if (r === 'executive') return 'executive';
+  return 'user';
+}
+
 // เข้าสู่ระบบด้วยชื่อผู้ใช้ + รหัสผ่านที่ Admin ตั้งไว้ในชีต Users เท่านั้น
 function login_(body) {
   const username = String(body.username || '').trim();
@@ -629,13 +638,13 @@ function login_(body) {
   const idx = indexMap_(values[0]);
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
-      const role = values[i][idx.Role] === 'admin' ? 'admin' : 'user';
+      const role = normalizeRole_(values[i][idx.Role]);
       logActivity_('', 'LOGIN', username, 'เข้าสู่ระบบสำเร็จ (' + role + ')');
       return { ok: true, data: {
         username,
         role,
         departments: parseDepartments_(values[i][idx.Departments]),
-        canViewPrices: values[i][idx.Role] === 'admin' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
+        canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
       } };
     }
   }
@@ -657,11 +666,12 @@ function getRequestingUser_(pw) {
   const idx = indexMap_(values[0]);
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Password]) === p) {
+      const role = normalizeRole_(values[i][idx.Role]);
       return {
         username: values[i][idx.Username],
-        role: String(values[i][idx.Role]) === 'admin' ? 'admin' : 'user',
+        role,
         departments: parseDepartments_(values[i][idx.Departments]),
-        canViewPrices: String(values[i][idx.Role]) === 'admin' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
+        canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
       };
     }
   }
@@ -736,7 +746,7 @@ function adminSaveUser_(body) {
   const u = body.user || {};
   const username = String(u.Username || '').trim();
   if (!username) return { ok: false, error: 'กรุณาระบุชื่อผู้ใช้' };
-  const role = u.Role === 'admin' ? 'admin' : 'user';
+  const role = normalizeRole_(u.Role);
   const newPassword = String(u.Password || '').trim();
   const departments = Array.isArray(u.Departments) ? u.Departments.map(d => String(d).trim()).filter(Boolean).join(',') : '';
   const canViewPrices = u.CanViewPrices ? 'true' : 'false';

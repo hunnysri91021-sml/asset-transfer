@@ -261,15 +261,19 @@ function fmtMoney(n){
   n = parseFloat(String(n).replace(/,/g,'')) || 0;
   return n.toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
-// ราคาซาก/มูลค่าตามบัญชี ซ่อนได้เป็นรายคนตามสิทธิ์ที่ Admin กำหนด (STATE.canViewPrices) — Admin เห็นเสมอ
-function canSeePrice(){ return STATE.role==='admin' || !!STATE.canViewPrices; }
+// ราคาซาก/มูลค่าตามบัญชี ซ่อนได้เป็นรายคนตามสิทธิ์ที่ Admin กำหนด (STATE.canViewPrices) — Admin/ผู้บริหารเห็นเสมอ
+function canSeePrice(){ return STATE.role==='admin' || STATE.role==='executive' || !!STATE.canViewPrices; }
 function fmtMoneyOrHidden(n){ return canSeePrice() ? fmtMoney(n) : '••••••'; }
-// รายการโอนย้าย/ขาย/ตัดชำรุด — ผู้ใช้ทั่วไปเห็นเฉพาะหน่วยงานของตนเอง (STATE.myDepartments), Admin เห็นทั้งหมด
+// เห็นข้อมูลทุกหน่วยงานแบบเดียวกับ Admin ได้ไหม (ใช้กรองรายการโอนย้าย/ขาย/ตัดชำรุด + กำหนดขอบเขตการดูข้อมูลอื่นๆ)
+function canViewAllDepts(){ return STATE.role==='admin' || STATE.role==='executive'; }
+// รายการโอนย้าย/ขาย/ตัดชำรุด — ผู้ใช้ทั่วไปเห็นเฉพาะหน่วยงานของตนเอง (STATE.myDepartments), Admin/ผู้บริหารเห็นทั้งหมด
 function deptFilterRows(rows, fields){
-  if(STATE.role === 'admin') return rows;
+  if(canViewAllDepts()) return rows;
   const mine = STATE.myDepartments || [];
   return rows.filter(r => fields.some(f => mine.indexOf(r[f]) !== -1));
 }
+// ผู้บริหาร: ดูข้อมูลได้ทุกหน่วยงานเหมือน Admin แต่สร้าง/แก้ไข/ลบ/อนุมัติไม่ได้เลย (ซ่อนปุ่ม/หน้าจัดการทั้งหมด)
+function isViewOnly(){ return STATE.role === 'executive'; }
 // ให้คลิกได้ทั้งแถวเพื่อติ๊ก/ถอนติ๊ก checkbox เลือกแถว ไม่ต้องเล็งที่กล่องเล็กๆ — ยกเว้นคลิกโดนปุ่ม/select/รูปภาพ
 // ในแถวเอง (ให้ทำงานตามปกติของมันแทน ไม่แย่งชิงคลิก) และแถวที่ checkbox ถูก disabled ไว้
 function makeRowsClickable(host, checkboxClass){
@@ -555,7 +559,8 @@ function render(){
   const titleEl = document.getElementById('pageTitle');
   if(titleEl) titleEl.textContent = VIEW_TITLES[STATE.view] || '';
   const roleBadgeEl = document.getElementById('roleBadge');
-  if(roleBadgeEl) roleBadgeEl.textContent = (STATE.username ? STATE.username+' · ' : '') + (STATE.role==='admin' ? 'Admin' : 'User');
+  const roleLabel = STATE.role==='admin' ? 'Admin' : (STATE.role==='executive' ? 'ผู้บริหาร' : 'User');
+  if(roleBadgeEl) roleBadgeEl.textContent = (STATE.username ? STATE.username+' · ' : '') + roleLabel;
   const settingsNavBtn = document.querySelector('#mainNav button[data-view="settings"]');
   if(settingsNavBtn) settingsNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const activityLogNavBtn = document.getElementById('navActivityLog');
@@ -563,6 +568,12 @@ function render(){
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
   if((STATE.view === 'settings' || STATE.view === 'activityLog') && STATE.role !== 'admin') STATE.view = 'dashboard';
+  // ผู้บริหาร: ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ — ซ่อนปุ่มเมนู "+ สร้าง..." และกันไม่ให้เข้าหน้าสร้างเอกสารตรงๆ
+  ['create','saleCreate','writeOffCreate'].forEach(v=>{
+    const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
+    if(btn) btn.style.display = isViewOnly() ? 'none' : '';
+  });
+  if(isViewOnly() && ['create','saleCreate','writeOffCreate'].indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
   [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===STATE.view));
 
   if(STATE.view === 'assetList') renderAssetList(root);
@@ -701,6 +712,7 @@ function openAssetEditModal(asset, onSaved){
 }
 
 function renderAssetList(root){
+  if(isViewOnly() && STATE.assetListTab === 'manage') STATE.assetListTab = 'all';
   const manageMode = STATE.assetListTab === 'manage';
   const isAdmin = STATE.role === 'admin';
   const noDeptsAssigned = manageMode && !isAdmin && !(STATE.myDepartments||[]).length;
@@ -713,7 +725,7 @@ function renderAssetList(root){
       <h2>รายการทรัพย์สิน</h2>
       <div class="toolbar no-print" style="margin-bottom:6px;">
         <button class="btn ${!manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabAll">ข้อมูลทั้งหมด</button>
-        <button class="btn ${manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabManage">จัดการทรัพย์สินหน่วยงานของฉัน</button>
+        ${isViewOnly() ? '' : `<button class="btn ${manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabManage">จัดการทรัพย์สินหน่วยงานของฉัน</button>`}
       </div>
       <p style="color:var(--muted);font-size:13px;">${manageMode ? 'แก้ไข/เพิ่ม/ลบทรัพย์สิน — แสดงเฉพาะหน่วยงานที่คุณได้รับสิทธิ์ดูแล' + (isAdmin?' (Admin เห็นทุกหน่วยงาน)':'')  : 'ดูข้อมูลทรัพย์สินทั้งหมดของทุกหน่วยงาน (ไม่สามารถแก้ไขจากแถบนี้)'}</p>
       <div class="toolbar no-print">
@@ -747,7 +759,8 @@ function renderAssetList(root){
   `;
 
   document.getElementById('btnAlTabAll').onclick = ()=>{ STATE.assetListTab = 'all'; render(); };
-  document.getElementById('btnAlTabManage').onclick = ()=>{ STATE.assetListTab = 'manage'; render(); };
+  const btnAlTabManageEl = document.getElementById('btnAlTabManage');
+  if(btnAlTabManageEl) btnAlTabManageEl.onclick = ()=>{ STATE.assetListTab = 'manage'; render(); };
   document.getElementById('btnAlFilter').onclick = load;
   document.getElementById('btnAlRefresh').onclick = load;
   document.getElementById('alStatus').onchange = renderTable;
@@ -1068,12 +1081,17 @@ function renderDashboard(root){
       <div id="dashHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
-  apiGet({action:'getAssetsFull'}).then(res=>{
+  apiGet({action:'getAssetListBundle'}).then(res=>{
     if(!res.ok){ document.getElementById('dashHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
-    renderDashboardContent(res.data);
+    renderDashboardContent(res.data.assets, res.data.transferQueue||[], res.data.saleQueue||[], res.data.writeOffQueue||[]);
   });
 
-  function renderDashboardContent(assets){
+  function renderDashboardContent(assets, transferQueue, saleQueue, writeOffQueue){
+    const queuedPurposeByAsset = {};
+    const mark = (list, purpose)=>{ (list||[]).forEach(q=>{ queuedPurposeByAsset[q.AssetID] = purpose; }); };
+    mark(transferQueue, 'transfer');
+    mark(saleQueue, 'sale');
+    mark(writeOffQueue, 'writeoff');
     const statusLabels = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
     const byStatus = {};
     assets.forEach(a=>{
@@ -1105,15 +1123,28 @@ function renderDashboard(root){
     const byDept = {};
     assets.forEach(a=>{
       const d = a.Department || '-';
-      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0 };
+      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
       byDept[d].count++;
       byDept[d].purchase += parseFloat(a.PurchasePrice)||0;
       byDept[d].book += parseFloat(a.BookValue)||0;
-      if((a.AssetStatus||'Active')==='Active') byDept[d].active++;
+      const st = a.AssetStatus || 'Active';
+      if(st==='Active') byDept[d].active++;
+      else if(st==='Sold') byDept[d].sold++;
+      else if(st==='WrittenOff') byDept[d].writtenOff++;
+      const purpose = queuedPurposeByAsset[a.AssetID];
+      if(purpose==='transfer') byDept[d].transfer++;
+      else if(purpose==='sale') byDept[d].sale++;
+      else if(purpose==='writeoff') byDept[d].writeoff++;
+      else byDept[d].noQueue++;
     });
     const deptRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
-      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
+    }).join('');
+    const deptQueueRows = Object.keys(byDept).sort().map(d=>{
+      const v = byDept[d];
+      const totalQueued = v.transfer + v.sale + v.writeoff;
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.transfer}</td><td style="text-align:center;">${v.sale}</td><td style="text-align:center;">${v.writeoff}</td><td style="text-align:center;font-weight:600;">${totalQueued}</td></tr>`;
     }).join('');
 
     const byTag = {};
@@ -1130,16 +1161,25 @@ function renderDashboard(root){
       ${tilesHtml}
       <div class="row" style="margin-top:24px;align-items:flex-start;">
         <div style="flex:2;min-width:280px;">
-          <h2>สรุปแยกตามหน่วยงาน</h2>
+          <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
           <div style="overflow-x:auto;">
-            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งานอยู่</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
-            ${deptRows || '<tr><td colspan="5" class="empty">ไม่มีข้อมูล</td></tr>'}
+            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
+            ${deptRows || '<tr><td colspan="7" class="empty">ไม่มีข้อมูล</td></tr>'}
             </table>
           </div>
         </div>
         <div style="flex:1;min-width:200px;">
           <h2>สรุปแยกตามแท็กสถานะ</h2>
           <table><tr><th>แท็กสถานะ</th><th>จำนวน</th></tr>${tagRows}</table>
+        </div>
+      </div>
+      <div style="margin-top:24px;">
+        <h2>สรุปแยกตามหน่วยงาน (ตามการจัดการ / คิวรอ)</h2>
+        <p style="color:var(--muted);font-size:13px;">จำนวนทรัพย์สินที่ถูกมาร์คไว้รอออกใบโอนย้าย/ขาย/ตัดชำรุด แยกตามหน่วยงาน (ดูเพิ่มเติมได้ที่คอลัมน์ "จัดการ" ในหน้ารายการทรัพย์สิน)</p>
+        <div style="overflow-x:auto;">
+          <table><tr><th>หน่วยงาน</th><th>รอโอนย้าย</th><th>รอขาย</th><th>รอตัดชำรุด</th><th>รวมที่รอคิว</th></tr>
+          ${deptQueueRows || '<tr><td colspan="5" class="empty">ไม่มีข้อมูล</td></tr>'}
+          </table>
         </div>
       </div>
     `;
@@ -1155,10 +1195,18 @@ function renderDashboard(root){
       };
       const deptSheet = {
         name: 'สรุปตามหน่วยงาน',
-        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งานอยู่','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
+        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
         rows: Object.keys(byDept).sort().map(d=>{
           const v = byDept[d];
-          return [d, v.count, v.active, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
+          return [d, v.count, v.active, v.sold, v.writtenOff, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
+        })
+      };
+      const deptQueueSheet = {
+        name: 'สรุปการจัดการตามหน่วยงาน',
+        header: ['หน่วยงาน','รอโอนย้าย','รอขาย','รอตัดชำรุด','รวมที่รอคิว'],
+        rows: Object.keys(byDept).sort().map(d=>{
+          const v = byDept[d];
+          return [d, v.transfer, v.sale, v.writeoff, v.transfer+v.sale+v.writeoff];
         })
       };
       const tagSheet = {
@@ -1166,7 +1214,7 @@ function renderDashboard(root){
         header: ['แท็กสถานะ','จำนวน'],
         rows: ASSET_TAGS.map(t=>[t, byTag[t]||0])
       };
-      exportExcel('ข้อมูลรวมทรัพย์สิน.xlsx', [statusSheet, deptSheet, tagSheet]);
+      exportExcel('ข้อมูลรวมทรัพย์สิน.xlsx', [statusSheet, deptSheet, deptQueueSheet, tagSheet]);
     };
   }
 }
@@ -1174,7 +1222,7 @@ function renderDashboard(root){
 /* ================= LIST VIEW ================= */
 function renderList(root){
   root.innerHTML = `
-    <div class="card" id="queueCard">
+    <div class="card" id="queueCard" ${isViewOnly() ? 'style="display:none;"' : ''}>
       <h2>รายการรอออกใบโอนย้าย</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวโอนย้าย") รอรวมออกเป็นใบโอนย้าย — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
       <div class="toolbar no-print">
@@ -1684,7 +1732,7 @@ function doSubmitTransfer(){
 /* ================= SALE LIST VIEW ================= */
 function renderSaleList(root){
   root.innerHTML = `
-    <div class="card" id="saleQueueCard">
+    <div class="card" id="saleQueueCard" ${isViewOnly() ? 'style="display:none;"' : ''}>
       <h2>รายการรอออกใบขายออก</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวขาย") รอรวมออกเป็นใบขายออก — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
       <div class="toolbar no-print">
@@ -2160,7 +2208,7 @@ function doSubmitSale(){
 /* ================= WRITE-OFF LIST VIEW ================= */
 function renderWriteOffList(root){
   root.innerHTML = `
-    <div class="card" id="writeOffQueueCard">
+    <div class="card" id="writeOffQueueCard" ${isViewOnly() ? 'style="display:none;"' : ''}>
       <h2>รายการรอตัดชำรุด</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวตัดชำรุด") รอรวมออกเป็นใบตัดชำรุด — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
       <div class="toolbar no-print">
@@ -2893,25 +2941,28 @@ function renderSettings(root){
     const rowsHtml = userList.map((u,i)=>{
       const depts = u.Departments || [];
       const isAdmin = u.Role==='admin';
+      const isExecutive = u.Role==='executive';
+      const seesAllNoEdit = isAdmin || isExecutive; // ทั้ง Admin และผู้บริหารไม่ต้องกำหนดหน่วยงาน/เห็นราคาเสมอ
       return `
       <tr>
         <td><input type="text" data-ufield="Username" data-ui="${i}" value="${esc(u.Username)}" ${u.__isNew ? '' : 'readonly style="background:#f4f6f9;"'}></td>
         <td>
           <select data-ufield="Role" data-ui="${i}" onchange="toggleUserDeptSelect(${i})">
-            <option value="user" ${!isAdmin?'selected':''}>User</option>
+            <option value="user" ${(!isAdmin&&!isExecutive)?'selected':''}>User</option>
+            <option value="executive" ${isExecutive?'selected':''}>ผู้บริหาร (ดูอย่างเดียว)</option>
             <option value="admin" ${isAdmin?'selected':''}>Admin</option>
           </select>
         </td>
         <td>
-          <select data-ufield="Departments" data-ui="${i}" multiple size="4" style="min-width:160px;" ${isAdmin?'disabled':''}>
+          <select data-ufield="Departments" data-ui="${i}" multiple size="4" style="min-width:160px;" ${seesAllNoEdit?'disabled':''}>
             ${STATE.deptCodes.map(d=>`<option value="${esc(d.DeptName)}" ${depts.indexOf(d.DeptName)!==-1?'selected':''}>${esc(d.DeptName)}</option>`).join('')}
           </select>
-          <div style="font-size:11px;color:var(--muted);">${isAdmin ? 'Admin ไม่จำกัดหน่วยงาน' : 'กด Ctrl/Cmd ค้างเพื่อเลือกหลายหน่วยงาน'}</div>
+          <div style="font-size:11px;color:var(--muted);">${seesAllNoEdit ? (isAdmin?'Admin ไม่จำกัดหน่วยงาน':'ผู้บริหารเห็นทุกหน่วยงาน') : 'กด Ctrl/Cmd ค้างเพื่อเลือกหลายหน่วยงาน'}</div>
         </td>
         <td><input type="password" data-ufield="Password" data-ui="${i}" placeholder="${u.__isNew ? 'ระบุรหัสผ่าน' : 'เว้นว่าง = ไม่เปลี่ยน'}"></td>
         <td style="text-align:center;">
-          <input type="checkbox" data-ufield="CanViewPrices" data-ui="${i}" ${u.CanViewPrices?'checked':''} ${isAdmin?'disabled':''}>
-          ${isAdmin ? '<div style="font-size:11px;color:var(--muted);">Admin เห็นเสมอ</div>' : ''}
+          <input type="checkbox" data-ufield="CanViewPrices" data-ui="${i}" ${u.CanViewPrices?'checked':''} ${seesAllNoEdit?'disabled':''}>
+          ${seesAllNoEdit ? '<div style="font-size:11px;color:var(--muted);">เห็นเสมอ</div>' : ''}
         </td>
         <td class="no-print" style="white-space:nowrap;">
           <button class="btn btn-secondary btn-sm" onclick="saveUserRow(${i})">บันทึก</button>
@@ -2930,7 +2981,7 @@ function renderSettings(root){
   window.toggleUserDeptSelect = (i)=>{
     const roleEl = document.querySelector(`[data-ufield="Role"][data-ui="${i}"]`);
     const deptEl = document.querySelector(`[data-ufield="Departments"][data-ui="${i}"]`);
-    if(deptEl) deptEl.disabled = roleEl.value === 'admin';
+    if(deptEl) deptEl.disabled = (roleEl.value === 'admin' || roleEl.value === 'executive');
   };
 
   function addBlankUserRow(){
