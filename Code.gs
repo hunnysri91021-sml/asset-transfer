@@ -244,6 +244,12 @@ function doPost(e) {
       case 'login':
         result = login_(body);
         break;
+      case 'heartbeat':
+        result = heartbeat_(body);
+        break;
+      case 'adminGetOnlineUsers':
+        result = adminGetOnlineUsers_(body);
+        break;
       case 'adminGetUsers':
         result = getUsers_(body);
         break;
@@ -653,6 +659,46 @@ function getRequestingUser_(pw) {
     }
   }
   return null;
+}
+
+// ============================================================
+// HEARTBEAT / ผู้ใช้งานออนไลน์ — Frontend ยิง action 'heartbeat' เป็นระยะขณะเปิดแอปค้างไว้
+// (ดู startHeartbeat ใน index.html) เพื่อปักหมุดผู้ใช้เป็น "ออนไลน์" ชั่วคราวใน CacheService
+// (หมดอายุเองถ้าหยุดส่ง — ไม่ต้องมีขั้นตอน "logout เพื่อล้างสถานะ" แยกต่างหาก)
+// ============================================================
+const ONLINE_USER_CACHE_PREFIX = 'online_';
+const ONLINE_USER_CACHE_TTL_SEC = 120; // ถือว่า "ออนไลน์" ถ้ามี heartbeat ภายใน 2 นาทีล่าสุด
+
+function heartbeat_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  try {
+    CacheService.getScriptCache().put(ONLINE_USER_CACHE_PREFIX + user.username, '1', ONLINE_USER_CACHE_TTL_SEC);
+  } catch (err) { /* ปักหมุดออนไลน์ไม่สำเร็จก็ไม่ critical ต่อการใช้งานจริง */ }
+  return { ok: true };
+}
+
+// Admin ดูรายชื่อผู้ใช้ที่ออนไลน์อยู่ตอนนี้ — เทียบรายชื่อผู้ใช้ทั้งหมดในชีต Users กับหมุดที่ยังไม่หมดอายุใน CacheService
+function adminGetOnlineUsers_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  const usernames = [];
+  for (let i = 1; i < values.length; i++) {
+    const u = String(values[i][idx.Username] || '').trim();
+    if (u) usernames.push(u);
+  }
+
+  let online = [];
+  try {
+    const cache = CacheService.getScriptCache();
+    const keys = usernames.map(u => ONLINE_USER_CACHE_PREFIX + u);
+    const found = keys.length ? cache.getAll(keys) : {};
+    online = usernames.filter(u => found[ONLINE_USER_CACHE_PREFIX + u] !== undefined);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ถือว่าไม่มีข้อมูลออนไลน์ ไม่ error ทั้งหน้า */ }
+
+  return { ok: true, data: { online } };
 }
 
 // Admin แก้ไข/เพิ่ม/ลบได้ทุกหน่วยงาน ส่วน User แก้ไขได้เฉพาะหน่วยงานที่ Admin กำหนดสิทธิ์ให้เท่านั้น
