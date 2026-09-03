@@ -244,6 +244,12 @@ function doPost(e) {
       case 'login':
         result = login_(body);
         break;
+      case 'heartbeat':
+        result = heartbeat_(body);
+        break;
+      case 'adminGetOnlineUsers':
+        result = adminGetOnlineUsers_(body);
+        break;
       case 'adminGetUsers':
         result = getUsers_(body);
         break;
@@ -542,11 +548,36 @@ function setAssetsTag_(assetIds, tagValue) {
 
 // ทรัพย์สินที่มีใบขายออก หรือใบตัดชำรุด ซึ่งอนุมัติแล้ว ถือว่าสิ้นสภาพการใช้งานจริง จึงซ่อนจากรายการหลัก
 // คืนค่า map ของ AssetID -> 'Sold' | 'WrittenOff' (เฉพาะรายการที่สิ้นสภาพแล้ว)
+// getDisposedAssetStatus_ อ่านเต็ม 4 ชีต (Sales/SaleItems/WriteOffs/WriteOffItems) ทุกครั้ง เป็นการคำนวณที่หนักที่สุด
+// ในระบบและถูกเรียกแทบทุกหน้า (Dashboard, รายการทรัพย์สิน, คิวรอโอนย้าย/ขาย/ตัดชำรุด) จึงแคชผลลัพธ์ไว้สั้นๆ
+// ด้วย CacheService (เหมือน getSharePointAccessToken_) แล้วล้างแคชทันทีทุกจุดที่สถานะขาย/ตัดชำรุดเปลี่ยนจริง
+// (ดู invalidateDisposedAssetStatusCache_ — เรียกคู่กับ setAssetsTag_ ทุกจุดตามกติกาใน CLAUDE.md)
+// เพื่อให้ยังคง "เห็นผลทันที" สำหรับการเปลี่ยนแปลงที่เกิดผ่านระบบนี้เอง มีโอกาสเห็นข้อมูลเก่าได้แค่ในกรณีที่หายากมาก
+// (ระบบอื่นเขียนชีตตรงๆ นอกแอปนี้ ภายในหน้าต่างเวลาแคช)
+const DISPOSED_STATUS_CACHE_KEY = 'disposedAssetStatus_v1';
+const DISPOSED_STATUS_CACHE_TTL_SEC = 60;
+
 function getDisposedAssetStatus_() {
+  let cache;
+  try {
+    cache = CacheService.getScriptCache();
+    const cached = cache.get(DISPOSED_STATUS_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
+
   const status = {};
   markDisposedFromDocs_(status, SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', 'Sold');
   markDisposedFromDocs_(status, SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', 'WrittenOff');
+
+  try {
+    if (cache) cache.put(DISPOSED_STATUS_CACHE_KEY, JSON.stringify(status), DISPOSED_STATUS_CACHE_TTL_SEC);
+  } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
+
   return status;
+}
+
+function invalidateDisposedAssetStatusCache_() {
+  try { CacheService.getScriptCache().remove(DISPOSED_STATUS_CACHE_KEY); } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
 }
 
 function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
@@ -628,6 +659,46 @@ function getRequestingUser_(pw) {
     }
   }
   return null;
+}
+
+// ============================================================
+// HEARTBEAT / ผู้ใช้งานออนไลน์ — Frontend ยิง action 'heartbeat' เป็นระยะขณะเปิดแอปค้างไว้
+// (ดู startHeartbeat ใน index.html) เพื่อปักหมุดผู้ใช้เป็น "ออนไลน์" ชั่วคราวใน CacheService
+// (หมดอายุเองถ้าหยุดส่ง — ไม่ต้องมีขั้นตอน "logout เพื่อล้างสถานะ" แยกต่างหาก)
+// ============================================================
+const ONLINE_USER_CACHE_PREFIX = 'online_';
+const ONLINE_USER_CACHE_TTL_SEC = 120; // ถือว่า "ออนไลน์" ถ้ามี heartbeat ภายใน 2 นาทีล่าสุด
+
+function heartbeat_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  try {
+    CacheService.getScriptCache().put(ONLINE_USER_CACHE_PREFIX + user.username, '1', ONLINE_USER_CACHE_TTL_SEC);
+  } catch (err) { /* ปักหมุดออนไลน์ไม่สำเร็จก็ไม่ critical ต่อการใช้งานจริง */ }
+  return { ok: true };
+}
+
+// Admin ดูรายชื่อผู้ใช้ที่ออนไลน์อยู่ตอนนี้ — เทียบรายชื่อผู้ใช้ทั้งหมดในชีต Users กับหมุดที่ยังไม่หมดอายุใน CacheService
+function adminGetOnlineUsers_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  const usernames = [];
+  for (let i = 1; i < values.length; i++) {
+    const u = String(values[i][idx.Username] || '').trim();
+    if (u) usernames.push(u);
+  }
+
+  let online = [];
+  try {
+    const cache = CacheService.getScriptCache();
+    const keys = usernames.map(u => ONLINE_USER_CACHE_PREFIX + u);
+    const found = keys.length ? cache.getAll(keys) : {};
+    online = usernames.filter(u => found[ONLINE_USER_CACHE_PREFIX + u] !== undefined);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ถือว่าไม่มีข้อมูลออนไลน์ ไม่ error ทั้งหน้า */ }
+
+  return { ok: true, data: { online } };
 }
 
 // Admin แก้ไข/เพิ่ม/ลบได้ทุกหน่วยงาน ส่วน User แก้ไขได้เฉพาะหน่วยงานที่ Admin กำหนดสิทธิ์ให้เท่านั้น
@@ -807,6 +878,7 @@ function adminRestoreAsset_(body) {
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
   setAssetsTag_([assetId], 'ใช้งาน');
+  invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะใช้งานทรัพย์สิน ' + assetId);
   return { ok: true, data: { voidedCount } };
 }
@@ -1556,6 +1628,7 @@ function createSale_(body) {
     const soldAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIdsNow);
     setAssetsTag_(soldAssetIdsNow, 'ขาย');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
@@ -1606,6 +1679,7 @@ function decideSale_(body) {
     const soldAssetIds = getSaleItems_(saleId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(soldAssetIds);
     setAssetsTag_(soldAssetIds, 'ขาย');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
   }
 
@@ -1751,6 +1825,7 @@ function createWriteOff_(body) {
     const writtenOffAssetIdsNow = items.map(it => it.assetId).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIdsNow);
     setAssetsTag_(writtenOffAssetIdsNow, 'ชำรุด');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
@@ -1801,6 +1876,7 @@ function decideWriteOff_(body) {
     const writtenOffAssetIds = getWriteOffItems_(writeOffId).map(it => it.AssetID).filter(Boolean);
     purgeAssetFromAllQueues_(writtenOffAssetIds);
     setAssetsTag_(writtenOffAssetIds, 'ชำรุด');
+    invalidateDisposedAssetStatusCache_();
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
   }
 

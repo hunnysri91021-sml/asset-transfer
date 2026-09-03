@@ -154,6 +154,10 @@
     <div class="sidebar-brand">
       <h1>ระบบจัดการทรัพย์สิน</h1>
       <div class="sub">บริษัท สยามกลการโลจิสติกส์ จำกัด</div>
+      <div style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:5px;color:rgba(255,255,255,0.7);">
+        <span id="onlineDot" style="width:8px;height:8px;border-radius:50%;background:#9aa5b1;display:inline-block;flex:0 0 auto;"></span>
+        <span id="onlineText">กำลังเชื่อมต่อ...</span>
+      </div>
     </div>
     <nav id="mainNav" class="sidebar-nav">
       <div class="nav-group-label">ภาพรวม</div>
@@ -423,6 +427,7 @@ function renderLogin(){
 }
 
 function logout(){
+  stopHeartbeat();
   sessionStorage.removeItem(AUTH_SESSION_KEY);
   STATE.adminPassword = null;
   STATE.role = null;
@@ -437,7 +442,39 @@ function enterApp(){
   const params = new URLSearchParams(location.search);
   const av = params.get('view');
   if(av==='approve' || av==='approveSale' || av==='approveWriteOff'){ route(); return; }
-  if(checkAuth()) route(); else renderLogin();
+  if(checkAuth()){ startHeartbeat(); route(); } else { stopHeartbeat(); renderLogin(); }
+}
+
+/* ================= HEARTBEAT / สถานะออนไลน์ ================= */
+// ยิง action 'heartbeat' เป็นระยะเพื่อ (1) ปักหมุดผู้ใช้นี้ว่า "ออนไลน์" ให้ Admin เห็นในหน้าตั้งค่า
+// และ (2) ใช้ผลสำเร็จ/ไม่สำเร็จของ request นี้เองมาบอกสถานะ "ระบบออนไลน์อยู่" ที่แถบเมนูด้านซ้าย
+let heartbeatIntervalId = null;
+const HEARTBEAT_INTERVAL_MS = 45000;
+
+function startHeartbeat(){
+  stopHeartbeat();
+  sendHeartbeat();
+  heartbeatIntervalId = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+}
+function stopHeartbeat(){
+  if(heartbeatIntervalId){ clearInterval(heartbeatIntervalId); heartbeatIntervalId = null; }
+}
+function sendHeartbeat(){
+  apiPost({ action:'heartbeat', password: STATE.adminPassword }).then(res=>{
+    setOnlineStatus(!!(res && res.ok));
+  });
+}
+function setOnlineStatus(isOnline){
+  const dot = document.getElementById('onlineDot');
+  const text = document.getElementById('onlineText');
+  if(!dot || !text) return;
+  if(isOnline){
+    dot.style.background = '#2ecc71';
+    text.textContent = 'ระบบออนไลน์';
+  } else {
+    dot.style.background = '#e74c3c';
+    text.textContent = 'ขาดการเชื่อมต่อ';
+  }
 }
 
 /* ================= ROUTER ================= */
@@ -2564,6 +2601,13 @@ function doSubmitWriteOff(){
 function renderSettings(root){
   root.innerHTML = `
     <div class="card">
+      <h2>ผู้ใช้งานออนไลน์ตอนนี้</h2>
+      <p style="color:var(--muted);font-size:13px;">นับว่า "ออนไลน์" ถ้ามีการใช้งานภายใน 2 นาทีล่าสุด</p>
+      <div id="onlineUsersHost">กำลังโหลด...</div>
+      <div class="toolbar" style="margin-top:8px;"><button class="btn btn-secondary btn-sm" id="btnRefreshOnlineUsers">↻ รีเฟรช</button></div>
+    </div>
+
+    <div class="card">
       <h2>หน่วยงาน และอีเมลผู้อนุมัติ</h2>
       <p style="color:var(--muted);font-size:13px;">กำหนดรหัสหน่วยงาน (ใช้ออกเลขที่เอกสาร รูปแบบ <b>รหัส/ลำดับ/ปีพ.ศ.2หลัก</b> เช่น ACC/001/69) และอีเมลผู้อนุมัติประจำหน่วยงาน — ระบบจะเติมชื่อ/อีเมลผู้อนุมัติให้อัตโนมัติเมื่อเลือกหน่วยงานตอนสร้างใบโอนย้าย/ขายออก/ตัดชำรุด</p>
       <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnDeptAddNew">+ เพิ่มหน่วยงานใหม่</button></div>
@@ -2613,6 +2657,7 @@ function renderSettings(root){
 
   loadDeptCodes().then(loadUsers);
   loadSourceLink();
+  loadOnlineUsers();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
@@ -2620,7 +2665,18 @@ function renderSettings(root){
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
+  document.getElementById('btnRefreshOnlineUsers').onclick = loadOnlineUsers;
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
+
+  function loadOnlineUsers(){
+    const host = document.getElementById('onlineUsersHost');
+    apiPost({ action:'adminGetOnlineUsers', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ host.innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      const online = res.data.online || [];
+      if(!online.length){ host.innerHTML = '<span style="color:var(--muted);">ไม่มีผู้ใช้งานออนไลน์ในขณะนี้</span>'; return; }
+      host.innerHTML = online.map(u=>`<span class="badge badge-approved" style="margin:2px 4px 2px 0;">🟢 ${esc(u)}</span>`).join('');
+    });
+  }
 
   function syncScrapPrice(){
     const btn = document.getElementById('btnSyncScrapPrice');
