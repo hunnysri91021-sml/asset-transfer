@@ -148,6 +148,9 @@ function doGet(e) {
       case 'getAssetListBundle':
         result = { ok: true, data: getAssetListBundle_(e.parameter.q || '') };
         break;
+      case 'getAuctionPublicEnabled':
+        result = { ok: true, data: { enabled: getAuctionPublicEnabled_() } };
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -273,6 +276,9 @@ function doPost(e) {
         break;
       case 'adminSaveSourceSheetLink':
         result = adminSaveSourceSheetLink_(body);
+        break;
+      case 'adminSaveAuctionPublicSetting':
+        result = adminSaveAuctionPublicSetting_(body);
         break;
       case 'adminSyncScrapPriceToBookValue':
         result = adminSyncScrapPriceToBookValue_(body);
@@ -939,6 +945,21 @@ function getSourceSheetUrl_() {
   return PropertiesService.getScriptProperties().getProperty(SOURCE_SHEET_URL_PROP) || '';
 }
 
+// เปิด/ปิดหน้า "ประมูลขาย" แบบสาธารณะ (เข้าดูได้โดยไม่ต้องล็อกอิน) — ให้ Admin กำหนดเปิด/ปิดที่หน้าตั้งค่า
+// การอ่านค่านี้ (getAuctionPublicEnabled) ไม่ต้องใช้รหัสผ่านโดยตั้งใจ เพราะผู้เข้าชมยังไม่ได้ล็อกอิน
+// ต้องเช็คค่านี้ได้ก่อนถึงจะรู้ว่าจะแสดงหน้าประมูลขายให้เลย หรือต้องพาไปหน้าล็อกอินตามปกติ
+const AUCTION_PUBLIC_ENABLED_PROP = 'AUCTION_PUBLIC_ENABLED';
+function getAuctionPublicEnabled_() {
+  return PropertiesService.getScriptProperties().getProperty(AUCTION_PUBLIC_ENABLED_PROP) === '1';
+}
+function adminSaveAuctionPublicSetting_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const enabled = !!body.enabled;
+  PropertiesService.getScriptProperties().setProperty(AUCTION_PUBLIC_ENABLED_PROP, enabled ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_AUCTION_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การเข้าดูหน้าประมูลขายแบบสาธารณะ (ไม่ต้องล็อกอิน)');
+  return { ok: true };
+}
+
 // ราคาซาก (ScrapPrice) ถูกบังคับให้เท่ากับมูลค่าตามบัญชี (BookValue) เสมอ (ดู adminSaveAsset_/adminSyncFromSource_)
 // ใช้ adminSyncScrapPriceToBookValue_ เพื่อไล่แก้ข้อมูลเก่าที่ยังไม่ตรงกันย้อนหลัง
 function adminSyncScrapPriceToBookValue_(body) {
@@ -994,7 +1015,7 @@ function findSourceSheet_(srcSs) {
 function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const notifyEmails = getNotifyEmails_();
-  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga } };
+  return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga, auctionPublicEnabled: getAuctionPublicEnabled_() } };
 }
 
 function adminSaveSourceSheetLink_(body) {
