@@ -1360,6 +1360,7 @@ function renderAuction(root){
   }
 
   function renderRowsTable(rows){
+    const canEditPrice = STATE.role==='admin';
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th></tr>`;
     rows.forEach(a=>{
       const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice(a.BookValue) || '');
@@ -1369,12 +1370,24 @@ function renderAuction(root){
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
         <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
-        <td class="money">${refValue ? fmtMoney(refValue) : '-'}</td>
+        <td class="money">${canEditPrice
+          ? `<input type="text" inputmode="decimal" class="auctionPriceInput" data-id="${esc(a.AssetID)}" value="${esc(refValue||'')}" style="width:90px;" placeholder="ราคากลาง">`
+          : (refValue ? fmtMoney(refValue) : '-')}</td>
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
       </tr>`;
     });
     html += '</table></div>';
     return html;
+  }
+
+  function saveReferencePrice(assetId, referencePrice){
+    apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId, sendToAuction: true, referencePrice }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกราคากลางไม่สำเร็จ','err'); load(); return; }
+      const row = auctionRows.find(r=>r.AssetID===assetId);
+      if(row) row.ReferencePrice = referencePrice;
+      toast('บันทึกราคากลางสำเร็จ','ok');
+      renderAuctionTable();
+    });
   }
 
   function renderAuctionTable(){
@@ -1401,6 +1414,10 @@ function renderAuction(root){
       html += `<h3 style="margin-top:20px;">ไม่ระบุช่วงราคา (${unassigned.length} รายการ)</h3>` + renderRowsTable(unassigned);
     }
     host.innerHTML = html;
+
+    host.querySelectorAll('.auctionPriceInput').forEach(inp=>{
+      inp.onchange = ()=> saveReferencePrice(inp.dataset.id, inp.value.trim());
+    });
   }
 
   function exportAuction(){
