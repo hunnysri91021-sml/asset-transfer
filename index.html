@@ -1249,7 +1249,7 @@ function renderAuction(root){
   let showBookValue = false;
   let auctionRows = [];
   let priceBrackets = [];
-  const typeLabel = { WrittenOff:'ตัดชำรุดแล้ว' };
+  const typeLabel = { WrittenOff:'ตัดชำรุดแล้ว', Sold:'ขายออก (ประมูล)' };
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
   // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
@@ -1270,6 +1270,7 @@ function renderAuction(root){
           <h3>📦 รายการสินค้า</h3>
           <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
             <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>${esc(content.writeoffNote||'')}</td></tr>
+            <tr><td><span class="badge badge-pending">รอขาย (ประมูล)</span></td><td>${esc(content.saleNote||'')}</td></tr>
           </table>
           <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
           ${bracketsHtml}
@@ -1292,7 +1293,7 @@ function renderAuction(root){
           <button class="btn btn-secondary btn-sm" id="btnAuctionBackToIntro">← กลับไปหน้าหลักการประมูล</button>
         </div>
         <h2>ประมูลขาย</h2>
-        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และ Admin เลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
+        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และทรัพย์สินขายออกที่เลือกช่องทางประมูล — Admin คัดเลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
           <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
           <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
@@ -1302,6 +1303,17 @@ function renderAuction(root){
         <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
         <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
       </div>
+
+      ${STATE.role==='admin' ? `
+      <div class="card no-print">
+        <h2>สรุปรายการประมูลส่งผู้บริหาร</h2>
+        <p style="color:var(--muted);font-size:13px;">ระบบดึงรายการที่กำลังเปิดประมูลอยู่ ณ ขณะนี้มาแนบเป็นตารางในอีเมลให้อัตโนมัติ — กรอกอีเมลผู้บริหารและข้อความ/หมายเหตุเพิ่มเติมเอง แล้วกดส่ง</p>
+        <label>อีเมลผู้บริหาร (คั่นด้วยจุลภาคถ้ามีหลายคน) *</label>
+        <input type="text" id="auctionSummaryRecipients" placeholder="exec1@company.com, exec2@company.com">
+        <label style="margin-top:8px;">ข้อความ/หมายเหตุเพิ่มเติม</label>
+        <textarea id="auctionSummaryMessage" rows="4" placeholder="เช่น เรียนผู้บริหาร ขอสรุปรายการประมูลขายประจำเดือนนี้..."></textarea>
+        <button class="btn btn-primary btn-sm" id="btnSendAuctionSummary" style="margin-top:8px;">📧 ส่งสรุปให้ผู้บริหาร</button>
+      </div>` : ''}
     `;
 
     document.getElementById('btnAuctionBackToIntro').onclick = showIntro;
@@ -1317,8 +1329,23 @@ function renderAuction(root){
         renderAuctionTable();
       };
     }
+    const sendSummaryBtn = document.getElementById('btnSendAuctionSummary');
+    if(sendSummaryBtn) sendSummaryBtn.onclick = sendAuctionSummary;
 
     load();
+  }
+
+  function sendAuctionSummary(){
+    const recipients = document.getElementById('auctionSummaryRecipients').value.trim();
+    if(!recipients){ toast('กรุณาระบุอีเมลผู้บริหาร','err'); return; }
+    const message = document.getElementById('auctionSummaryMessage').value;
+    const btn = document.getElementById('btnSendAuctionSummary');
+    btn.disabled = true; btn.textContent = 'กำลังส่ง...';
+    apiPost({ action:'sendAuctionSummaryEmail', password: STATE.adminPassword, recipients, message }).then(res=>{
+      btn.disabled = false; btn.textContent = '📧 ส่งสรุปให้ผู้บริหาร';
+      if(!res.ok){ toast(res.error||'ส่งอีเมลไม่สำเร็จ','err'); return; }
+      toast('ส่งสรุปรายการประมูล '+res.data.count+' รายการสำเร็จ','ok');
+    });
   }
 
   function load(){
@@ -1440,12 +1467,12 @@ function renderAuction(root){
 /* ================= AUCTION SELECTION VIEW (Admin) — คัดเลือกทรัพย์สินขาย/ตัดชำรุดอนุมัติแล้ว ส่งขึ้นหน้าประมูลขายสาธารณะ ================= */
 function renderAuctionSelection(root){
   let candidates = [];
-  const typeLabel = { Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุดแล้ว' };
+  const typeLabel = { Sold:'ขายออก (ประมูล)', WrittenOff:'ตัดชำรุดแล้ว' };
 
   root.innerHTML = `
     <div class="card">
       <h2>คัดเลือกรายการประมูล</h2>
-      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — รายการที่ขายไปแล้วจะย้ายไปแสดงในส่วน "ประวัติทรัพย์สินที่ขายแล้ว" ด้านล่างแทน</p>
+      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว หรือขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — รายการขายออกช่องทาง "ขาย" ปกติจะย้ายไปแสดงในส่วน "ประวัติทรัพย์สินที่ขายแล้ว" ด้านล่างแทน</p>
       <div class="toolbar no-print">
         <input type="text" id="aselSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <select id="aselSentFilter" style="max-width:170px;">
@@ -1489,7 +1516,7 @@ function renderAuctionSelection(root){
   }
 
   function activeCandidates(){
-    return candidates.filter(a=>a.AssetStatus!=='Sold');
+    return candidates.filter(a=>a.AssetStatus!=='Sold' || a.SaleChannel==='ประมูล');
   }
 
   function filteredCandidates(){
@@ -1538,7 +1565,7 @@ function renderAuctionSelection(root){
   function renderHistoryTable(){
     const host = document.getElementById('aselHistTableHost');
     const qq = (document.getElementById('aselHistSearch').value||'').trim().toLowerCase();
-    const rows = candidates.filter(a => a.AssetStatus==='Sold' &&
+    const rows = candidates.filter(a => a.AssetStatus==='Sold' && a.SaleChannel!=='ประมูล' &&
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselHistCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
@@ -2228,9 +2255,9 @@ function renderSaleList(root){
 
   function exportSaleList(){
     if(!STATE.sales.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['เลขที่','วันที่','หน่วยงาน','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
+    const header = ['เลขที่','วันที่','หน่วยงาน','ช่องทาง','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
     const dataRows = STATE.sales.map(s => [
-      s.RunningNo, fmtDate(s.CreatedAt), s.FromDept, s.Buyer||'', s.ItemCount,
+      s.RunningNo, fmtDate(s.CreatedAt), s.FromDept, (s.Channel==='ประมูล'?'ประมูล':'ขาย'), s.Buyer||'', s.ItemCount,
       Number(s.TotalSalePrice)||0, (s.Status==='Approved'?'ขายแล้ว':(STATUS_LABELS[s.Status]||s.Status)), s.ApproverName||s.ApproverEmail||'', s.AllImages||''
     ]);
     exportExcel('รายการขายออก.xlsx', [{ name:'ขายออก', header, rows: dataRows }]);
@@ -2257,12 +2284,13 @@ function renderSaleList(root){
     const host = document.getElementById('saleListTableHost');
     document.getElementById('saleListCount').textContent = 'รวม '+STATE.sales.length+' รายการ';
     if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการขายออก</div>'; return; }
-    let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
+    let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ช่องทาง</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
     STATE.sales.forEach(s=>{
       html += `<tr>
         <td><b>${esc(s.RunningNo)}</b></td>
         <td>${fmtDate(s.CreatedAt)}</td>
         <td>${esc(s.FromDept)}</td>
+        <td><span class="badge ${s.Channel==='ประมูล'?'badge-pending':'badge-approved'}">${s.Channel==='ประมูล'?'ประมูล':'ขาย'}</span></td>
         <td>${esc(s.Buyer||'-')}</td>
         <td style="text-align:center;">${s.ItemCount}</td>
         <td class="money">${fmtMoney(s.TotalSalePrice)}</td>
@@ -2294,6 +2322,12 @@ function renderSaleCreate(root){
   root.innerHTML = `
     <div class="card">
       <h2>บันทึกขายออกทรัพย์สิน</h2>
+      <label>ช่องทางจำหน่าย</label>
+      <div class="toolbar" style="margin-bottom:10px;">
+        <button type="button" class="btn btn-sm" id="sChannelSale" data-channel="ขาย">ขาย</button>
+        <button type="button" class="btn btn-sm" id="sChannelAuction" data-channel="ประมูล">ประมูล</button>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin:-6px 0 12px;">"ประมูล" = เมื่ออนุมัติแล้วรายการนี้จะไปเป็นตัวเลือกในหน้า "คัดเลือกรายการประมูล" ให้ Admin ส่งขึ้นหน้าประมูลขายสาธารณะได้ (เหมือนทรัพย์สินตัดชำรุด) — "ขาย" = ขายตรง ไม่เข้าสู่ระบบประมูล</p>
       <div class="row">
         <div>
           <label>หน่วยงานเจ้าของทรัพย์สิน</label>
@@ -2352,6 +2386,15 @@ function renderSaleCreate(root){
   loadAssetsForSearch();
   renderSaleItems();
 
+  let saleChannel = h.channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
+  function renderChannelButtons(){
+    document.getElementById('sChannelSale').className = 'btn btn-sm ' + (saleChannel==='ขาย' ? 'btn-primary' : 'btn-secondary');
+    document.getElementById('sChannelAuction').className = 'btn btn-sm ' + (saleChannel==='ประมูล' ? 'btn-primary' : 'btn-secondary');
+  }
+  renderChannelButtons();
+  document.getElementById('sChannelSale').onclick = ()=>{ saleChannel='ขาย'; renderChannelButtons(); };
+  document.getElementById('sChannelAuction').onclick = ()=>{ saleChannel='ประมูล'; renderChannelButtons(); };
+
   document.getElementById('btnSubmitSale').onclick = goToSalePreview;
 
   function goToSalePreview(){
@@ -2361,6 +2404,7 @@ function renderSaleCreate(root){
     if(!deptSkipsApproval(fromDept) && !approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
     STATE.saleHeader = {
       fromDept,
+      channel: saleChannel,
       buyer: document.getElementById('sBuyer').value,
       remark: document.getElementById('sRemark').value,
       createdBy: document.getElementById('sCreatedBy').value,
@@ -2524,7 +2568,7 @@ function renderSaleCreatePreview(root){
   const draftDoc = {
     RunningNo: '(จะออกเลขที่อัตโนมัติเมื่อบันทึก)',
     CreatedAt: new Date().toISOString(),
-    FromDept: h.fromDept, Buyer: h.buyer, Remark: h.remark, Status: 'Draft',
+    FromDept: h.fromDept, Channel: h.channel, Buyer: h.buyer, Remark: h.remark, Status: 'Draft',
     Items: STATE.draftSaleItems.map(it => ({
       AssetID: it.assetId, AssetName: it.assetName, Images: it.images,
       ScrapPrice: it.scrapPrice, AuctionPrice: it.auctionPrice, SalePrice: it.salePrice, Remark: it.remark
@@ -2548,7 +2592,7 @@ function doSubmitSale(){
   const payload = {
     action:'createSale',
     password: STATE.adminPassword,
-    fromDept: h.fromDept, buyer: h.buyer, remark: h.remark,
+    fromDept: h.fromDept, channel: h.channel, buyer: h.buyer, remark: h.remark,
     createdBy: h.createdBy, createdByEmail: h.createdByEmail,
     approverName: h.approverName, approverEmail: h.approverEmail,
     items: STATE.draftSaleItems
@@ -3133,6 +3177,7 @@ function renderSettings(root){
         <label>หัวข้อหน้าแรก</label>
         <input type="text" id="auctionIntroTitle" placeholder="สรุปขั้นตอนการประมูลสินค้า">
         <div class="row" style="margin-top:10px;">
+          <div><label>คำอธิบายประเภท "รอขาย (ประมูล)"</label><input type="text" id="auctionSaleNote" placeholder="ทรัพย์สินขายออกที่เลือกช่องทางประมูล"></div>
           <div><label>คำอธิบายประเภท "รอตัดชำรุด"</label><input type="text" id="auctionWriteoffNote" placeholder="สินค้าชำรุด"></div>
         </div>
         <label style="margin-top:10px;">วิธีเข้าร่วมประมูล + ไทม์ไลน์</label>
@@ -3375,6 +3420,7 @@ function renderSettings(root){
     apiGet({ action:'getAuctionIntroContent' }).then(res=>{
       if(!res.ok) return;
       document.getElementById('auctionIntroTitle').value = res.data.title || '';
+      document.getElementById('auctionSaleNote').value = res.data.saleNote || '';
       document.getElementById('auctionWriteoffNote').value = res.data.writeoffNote || '';
       document.getElementById('auctionIntroNote').value = res.data.note || '';
     });
@@ -3382,11 +3428,12 @@ function renderSettings(root){
 
   function saveAuctionIntroNote(){
     const title = document.getElementById('auctionIntroTitle').value;
+    const saleNote = document.getElementById('auctionSaleNote').value;
     const writeoffNote = document.getElementById('auctionWriteoffNote').value;
     const note = document.getElementById('auctionIntroNote').value;
     const btn = document.getElementById('btnSaveAuctionIntroNote');
     btn.disabled = true;
-    apiPost({ action:'adminSaveAuctionIntroContent', password: STATE.adminPassword, title, writeoffNote, note }).then(res=>{
+    apiPost({ action:'adminSaveAuctionIntroContent', password: STATE.adminPassword, title, saleNote, writeoffNote, note }).then(res=>{
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกเนื้อหาหน้าแรกประมูลขายสำเร็จ','ok');
@@ -3653,6 +3700,7 @@ function buildSaleDocHtml(s, withToolbar){
           <div><b>วันที่</b> ${fmtDate(s.CreatedAt)}</div>
         </div>
         <div class="doc-field"><b>หน่วยงาน</b> ${esc(s.FromDept)}</div>
+        <div class="doc-field"><b>ช่องทางจำหน่าย</b> ${s.Channel==='ประมูล' ? 'ประมูล' : 'ขาย'}</div>
         <div class="doc-field"><b>ผู้ซื้อ/ผู้ประมูลได้</b> ${esc(s.Buyer||'-')}</div>
         <div class="doc-field"><b>หมายเหตุ</b> ${esc(s.Remark||'-')}</div>
 
