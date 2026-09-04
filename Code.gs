@@ -49,7 +49,7 @@ const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt'],
-  TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
+  TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt', 'ReferencePrice'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
@@ -280,6 +280,9 @@ function doPost(e) {
       case 'adminSaveAuctionPublicSetting':
         result = adminSaveAuctionPublicSetting_(body);
         break;
+      case 'adminSetQueueReferencePrice':
+        result = adminSetQueueReferencePrice_(body);
+        break;
       case 'adminSyncScrapPriceToBookValue':
         result = adminSyncScrapPriceToBookValue_(body);
         break;
@@ -380,6 +383,7 @@ function buildQueueRow_(q, a, disposed) {
     AssetID: q.AssetID,
     AddedBy: q.AddedBy,
     AddedAt: q.AddedAt,
+    ReferencePrice: q.ReferencePrice || '',
     AssetName: a.AssetName || '',
     Department: a.Department || '',
     DisplayImage: a.DisplayImage || '',
@@ -485,6 +489,31 @@ function addToAssetQueue_(body, purpose) {
     sh.appendRow(newRow);
     return { ok: true, data: { alreadyQueued: false } };
   });
+}
+
+// Admin ตั้ง "ราคากลาง" ให้ทรัพย์สินที่อยู่ในคิวรอ (ใช้ประกอบการประมูลที่หน้า "ประมูลขาย")
+// ผูกกับแถวคิวรอ ไม่ใช่ตัวทรัพย์สินเอง เพราะเป็นราคาที่ตั้งไว้เฉพาะรอบประมูลนี้ — ถ้าทรัพย์สินหลุดคิว/เข้าคิวใหม่ ต้องตั้งราคากลางใหม่
+function adminSetQueueReferencePrice_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const price = parseFloat(body.referencePrice);
+  if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคากลางที่ถูกต้อง' };
+
+  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.ReferencePrice === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ ReferencePrice ในชีต TransferQueue กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.getRange(i + 1, idx.ReferencePrice + 1).setValue(price);
+      logActivity_('', 'ADMIN_SET_REFERENCE_PRICE', 'admin', 'ตั้งราคากลางทรัพย์สิน ' + assetId + ' = ' + price);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินนี้ในคิวรอ' };
 }
 
 function removeFromAssetQueue_(body, purpose) {
