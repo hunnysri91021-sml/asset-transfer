@@ -48,7 +48,7 @@ const SHEETS = {
 const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
-  USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt'],
+  USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt', 'ReferencePrice'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
@@ -679,7 +679,8 @@ function login_(body) {
         username,
         role,
         departments: parseDepartments_(values[i][idx.Departments]),
-        canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
+        canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true',
+        canExportAuction: role === 'admin' || (idx.CanExportAuction !== undefined && String(values[i][idx.CanExportAuction]).toLowerCase() === 'true')
       } };
     }
   }
@@ -771,6 +772,7 @@ function getUsers_(body) {
     Role: r[idx.Role],
     Departments: parseDepartments_(r[idx.Departments]),
     CanViewPrices: String(r[idx.CanViewPrices]).toLowerCase() === 'true',
+    CanExportAuction: idx.CanExportAuction !== undefined && String(r[idx.CanExportAuction]).toLowerCase() === 'true',
     CreatedAt: r[idx.CreatedAt] instanceof Date ? r[idx.CreatedAt].toISOString() : r[idx.CreatedAt]
   }));
   return { ok: true, data: users };
@@ -785,6 +787,7 @@ function adminSaveUser_(body) {
   const newPassword = String(u.Password || '').trim();
   const departments = Array.isArray(u.Departments) ? u.Departments.map(d => String(d).trim()).filter(Boolean).join(',') : '';
   const canViewPrices = u.CanViewPrices ? 'true' : 'false';
+  const canExportAuction = u.CanExportAuction ? 'true' : 'false';
 
   const sh = getSS_().getSheetByName(SHEETS.USERS);
   const values = sh.getDataRange().getValues();
@@ -805,6 +808,7 @@ function adminSaveUser_(body) {
     newRow[idx.Role] = role;
     if (idx.Departments !== undefined) newRow[idx.Departments] = departments;
     if (idx.CanViewPrices !== undefined) newRow[idx.CanViewPrices] = canViewPrices;
+    if (idx.CanExportAuction !== undefined) newRow[idx.CanExportAuction] = canExportAuction;
     newRow[idx.CreatedAt] = new Date();
     sh.appendRow(newRow);
     logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
@@ -813,6 +817,7 @@ function adminSaveUser_(body) {
   sh.getRange(rowNum, idx.Role + 1).setValue(role);
   if (idx.Departments !== undefined) sh.getRange(rowNum, idx.Departments + 1).setValue(departments);
   if (idx.CanViewPrices !== undefined) sh.getRange(rowNum, idx.CanViewPrices + 1).setValue(canViewPrices);
+  if (idx.CanExportAuction !== undefined) sh.getRange(rowNum, idx.CanExportAuction + 1).setValue(canExportAuction);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
   return { ok: true, data: { created: false } };

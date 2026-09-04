@@ -232,6 +232,7 @@ let STATE = {
   approveWriteOffCtx: null,
   myDepartments: [],
   canViewPrices: false,
+  canExportAuction: false,
   assetListTab: 'all'
 };
 
@@ -383,6 +384,7 @@ function checkAuth(){
       STATE.username = obj.username || '';
       STATE.myDepartments = obj.departments || [];
       STATE.canViewPrices = !!obj.canViewPrices;
+      STATE.canExportAuction = !!obj.canExportAuction;
       return true;
     }
   }catch(e){}
@@ -425,7 +427,8 @@ function renderLogin(){
       STATE.username = res.data.username;
       STATE.myDepartments = res.data.departments || [];
       STATE.canViewPrices = !!res.data.canViewPrices;
-      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [], canViewPrices: !!res.data.canViewPrices }));
+      STATE.canExportAuction = !!res.data.canExportAuction;
+      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [], canViewPrices: !!res.data.canViewPrices, canExportAuction: !!res.data.canExportAuction }));
       STATE.view = 'dashboard';
       enterApp();
     });
@@ -1238,16 +1241,24 @@ function renderDashboard(root){
 /* ================= AUCTION VIEW (ประมูลขาย) — รวมคิวรอขาย + รอตัดชำรุด ให้ทุกคนดูได้ ================= */
 // ช่วงราคากลางสำหรับกรองหน้าประมูลขาย — min ไม่รวม, max รวม (ยกเว้นช่วงสุดท้ายไม่มี max)
 const AUCTION_PRICE_BRACKETS = [
-  { key:'1', label:'1 - 1,000', min:0, max:1000 },
-  { key:'2', label:'1,000 - 5,000', min:1000, max:5000 },
-  { key:'3', label:'5,000 - 10,000', min:5000, max:10000 },
-  { key:'4', label:'มากกว่า 10,000', min:10000, max:Infinity }
+  { key:'1', label:'1 - 1,000', min:0, max:1000, defaultPrice:100 },
+  { key:'2', label:'1,000 - 5,000', min:1000, max:5000, defaultPrice:1000 },
+  { key:'3', label:'5,000 - 10,000', min:5000, max:10000, defaultPrice:5000 },
+  { key:'4', label:'มากกว่า 10,000', min:10000, max:Infinity, defaultPrice:null }
 ];
+// ราคากลางเริ่มต้นที่แนะนำให้ตามช่วงมูลค่าตามบัญชี (Admin แก้ไขเป็นค่าอื่นได้เสมอ) — ใช้แค่เป็นค่าเริ่มต้นตอนยังไม่เคยตั้งราคากลาง
+function suggestedReferencePrice_(bookValue){
+  const bv = parseFloat(bookValue) || 0;
+  const bracket = AUCTION_PRICE_BRACKETS.find(b => bv > b.min && bv <= b.max);
+  return bracket ? bracket.defaultPrice : null;
+}
 
 function renderAuction(root){
   let showBookValue = false;
+  let activePriceBracket = '';
   let auctionRows = [];
   const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
+  const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
   root.innerHTML = `
     <div class="card">
@@ -1261,23 +1272,32 @@ function renderAuction(root){
           <option value="writeoff">รอตัดชำรุด</option>
         </select>
         <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
-        <select id="auctionPriceFilter" style="max-width:170px;">
-          <option value="">ทุกช่วงราคากลาง</option>
-          ${AUCTION_PRICE_BRACKETS.map(b=>`<option value="${b.key}">${b.label}</option>`).join('')}
-        </select>
         ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
-        <button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>
+        ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>` : ''}
       </div>
+      <div class="toolbar no-print" id="auctionPriceTabs" style="margin-top:6px;"></div>
       <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
       <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
 
+  function renderPriceTabs(){
+    const host = document.getElementById('auctionPriceTabs');
+    const tabs = [{ key:'', label:'ทุกช่วงราคากลาง' }].concat(AUCTION_PRICE_BRACKETS);
+    host.innerHTML = tabs.map(b=>
+      `<button class="btn ${activePriceBracket===b.key?'btn-primary':'btn-secondary'} btn-sm" data-bracket="${b.key}">${b.label}</button>`
+    ).join('');
+    host.querySelectorAll('button[data-bracket]').forEach(btn=>{
+      btn.onclick = ()=>{ activePriceBracket = btn.dataset.bracket; renderPriceTabs(); renderAuctionTable(); };
+    });
+  }
+  renderPriceTabs();
+
   document.getElementById('auctionSearch').oninput = renderAuctionTable;
   document.getElementById('auctionTypeFilter').onchange = renderAuctionTable;
   document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
-  document.getElementById('auctionPriceFilter').onchange = renderAuctionTable;
-  document.getElementById('btnAuctionExport').onclick = exportAuction;
+  const exportBtn = document.getElementById('btnAuctionExport');
+  if(exportBtn) exportBtn.onclick = exportAuction;
   const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
   if(toggleBtn){
     toggleBtn.onclick = ()=>{
@@ -1301,14 +1321,19 @@ function renderAuction(root){
     });
   }
 
+  function effectiveReferencePrice(a){
+    if(a.ReferencePrice) return Number(a.ReferencePrice)||0;
+    const suggested = suggestedReferencePrice_(a.BookValue);
+    return suggested!=null ? suggested : 0;
+  }
+
   function filteredAuctionRows(){
     const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
     const typeFilter = document.getElementById('auctionTypeFilter').value;
     const deptFilter = document.getElementById('auctionDeptFilter').value;
-    const priceFilter = document.getElementById('auctionPriceFilter').value;
-    const bracket = AUCTION_PRICE_BRACKETS.find(b=>b.key===priceFilter);
+    const bracket = AUCTION_PRICE_BRACKETS.find(b=>b.key===activePriceBracket);
     return auctionRows.filter(r => {
-      const price = parseFloat(r.ReferencePrice) || 0;
+      const price = effectiveReferencePrice(r);
       return (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
         (!typeFilter || r.queueType===typeFilter) &&
         (!deptFilter || r.Department===deptFilter) &&
@@ -1326,6 +1351,7 @@ function renderAuction(root){
     const isAdmin = STATE.role==='admin';
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th></tr>`;
     rows.forEach(a=>{
+      const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice_(a.BookValue) || '');
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
         <td><b>${esc(a.AssetID)}</b></td>
@@ -1333,8 +1359,8 @@ function renderAuction(root){
         <td>${esc(a.Department)}</td>
         <td><span class="badge badge-pending">${typeLabel[a.queueType]}</span></td>
         <td class="money">${isAdmin
-          ? `<input type="text" inputmode="decimal" class="refPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.ReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง">`
-          : (a.ReferencePrice ? fmtMoney(a.ReferencePrice) : '-')}</td>
+          ? `<input type="text" inputmode="decimal" class="refPriceInput" data-id="${esc(a.AssetID)}" value="${esc(refValue)}" style="width:90px;" placeholder="ราคากลาง">`
+          : (refValue ? fmtMoney(refValue) : '-')}</td>
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
       </tr>`;
     });
@@ -1356,12 +1382,13 @@ function renderAuction(root){
   }
 
   function exportAuction(){
+    if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
     const rows = filteredAuctionRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
     const dataRows = rows.map(a => [
       a.AssetID, a.AssetName, a.Department, typeLabel[a.queueType],
-      a.ReferencePrice ? (Number(a.ReferencePrice)||0) : 'ยังไม่ระบุ',
+      effectiveReferencePrice(a) || 'ยังไม่ระบุ',
       showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
       a.DisplayImage||''
     ]);
@@ -3140,6 +3167,10 @@ function renderSettings(root){
           <input type="checkbox" data-ufield="CanViewPrices" data-ui="${i}" ${u.CanViewPrices?'checked':''} ${seesAllNoEdit?'disabled':''}>
           ${seesAllNoEdit ? '<div style="font-size:11px;color:var(--muted);">เห็นเสมอ</div>' : ''}
         </td>
+        <td style="text-align:center;">
+          <input type="checkbox" data-ufield="CanExportAuction" data-ui="${i}" ${isAdmin ? 'checked disabled' : (u.CanExportAuction?'checked':'')}>
+          ${isAdmin ? '<div style="font-size:11px;color:var(--muted);">Export ได้เสมอ</div>' : ''}
+        </td>
         <td class="no-print" style="white-space:nowrap;">
           <button class="btn btn-secondary btn-sm" onclick="saveUserRow(${i})">บันทึก</button>
           <button class="btn btn-red btn-sm" onclick="deleteUserRow(${i})">ลบ</button>
@@ -3148,8 +3179,8 @@ function renderSettings(root){
     }).join('');
     document.getElementById('userTableHost').innerHTML = `
       <div style="overflow-x:auto;"><table>
-        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th>ดูราคาซาก/มูลค่าตามบัญชีได้</th><th class="no-print">จัดการ</th></tr>
-        ${rowsHtml || '<tr><td colspan="6" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
+        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th>ดูราคาซาก/มูลค่าตามบัญชีได้</th><th>Export หน้าประมูลขายได้</th><th class="no-print">จัดการ</th></tr>
+        ${rowsHtml || '<tr><td colspan="7" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
       </table></div>
     `;
   }
@@ -3161,7 +3192,7 @@ function renderSettings(root){
   };
 
   function addBlankUserRow(){
-    userList.push({ Username:'', Role:'user', Departments:[], CanViewPrices:false, __isNew:true });
+    userList.push({ Username:'', Role:'user', Departments:[], CanViewPrices:false, CanExportAuction:false, __isNew:true });
     renderUsersTable();
   }
 
@@ -3172,13 +3203,15 @@ function renderSettings(root){
     const deptEl = document.querySelector(`[data-ufield="Departments"][data-ui="${i}"]`);
     const pwEl = document.querySelector(`[data-ufield="Password"][data-ui="${i}"]`);
     const canViewPricesEl = document.querySelector(`[data-ufield="CanViewPrices"][data-ui="${i}"]`);
+    const canExportAuctionEl = document.querySelector(`[data-ufield="CanExportAuction"][data-ui="${i}"]`);
     u.Username = usernameEl.value.trim();
     u.Role = roleEl.value;
     u.Departments = Array.from(deptEl.selectedOptions).map(o=>o.value);
     u.CanViewPrices = canViewPricesEl.checked;
+    u.CanExportAuction = canExportAuctionEl.checked;
     const password = pwEl.value;
     if(!u.Username){ toast('กรุณาระบุชื่อผู้ใช้','err'); return; }
-    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, CanViewPrices: u.CanViewPrices, Password: password } }).then(res=>{
+    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, CanViewPrices: u.CanViewPrices, CanExportAuction: u.CanExportAuction, Password: password } }).then(res=>{
       if(!res.ok){ toast(res.error||'บันทึกผู้ใช้ไม่สำเร็จ','err'); return; }
       toast('บันทึกผู้ใช้สำเร็จ','ok');
       loadUsers();
