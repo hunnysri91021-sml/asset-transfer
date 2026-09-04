@@ -1062,7 +1062,7 @@ function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
   const rows = getAssetsRaw_();
   return rows
-    .filter(r => disposed[String(r.AssetID)] && String(r.SendToAuction).toLowerCase() === 'true')
+    .filter(r => disposed[String(r.AssetID)] === 'WrittenOff' && String(r.SendToAuction).toLowerCase() === 'true')
     .map(r => ({
       AssetID: r.AssetID,
       AssetName: r.AssetName,
@@ -1117,13 +1117,12 @@ function adminSaveAuctionPriceBrackets_(body) {
 }
 
 // เนื้อหาหน้าแรกของ "ประมูลขาย" (ก่อนเข้าดูรายการสินค้า) — Admin แก้ไขได้ทั้งหมดที่หน้าตั้งค่า
-// (หัวข้อ, คำอธิบายประเภทสินค้าทั้ง 2 แบบ, ข้อความวิธีร่วมประมูล+ไทม์ไลน์) ยกเว้นตารางเกณฑ์ราคา Rank
+// (หัวข้อ, คำอธิบายประเภทสินค้าตัดชำรุด, ข้อความวิธีร่วมประมูล+ไทม์ไลน์) ยกเว้นตารางเกณฑ์ราคา Rank
+// (มีเฉพาะทรัพย์สินตัดชำรุดเท่านั้นที่เข้าประมูล — ทรัพย์สินที่ขายแล้วผ่านใบขายถือว่ามีผู้ซื้อแล้ว ไม่ต้องประมูลซ้ำ)
 // ซึ่งดึงจากช่วงราคากลางที่ตั้งไว้แยกต่างหากอยู่แล้ว (ดู getAuctionPriceBrackets)
 // อ่านได้โดยไม่ต้องรหัสผ่าน เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน เหมือน getAuctionPublicEnabled/getAuctionPriceBrackets
 const AUCTION_INTRO_TITLE_PROP = 'AUCTION_INTRO_TITLE';
 const DEFAULT_AUCTION_INTRO_TITLE = 'สรุปขั้นตอนการประมูลสินค้า';
-const AUCTION_SALE_NOTE_PROP = 'AUCTION_SALE_NOTE';
-const DEFAULT_AUCTION_SALE_NOTE = 'อุปกรณ์ที่ยังใช้งานได้';
 const AUCTION_WRITEOFF_NOTE_PROP = 'AUCTION_WRITEOFF_NOTE';
 const DEFAULT_AUCTION_WRITEOFF_NOTE = 'สินค้าชำรุด';
 const AUCTION_INTRO_NOTE_PROP = 'AUCTION_INTRO_NOTE';
@@ -1141,7 +1140,6 @@ function getAuctionIntroContent_() {
   const props = PropertiesService.getScriptProperties();
   return {
     title: props.getProperty(AUCTION_INTRO_TITLE_PROP) || DEFAULT_AUCTION_INTRO_TITLE,
-    saleNote: props.getProperty(AUCTION_SALE_NOTE_PROP) || DEFAULT_AUCTION_SALE_NOTE,
     writeoffNote: props.getProperty(AUCTION_WRITEOFF_NOTE_PROP) || DEFAULT_AUCTION_WRITEOFF_NOTE,
     note: props.getProperty(AUCTION_INTRO_NOTE_PROP) || DEFAULT_AUCTION_INTRO_NOTE
   };
@@ -1150,7 +1148,6 @@ function adminSaveAuctionIntroContent_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const props = PropertiesService.getScriptProperties();
   props.setProperty(AUCTION_INTRO_TITLE_PROP, String(body.title || '').trim() || DEFAULT_AUCTION_INTRO_TITLE);
-  props.setProperty(AUCTION_SALE_NOTE_PROP, String(body.saleNote || '').trim() || DEFAULT_AUCTION_SALE_NOTE);
   props.setProperty(AUCTION_WRITEOFF_NOTE_PROP, String(body.writeoffNote || '').trim() || DEFAULT_AUCTION_WRITEOFF_NOTE);
   props.setProperty(AUCTION_INTRO_NOTE_PROP, String(body.note || ''));
   logActivity_('', 'ADMIN_SET_AUCTION_INTRO_CONTENT', 'admin', 'แก้ไขเนื้อหาหน้าแรกประมูลขาย');
