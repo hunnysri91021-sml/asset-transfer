@@ -46,7 +46,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt', 'ReferencePrice'],
@@ -156,6 +156,9 @@ function doGet(e) {
         break;
       case 'getAuctionIntroContent':
         result = { ok: true, data: getAuctionIntroContent_() };
+        break;
+      case 'getAuctionListing':
+        result = { ok: true, data: getAuctionListing_() };
         break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
@@ -286,14 +289,17 @@ function doPost(e) {
       case 'adminSaveAuctionPublicSetting':
         result = adminSaveAuctionPublicSetting_(body);
         break;
+      case 'adminGetAuctionCandidates':
+        result = getAuctionCandidates_(body);
+        break;
+      case 'adminSetAuctionSelection':
+        result = adminSetAuctionSelection_(body);
+        break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
         break;
       case 'adminSaveAuctionIntroContent':
         result = adminSaveAuctionIntroContent_(body);
-        break;
-      case 'adminSetQueueReferencePrice':
-        result = adminSetQueueReferencePrice_(body);
         break;
       case 'adminSyncScrapPriceToBookValue':
         result = adminSyncScrapPriceToBookValue_(body);
@@ -501,31 +507,6 @@ function addToAssetQueue_(body, purpose) {
     sh.appendRow(newRow);
     return { ok: true, data: { alreadyQueued: false } };
   });
-}
-
-// Admin ตั้ง "ราคากลาง" ให้ทรัพย์สินที่อยู่ในคิวรอ (ใช้ประกอบการประมูลที่หน้า "ประมูลขาย")
-// ผูกกับแถวคิวรอ ไม่ใช่ตัวทรัพย์สินเอง เพราะเป็นราคาที่ตั้งไว้เฉพาะรอบประมูลนี้ — ถ้าทรัพย์สินหลุดคิว/เข้าคิวใหม่ ต้องตั้งราคากลางใหม่
-function adminSetQueueReferencePrice_(body) {
-  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const assetId = String(body.assetId || '').trim();
-  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
-  const price = parseFloat(body.referencePrice);
-  if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคากลางที่ถูกต้อง' };
-
-  const sh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
-  if (idx.ReferencePrice === undefined) {
-    return { ok: false, error: 'ไม่พบคอลัมน์ ReferencePrice ในชีต TransferQueue กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
-  }
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][idx.AssetID]) === assetId) {
-      sh.getRange(i + 1, idx.ReferencePrice + 1).setValue(price);
-      logActivity_('', 'ADMIN_SET_REFERENCE_PRICE', 'admin', 'ตั้งราคากลางทรัพย์สิน ' + assetId + ' = ' + price);
-      return { ok: true };
-    }
-  }
-  return { ok: false, error: 'ไม่พบทรัพย์สินนี้ในคิวรอ' };
 }
 
 function removeFromAssetQueue_(body, purpose) {
@@ -1004,6 +985,77 @@ function adminSaveAuctionPublicSetting_(body) {
   PropertiesService.getScriptProperties().setProperty(AUCTION_PUBLIC_ENABLED_PROP, enabled ? '1' : '0');
   logActivity_('', 'ADMIN_SET_AUCTION_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การเข้าดูหน้าประมูลขายแบบสาธารณะ (ไม่ต้องล็อกอิน)');
   return { ok: true };
+}
+
+// ============================================================
+// AUCTION SELECTION — Admin คัดเลือกทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้ว ว่ารายการไหนจะส่งขึ้นหน้า "ประมูลขาย" สาธารณะบ้าง
+// (ทรัพย์สินต้องมีสถานะ Sold/WrittenOff จากใบขาย/ตัดชำรุดที่อนุมัติแล้วก่อน ถึงจะเป็นตัวเลือกให้คัดได้)
+// ============================================================
+// Admin ดูรายชื่อทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้วทั้งหมด พร้อมสถานะว่าติ๊กส่งประมูลไว้หรือยัง — ใช้ในหน้า "คัดเลือกรายการประมูล"
+function getAuctionCandidates_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const disposed = getDisposedAssetStatus_();
+  const rows = getAssetsRaw_();
+  const candidates = rows
+    .filter(r => disposed[String(r.AssetID)])
+    .map(r => ({
+      AssetID: r.AssetID,
+      AssetName: r.AssetName,
+      Department: r.Department,
+      DisplayImage: r.DisplayImage,
+      BookValue: r.BookValue || 0,
+      AssetStatus: disposed[String(r.AssetID)],
+      SendToAuction: String(r.SendToAuction).toLowerCase() === 'true',
+      AuctionReferencePrice: r.AuctionReferencePrice || ''
+    }));
+  return { ok: true, data: candidates };
+}
+
+// Admin ติ๊ก/ยกเลิกส่งทรัพย์สิน 1 รายการขึ้นหน้าประมูลขาย พร้อมตั้งราคากลางไปพร้อมกันได้
+function adminSetAuctionSelection_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const sendToAuction = !!body.sendToAuction;
+  let referencePrice = null;
+  if (body.referencePrice !== undefined && body.referencePrice !== '') {
+    referencePrice = parseFloat(body.referencePrice);
+    if (isNaN(referencePrice) || referencePrice < 0) return { ok: false, error: 'กรุณาระบุราคากลางที่ถูกต้อง' };
+  }
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.SendToAuction === undefined || idx.AuctionReferencePrice === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ SendToAuction/AuctionReferencePrice ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.getRange(i + 1, idx.SendToAuction + 1).setValue(sendToAuction ? 'TRUE' : 'FALSE');
+      if (referencePrice !== null) sh.getRange(i + 1, idx.AuctionReferencePrice + 1).setValue(referencePrice);
+      logActivity_('', 'ADMIN_SET_AUCTION_SELECTION', 'admin', (sendToAuction ? 'ส่ง' : 'ถอด') + 'ทรัพย์สิน ' + assetId + ' ' + (sendToAuction ? 'เข้า' : 'ออกจาก') + 'หน้าประมูลขาย');
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
+}
+
+// รายการที่แสดงจริงในหน้า "ประมูลขาย" สาธารณะ — เฉพาะทรัพย์สินที่ Admin ติ๊กส่งประมูลไว้เท่านั้น
+// อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะหน้านี้เปิดดูได้โดยไม่ต้องล็อกอิน เหมือนการตั้งค่าหน้าประมูลขายอื่นๆ
+function getAuctionListing_() {
+  const disposed = getDisposedAssetStatus_();
+  const rows = getAssetsRaw_();
+  return rows
+    .filter(r => disposed[String(r.AssetID)] && String(r.SendToAuction).toLowerCase() === 'true')
+    .map(r => ({
+      AssetID: r.AssetID,
+      AssetName: r.AssetName,
+      Department: r.Department,
+      DisplayImage: r.DisplayImage,
+      BookValue: r.BookValue || 0,
+      AssetStatus: disposed[String(r.AssetID)],
+      ReferencePrice: r.AuctionReferencePrice || ''
+    }));
 }
 
 // ช่วงราคากลาง (rank) สำหรับหน้าประมูลขาย — Admin กำหนดเองได้ที่หน้าตั้งค่า เก็บเป็น JSON ใน Script Properties
