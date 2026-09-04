@@ -1249,7 +1249,7 @@ function renderAuction(root){
   let showBookValue = false;
   let auctionRows = [];
   let priceBrackets = [];
-  const typeLabel = { Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุดแล้ว' };
+  const typeLabel = { WrittenOff:'ตัดชำรุดแล้ว' };
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
   // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
@@ -1270,7 +1270,6 @@ function renderAuction(root){
           <h3>📦 รายการสินค้า</h3>
           <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
             <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>${esc(content.writeoffNote||'')}</td></tr>
-            <tr><td><span class="badge badge-pending">รอขาย</span></td><td>${esc(content.saleNote||'')}</td></tr>
           </table>
           <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
           ${bracketsHtml}
@@ -1293,14 +1292,9 @@ function renderAuction(root){
           <button class="btn btn-secondary btn-sm" id="btnAuctionBackToIntro">← กลับไปหน้าหลักการประมูล</button>
         </div>
         <h2>ประมูลขาย</h2>
-        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้ว และ Admin เลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
+        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และ Admin เลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
           <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
-          <select id="auctionTypeFilter" style="max-width:150px;">
-            <option value="">ทุกประเภท</option>
-            <option value="Sold">ขายแล้ว</option>
-            <option value="WrittenOff">ตัดชำรุดแล้ว</option>
-          </select>
           <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
           ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
           ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>` : ''}
@@ -1312,7 +1306,6 @@ function renderAuction(root){
 
     document.getElementById('btnAuctionBackToIntro').onclick = showIntro;
     document.getElementById('auctionSearch').oninput = renderAuctionTable;
-    document.getElementById('auctionTypeFilter').onchange = renderAuctionTable;
     document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
     const exportBtn = document.getElementById('btnAuctionExport');
     if(exportBtn) exportBtn.onclick = exportAuction;
@@ -1359,11 +1352,9 @@ function renderAuction(root){
 
   function baseFilteredRows(){
     const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
-    const typeFilter = document.getElementById('auctionTypeFilter').value;
     const deptFilter = document.getElementById('auctionDeptFilter').value;
     return auctionRows.filter(r =>
       (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
-      (!typeFilter || r.AssetStatus===typeFilter) &&
       (!deptFilter || r.Department===deptFilter)
     );
   }
@@ -1389,9 +1380,7 @@ function renderAuction(root){
   function renderAuctionTable(){
     const host = document.getElementById('auctionTableHost');
     const rows = baseFilteredRows();
-    const soldCount = rows.filter(r=>r.AssetStatus==='Sold').length;
-    const woCount = rows.filter(r=>r.AssetStatus==='WrittenOff').length;
-    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ (ขายแล้ว ${soldCount} / ตัดชำรุดแล้ว ${woCount})`;
+    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ`;
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
 
     // จัดกลุ่มตามช่วงราคากลาง แสดงเรียงลงมาเป็นส่วนๆ แทนแท็บ
@@ -3127,7 +3116,6 @@ function renderSettings(root){
         <label>หัวข้อหน้าแรก</label>
         <input type="text" id="auctionIntroTitle" placeholder="สรุปขั้นตอนการประมูลสินค้า">
         <div class="row" style="margin-top:10px;">
-          <div><label>คำอธิบายประเภท "รอขาย"</label><input type="text" id="auctionSaleNote" placeholder="อุปกรณ์ที่ยังใช้งานได้"></div>
           <div><label>คำอธิบายประเภท "รอตัดชำรุด"</label><input type="text" id="auctionWriteoffNote" placeholder="สินค้าชำรุด"></div>
         </div>
         <label style="margin-top:10px;">วิธีเข้าร่วมประมูล + ไทม์ไลน์</label>
@@ -3370,7 +3358,6 @@ function renderSettings(root){
     apiGet({ action:'getAuctionIntroContent' }).then(res=>{
       if(!res.ok) return;
       document.getElementById('auctionIntroTitle').value = res.data.title || '';
-      document.getElementById('auctionSaleNote').value = res.data.saleNote || '';
       document.getElementById('auctionWriteoffNote').value = res.data.writeoffNote || '';
       document.getElementById('auctionIntroNote').value = res.data.note || '';
     });
@@ -3378,12 +3365,11 @@ function renderSettings(root){
 
   function saveAuctionIntroNote(){
     const title = document.getElementById('auctionIntroTitle').value;
-    const saleNote = document.getElementById('auctionSaleNote').value;
     const writeoffNote = document.getElementById('auctionWriteoffNote').value;
     const note = document.getElementById('auctionIntroNote').value;
     const btn = document.getElementById('btnSaveAuctionIntroNote');
     btn.disabled = true;
-    apiPost({ action:'adminSaveAuctionIntroContent', password: STATE.adminPassword, title, saleNote, writeoffNote, note }).then(res=>{
+    apiPost({ action:'adminSaveAuctionIntroContent', password: STATE.adminPassword, title, writeoffNote, note }).then(res=>{
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกเนื้อหาหน้าแรกประมูลขายสำเร็จ','ok');
