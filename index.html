@@ -174,6 +174,7 @@
       <button data-view="writeOffList">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
       <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
+      <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
       <button data-view="activityLog" id="navActivityLog">ประวัติการใช้งาน</button>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
@@ -536,6 +537,7 @@ const VIEW_TITLES = {
   writeOffList: 'รายการตัดชำรุด',
   writeOffCreate: 'บันทึกตัดชำรุด',
   writeOffPrint: 'ใบตัดชำรุดทรัพย์สิน',
+  auctionSelection: 'คัดเลือกรายการประมูล',
   activityLog: 'ประวัติการใช้งาน',
   settings: 'ตั้งค่า'
 };
@@ -583,9 +585,11 @@ function render(){
   if(settingsNavBtn) settingsNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const activityLogNavBtn = document.getElementById('navActivityLog');
   if(activityLogNavBtn) activityLogNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
+  const auctionSelectionNavBtn = document.getElementById('navAuctionSelection');
+  if(auctionSelectionNavBtn) auctionSelectionNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
-  if((STATE.view === 'settings' || STATE.view === 'activityLog') && STATE.role !== 'admin') STATE.view = 'dashboard';
+  if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection') && STATE.role !== 'admin') STATE.view = 'dashboard';
   // ผู้บริหาร: ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ — ซ่อนปุ่มเมนู "+ สร้าง..." และกันไม่ให้เข้าหน้าสร้างเอกสารตรงๆ
   ['create','saleCreate','writeOffCreate'].forEach(v=>{
     const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
@@ -605,6 +609,7 @@ function render(){
   else if(STATE.view === 'writeOffList') renderWriteOffList(root);
   else if(STATE.view === 'writeOffCreate') renderWriteOffCreate(root);
   else if(STATE.view === 'writeOffPrint') renderWriteOffPrint(root);
+  else if(STATE.view === 'auctionSelection') renderAuctionSelection(root);
   else if(STATE.view === 'activityLog') renderActivityLog(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
@@ -1244,7 +1249,7 @@ function renderAuction(root){
   let showBookValue = false;
   let auctionRows = [];
   let priceBrackets = [];
-  const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
+  const typeLabel = { Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุดแล้ว' };
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
   // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
@@ -1288,13 +1293,13 @@ function renderAuction(root){
           <button class="btn btn-secondary btn-sm" id="btnAuctionBackToIntro">← กลับไปหน้าหลักการประมูล</button>
         </div>
         <h2>ประมูลขาย</h2>
-        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
+        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้ว และ Admin เลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
           <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
           <select id="auctionTypeFilter" style="max-width:150px;">
             <option value="">ทุกประเภท</option>
-            <option value="sale">รอขาย</option>
-            <option value="writeoff">รอตัดชำรุด</option>
+            <option value="Sold">ขายแล้ว</option>
+            <option value="WrittenOff">ตัดชำรุดแล้ว</option>
           </select>
           <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
           ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
@@ -1326,14 +1331,12 @@ function renderAuction(root){
   function load(){
     document.getElementById('auctionTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     Promise.all([
-      apiGet({ action:'getAssetListBundle' }),
+      apiGet({ action:'getAuctionListing' }),
       apiGet({ action:'getAuctionPriceBrackets' })
     ]).then(([res, bracketsRes])=>{
       if(!res.ok){ document.getElementById('auctionTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
       priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
-      const saleRows = (res.data.saleQueue||[]).map(a=>Object.assign({}, a, { queueType:'sale' }));
-      const woRows = (res.data.writeOffQueue||[]).map(a=>Object.assign({}, a, { queueType:'writeoff' }));
-      auctionRows = saleRows.concat(woRows).sort((a,b)=> new Date(b.AddedAt) - new Date(a.AddedAt));
+      auctionRows = res.data || [];
       const deptSel = document.getElementById('auctionDeptFilter');
       const depts = [...new Set(auctionRows.map(a=>a.Department).filter(Boolean))].sort();
       deptSel.innerHTML = '<option value="">ทุกหน่วยงาน</option>' + depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
@@ -1360,13 +1363,12 @@ function renderAuction(root){
     const deptFilter = document.getElementById('auctionDeptFilter').value;
     return auctionRows.filter(r =>
       (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
-      (!typeFilter || r.queueType===typeFilter) &&
+      (!typeFilter || r.AssetStatus===typeFilter) &&
       (!deptFilter || r.Department===deptFilter)
     );
   }
 
   function renderRowsTable(rows){
-    const isAdmin = STATE.role==='admin';
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th></tr>`;
     rows.forEach(a=>{
       const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice(a.BookValue) || '');
@@ -1375,10 +1377,8 @@ function renderAuction(root){
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
-        <td><span class="badge badge-pending">${typeLabel[a.queueType]}</span></td>
-        <td class="money">${isAdmin
-          ? `<input type="text" inputmode="decimal" class="refPriceInput" data-id="${esc(a.AssetID)}" value="${esc(refValue)}" style="width:90px;" placeholder="ราคากลาง">`
-          : (refValue ? fmtMoney(refValue) : '-')}</td>
+        <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
+        <td class="money">${refValue ? fmtMoney(refValue) : '-'}</td>
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
       </tr>`;
     });
@@ -1389,9 +1389,9 @@ function renderAuction(root){
   function renderAuctionTable(){
     const host = document.getElementById('auctionTableHost');
     const rows = baseFilteredRows();
-    const saleCount = rows.filter(r=>r.queueType==='sale').length;
-    const woCount = rows.filter(r=>r.queueType==='writeoff').length;
-    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ (รอขาย ${saleCount} / รอตัดชำรุด ${woCount})`;
+    const soldCount = rows.filter(r=>r.AssetStatus==='Sold').length;
+    const woCount = rows.filter(r=>r.AssetStatus==='WrittenOff').length;
+    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ (ขายแล้ว ${soldCount} / ตัดชำรุดแล้ว ${woCount})`;
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
 
     // จัดกลุ่มตามช่วงราคากลาง แสดงเรียงลงมาเป็นส่วนๆ แทนแท็บ
@@ -1412,19 +1412,6 @@ function renderAuction(root){
       html += `<h3 style="margin-top:20px;">ไม่ระบุช่วงราคา (${unassigned.length} รายการ)</h3>` + renderRowsTable(unassigned);
     }
     host.innerHTML = html;
-
-    host.querySelectorAll('.refPriceInput').forEach(inp=>{
-      inp.onchange = ()=>{
-        const assetId = inp.dataset.id;
-        const value = inp.value.trim();
-        apiPost({ action:'adminSetQueueReferencePrice', password: STATE.adminPassword, assetId, referencePrice: value }).then(res=>{
-          if(!res.ok){ toast(res.error||'บันทึกราคากลางไม่สำเร็จ','err'); return; }
-          const row = auctionRows.find(r=>r.AssetID===assetId);
-          if(row) row.ReferencePrice = value;
-          toast('บันทึกราคากลางสำเร็จ','ok');
-        });
-      };
-    });
   }
 
   function exportAuction(){
@@ -1433,7 +1420,7 @@ function renderAuction(root){
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
     const dataRows = rows.map(a => [
-      a.AssetID, a.AssetName, a.Department, typeLabel[a.queueType],
+      a.AssetID, a.AssetName, a.Department, typeLabel[a.AssetStatus]||a.AssetStatus,
       effectiveReferencePrice(a) || 'ยังไม่ระบุ',
       showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
       a.DisplayImage||''
@@ -1442,6 +1429,105 @@ function renderAuction(root){
   }
 
   showIntro();
+}
+
+/* ================= AUCTION SELECTION VIEW (Admin) — คัดเลือกทรัพย์สินขาย/ตัดชำรุดอนุมัติแล้ว ส่งขึ้นหน้าประมูลขายสาธารณะ ================= */
+function renderAuctionSelection(root){
+  let candidates = [];
+  const typeLabel = { Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุดแล้ว' };
+
+  root.innerHTML = `
+    <div class="card">
+      <h2>คัดเลือกรายการประมูล</h2>
+      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้วทั้งหมด — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า)</p>
+      <div class="toolbar no-print">
+        <input type="text" id="aselSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        <select id="aselTypeFilter" style="max-width:150px;">
+          <option value="">ทุกประเภท</option>
+          <option value="Sold">ขายแล้ว</option>
+          <option value="WrittenOff">ตัดชำรุดแล้ว</option>
+        </select>
+        <select id="aselSentFilter" style="max-width:170px;">
+          <option value="">ทั้งหมด</option>
+          <option value="yes">ส่งประมูลแล้ว</option>
+          <option value="no">ยังไม่ส่งประมูล</option>
+        </select>
+      </div>
+      <div id="aselCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div id="aselTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+
+  document.getElementById('aselSearch').oninput = renderTable;
+  document.getElementById('aselTypeFilter').onchange = renderTable;
+  document.getElementById('aselSentFilter').onchange = renderTable;
+
+  function load(){
+    document.getElementById('aselTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiPost({ action:'adminGetAuctionCandidates', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ document.getElementById('aselTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      candidates = res.data || [];
+      renderTable();
+    });
+  }
+
+  function filteredCandidates(){
+    const qq = (document.getElementById('aselSearch').value||'').trim().toLowerCase();
+    const typeFilter = document.getElementById('aselTypeFilter').value;
+    const sentFilter = document.getElementById('aselSentFilter').value;
+    return candidates.filter(a =>
+      (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1) &&
+      (!typeFilter || a.AssetStatus===typeFilter) &&
+      (!sentFilter || (sentFilter==='yes' ? a.SendToAuction : !a.SendToAuction))
+    );
+  }
+
+  function renderTable(){
+    const host = document.getElementById('aselTableHost');
+    const rows = filteredCandidates();
+    document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ (ส่งประมูลแล้ว '+candidates.filter(a=>a.SendToAuction).length+' รายการ)';
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>ส่งประมูล</th></tr>`;
+    rows.forEach(a=>{
+      html += `<tr>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
+        <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
+        <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
+        <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}" ${a.SendToAuction?'checked':''}></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    host.querySelectorAll('.aselSendChk').forEach(chk=>{
+      chk.onchange = ()=> saveSelection(chk.dataset.id, chk.checked);
+    });
+    host.querySelectorAll('.aselPriceInput').forEach(inp=>{
+      inp.onchange = ()=>{
+        const row = candidates.find(a=>a.AssetID===inp.dataset.id);
+        saveSelection(inp.dataset.id, row?row.SendToAuction:false, inp.value.trim());
+      };
+    });
+  }
+
+  function saveSelection(assetId, sendToAuction, referencePrice){
+    apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId, sendToAuction, referencePrice }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); load(); return; }
+      const row = candidates.find(a=>a.AssetID===assetId);
+      if(row){
+        row.SendToAuction = sendToAuction;
+        if(referencePrice !== undefined && referencePrice !== '') row.AuctionReferencePrice = referencePrice;
+      }
+      toast('บันทึกสำเร็จ','ok');
+      renderTable();
+    });
+  }
+
+  load();
 }
 
 /* ================= LIST VIEW ================= */
@@ -1634,7 +1720,7 @@ window.openPrint = function(id){
 // ไปยังอีเมลฝ่ายบัญชี/GA ที่ Admin ตั้งค่าไว้ในหน้า "ตั้งค่า"
 window.sendNotifyEmail = function(docType, id, btn){
   if(btn) btn.disabled = true;
-  apiPost({ action:'notifyAccountingGA', docType, id, by: STATE.username||'' }).then(res=>{
+  apiPost({ action:'notifyAccountingGA', password: STATE.adminPassword, docType, id }).then(res=>{
     if(btn) btn.disabled = false;
     if(!res.ok){ toast(res.error||'ส่งอีเมลแจ้งเตือนไม่สำเร็จ','err'); return; }
     toast('ส่งอีเมลแจ้งบัญชี/GA สำเร็จ','ok');
