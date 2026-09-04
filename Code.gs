@@ -52,7 +52,7 @@ const HEADERS = {
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
-  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
+  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL'],
@@ -300,6 +300,9 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionIntroContent':
         result = adminSaveAuctionIntroContent_(body);
+        break;
+      case 'sendAuctionSummaryEmail':
+        result = sendAuctionSummaryEmail_(body);
         break;
       case 'adminSyncScrapPriceToBookValue':
         result = adminSyncScrapPriceToBookValue_(body);
@@ -607,7 +610,51 @@ function getDisposedAssetStatus_() {
 }
 
 function invalidateDisposedAssetStatusCache_() {
-  try { CacheService.getScriptCache().remove(DISPOSED_STATUS_CACHE_KEY); } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.remove(DISPOSED_STATUS_CACHE_KEY);
+    cache.remove(SALE_AUCTION_CHANNEL_CACHE_KEY);
+  } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
+}
+
+// คืนค่า map ของ AssetID -> true เฉพาะทรัพย์สินที่ขายออก (Sales) อนุมัติแล้ว และเลือกช่องทาง 'ประมูล' ตอนสร้างใบขายออก
+// (ทรัพย์สินขายออกช่องทาง 'ขาย' ปกติจะไม่อยู่ใน map นี้ — ถือว่าขายตรง ไม่ต้องส่งประมูล)
+// ใช้ประกอบกับ getDisposedAssetStatus_ ในหน้าคัดเลือกประมูล/หน้าประมูลสาธารณะ แคชคู่กันและล้างพร้อมกันเสมอ
+const SALE_AUCTION_CHANNEL_CACHE_KEY = 'saleAuctionChannelMap_v1';
+
+function getSaleAuctionChannelMap_() {
+  let cache;
+  try {
+    cache = CacheService.getScriptCache();
+    const cached = cache.get(SALE_AUCTION_CHANNEL_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
+
+  const map = {};
+  const docSh = getSS_().getSheetByName(SHEETS.SALES);
+  const docValues = docSh.getDataRange().getValues();
+  const docIdx = indexMap_(docValues.shift());
+  const auctionSaleIds = {};
+  if (docIdx.Channel !== undefined) {
+    docValues.forEach(r => {
+      if (r[docIdx.Status] === STATUS.APPROVED && String(r[docIdx.Channel]) === 'ประมูล') {
+        auctionSaleIds[String(r[docIdx.SaleID])] = true;
+      }
+    });
+  }
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  itemValues.forEach(r => {
+    if (auctionSaleIds[String(r[itemIdx.SaleID])]) map[String(r[itemIdx.AssetID])] = true;
+  });
+
+  try {
+    if (cache) cache.put(SALE_AUCTION_CHANNEL_CACHE_KEY, JSON.stringify(map), DISPOSED_STATUS_CACHE_TTL_SEC);
+  } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
+
+  return map;
 }
 
 function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
@@ -1011,6 +1058,7 @@ function adminSaveAuctionPublicSetting_(body) {
 function getAuctionCandidates_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const disposed = getDisposedAssetStatus_();
+  const saleAuctionChannel = getSaleAuctionChannelMap_();
   const rows = getAssetsRaw_();
   const candidates = rows
     .filter(r => disposed[String(r.AssetID)])
@@ -1021,6 +1069,7 @@ function getAuctionCandidates_(body) {
       DisplayImage: r.DisplayImage,
       BookValue: r.BookValue || 0,
       AssetStatus: disposed[String(r.AssetID)],
+      SaleChannel: disposed[String(r.AssetID)] === 'Sold' ? (saleAuctionChannel[String(r.AssetID)] ? 'ประมูล' : 'ขาย') : '',
       SendToAuction: String(r.SendToAuction).toLowerCase() === 'true',
       AuctionReferencePrice: r.AuctionReferencePrice || ''
     }));
@@ -1060,9 +1109,14 @@ function adminSetAuctionSelection_(body) {
 // อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะหน้านี้เปิดดูได้โดยไม่ต้องล็อกอิน เหมือนการตั้งค่าหน้าประมูลขายอื่นๆ
 function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
+  const saleAuctionChannel = getSaleAuctionChannelMap_();
   const rows = getAssetsRaw_();
   return rows
-    .filter(r => disposed[String(r.AssetID)] === 'WrittenOff' && String(r.SendToAuction).toLowerCase() === 'true')
+    .filter(r => {
+      const status = disposed[String(r.AssetID)];
+      const eligible = status === 'WrittenOff' || (status === 'Sold' && saleAuctionChannel[String(r.AssetID)]);
+      return eligible && String(r.SendToAuction).toLowerCase() === 'true';
+    })
     .map(r => ({
       AssetID: r.AssetID,
       AssetName: r.AssetName,
@@ -1072,6 +1126,52 @@ function getAuctionListing_() {
       AssetStatus: disposed[String(r.AssetID)],
       ReferencePrice: r.AuctionReferencePrice || ''
     }));
+}
+
+// Admin กรอกอีเมลผู้บริหาร + ข้อความ/หมายเหตุเอง แล้วกดส่ง — ระบบดึงรายการที่กำลังเปิดประมูลอยู่ (เหมือนหน้า
+// "ประมูลขาย" สาธารณะ ณ ขณะนั้น) มาแนบเป็นตารางในอีเมลให้อัตโนมัติ
+function sendAuctionSummaryEmail_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const recipients = String(body.recipients || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!recipients.length) return { ok: false, error: 'กรุณาระบุอีเมลผู้บริหารอย่างน้อย 1 รายการ' };
+
+  const listing = getAuctionListing_();
+  if (!listing.length) return { ok: false, error: 'ยังไม่มีรายการที่เปิดประมูลอยู่ในขณะนี้' };
+
+  const message = String(body.message || '').trim();
+  const rowsHtml = listing.map((a, i) => (
+    '<tr>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(a.AssetID) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(a.AssetName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(a.Department) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(a.ReferencePrice) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(a.BookValue) + '</td>' +
+    '</tr>'
+  )).join('');
+
+  const html =
+    '<div style="font-family:Sarabun,Arial,sans-serif;max-width:680px;margin:auto;">' +
+    '<h2 style="color:#1a3c6e;">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</h2>' +
+    '<h3>สรุปรายการประมูลขาย (' + listing.length + ' รายการ)</h3>' +
+    (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
+    '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">หน่วยงาน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าตามบัญชี</th></tr>' +
+    rowsHtml +
+    '</table>' +
+    '</div>';
+
+  try {
+    MailApp.sendEmail({
+      to: recipients.join(','),
+      subject: 'สรุปรายการประมูลขาย — ' + CONFIG.COMPANY_NAME,
+      htmlBody: html
+    });
+    logActivity_('', 'ADMIN_SEND_AUCTION_SUMMARY', 'admin', 'ส่งอีเมลสรุปรายการประมูลขาย ' + listing.length + ' รายการ ให้ ' + recipients.join(', '));
+    return { ok: true, data: { count: listing.length, recipients } };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 }
 
 // ช่วงราคากลาง (rank) สำหรับหน้าประมูลขาย — Admin กำหนดเองได้ที่หน้าตั้งค่า เก็บเป็น JSON ใน Script Properties
@@ -1117,12 +1217,14 @@ function adminSaveAuctionPriceBrackets_(body) {
 }
 
 // เนื้อหาหน้าแรกของ "ประมูลขาย" (ก่อนเข้าดูรายการสินค้า) — Admin แก้ไขได้ทั้งหมดที่หน้าตั้งค่า
-// (หัวข้อ, คำอธิบายประเภทสินค้าตัดชำรุด, ข้อความวิธีร่วมประมูล+ไทม์ไลน์) ยกเว้นตารางเกณฑ์ราคา Rank
-// (มีเฉพาะทรัพย์สินตัดชำรุดเท่านั้นที่เข้าประมูล — ทรัพย์สินที่ขายแล้วผ่านใบขายถือว่ามีผู้ซื้อแล้ว ไม่ต้องประมูลซ้ำ)
+// (หัวข้อ, คำอธิบายประเภทสินค้าทั้ง 2 แบบ, ข้อความวิธีร่วมประมูล+ไทม์ไลน์) ยกเว้นตารางเกณฑ์ราคา Rank
+// (เข้าประมูลได้ 2 ทาง: ตัดชำรุดอนุมัติแล้วทุกรายการ หรือขายออกที่เลือกช่องทาง 'ประมูล' ตอนสร้างใบขายออก — ดู getSaleAuctionChannelMap_)
 // ซึ่งดึงจากช่วงราคากลางที่ตั้งไว้แยกต่างหากอยู่แล้ว (ดู getAuctionPriceBrackets)
 // อ่านได้โดยไม่ต้องรหัสผ่าน เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน เหมือน getAuctionPublicEnabled/getAuctionPriceBrackets
 const AUCTION_INTRO_TITLE_PROP = 'AUCTION_INTRO_TITLE';
 const DEFAULT_AUCTION_INTRO_TITLE = 'สรุปขั้นตอนการประมูลสินค้า';
+const AUCTION_SALE_NOTE_PROP = 'AUCTION_SALE_NOTE';
+const DEFAULT_AUCTION_SALE_NOTE = 'ทรัพย์สินขายออกที่เลือกช่องทางประมูล';
 const AUCTION_WRITEOFF_NOTE_PROP = 'AUCTION_WRITEOFF_NOTE';
 const DEFAULT_AUCTION_WRITEOFF_NOTE = 'สินค้าชำรุด';
 const AUCTION_INTRO_NOTE_PROP = 'AUCTION_INTRO_NOTE';
@@ -1140,6 +1242,7 @@ function getAuctionIntroContent_() {
   const props = PropertiesService.getScriptProperties();
   return {
     title: props.getProperty(AUCTION_INTRO_TITLE_PROP) || DEFAULT_AUCTION_INTRO_TITLE,
+    saleNote: props.getProperty(AUCTION_SALE_NOTE_PROP) || DEFAULT_AUCTION_SALE_NOTE,
     writeoffNote: props.getProperty(AUCTION_WRITEOFF_NOTE_PROP) || DEFAULT_AUCTION_WRITEOFF_NOTE,
     note: props.getProperty(AUCTION_INTRO_NOTE_PROP) || DEFAULT_AUCTION_INTRO_NOTE
   };
@@ -1148,6 +1251,7 @@ function adminSaveAuctionIntroContent_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const props = PropertiesService.getScriptProperties();
   props.setProperty(AUCTION_INTRO_TITLE_PROP, String(body.title || '').trim() || DEFAULT_AUCTION_INTRO_TITLE);
+  props.setProperty(AUCTION_SALE_NOTE_PROP, String(body.saleNote || '').trim() || DEFAULT_AUCTION_SALE_NOTE);
   props.setProperty(AUCTION_WRITEOFF_NOTE_PROP, String(body.writeoffNote || '').trim() || DEFAULT_AUCTION_WRITEOFF_NOTE);
   props.setProperty(AUCTION_INTRO_NOTE_PROP, String(body.note || ''));
   logActivity_('', 'ADMIN_SET_AUCTION_INTRO_CONTENT', 'admin', 'แก้ไขเนื้อหาหน้าแรกประมูลขาย');
@@ -1816,28 +1920,34 @@ function createSale_(body) {
   const token = Utilities.getUuid();
   const now = new Date();
   const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
+  // ช่องทางจำหน่าย: 'ประมูล' = อนุมัติแล้วให้ไปเป็นตัวเลือกในหน้าคัดเลือกรายการประมูล (เหมือนตัดชำรุด),
+  // ค่าอื่นถือเป็น 'ขาย' (ขายตรง ไม่ต้องประมูล) ซึ่งเป็นค่าเริ่มต้น
+  const channel = body.channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
 
   // ล็อกช่วงออกเลขที่เอกสาร + บันทึกแถวหลัก กันเลขที่ซ้ำเมื่อมีคนสร้างเอกสารพร้อมกันหลายคน
   const runningNo = withLock_(() => {
     const rn = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
     const sSheet = getSS_().getSheetByName(SHEETS.SALES);
-    sSheet.appendRow([
-      saleId,
-      rn,
-      now,
-      body.fromDept || '',
-      fromDeptCode,
-      body.buyer || '',
-      body.remark || '',
-      status,
-      body.approverName || '',
-      body.approverEmail || '',
-      token,
-      skipApproval ? now : '',
-      skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
-      body.createdBy || '',
-      body.createdByEmail || ''
-    ]);
+    const sValues = sSheet.getDataRange().getValues();
+    const sIdx = indexMap_(sValues[0]);
+    const newRow = sValues[0].map(() => '');
+    newRow[sIdx.SaleID] = saleId;
+    newRow[sIdx.RunningNo] = rn;
+    newRow[sIdx.CreatedAt] = now;
+    newRow[sIdx.FromDept] = body.fromDept || '';
+    newRow[sIdx.FromDeptCode] = fromDeptCode;
+    newRow[sIdx.Buyer] = body.buyer || '';
+    newRow[sIdx.Remark] = body.remark || '';
+    newRow[sIdx.Status] = status;
+    newRow[sIdx.ApproverName] = body.approverName || '';
+    newRow[sIdx.ApproverEmail] = body.approverEmail || '';
+    newRow[sIdx.ApprovalToken] = token;
+    newRow[sIdx.ApprovedAt] = skipApproval ? now : '';
+    newRow[sIdx.ApproverComment] = skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '';
+    newRow[sIdx.CreatedBy] = body.createdBy || '';
+    newRow[sIdx.CreatedByEmail] = body.createdByEmail || '';
+    if (sIdx.Channel !== undefined) newRow[sIdx.Channel] = channel;
+    sSheet.appendRow(newRow);
     return rn;
   });
 
