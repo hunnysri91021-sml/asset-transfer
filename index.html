@@ -1249,39 +1249,36 @@ function renderAuction(root){
 
   // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
   function showIntro(){
-    root.innerHTML = `
-      <div class="card">
-        <h2>สรุปขั้นตอนการประมูลสินค้า</h2>
-        <h3>📦 รายการสินค้า</h3>
-        <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
-          <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>สินค้าชำรุด</td></tr>
-          <tr><td><span class="badge badge-pending">รอขาย</span></td><td>อุปกรณ์ที่ยังใช้งานได้</td></tr>
-        </table>
-        <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
-        <div id="auctionIntroBracketsHost"><div class="empty">กำลังโหลด...</div></div>
-        <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
-        <div id="auctionIntroNoteHost" style="white-space:pre-wrap;line-height:1.7;font-size:14px;"></div>
-        <div style="margin-top:20px;">
-          <button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>
-        </div>
-      </div>
-    `;
+    root.innerHTML = `<div class="card"><div class="empty">กำลังโหลด...</div></div>`;
     Promise.all([
       apiGet({ action:'getAuctionPriceBrackets' }),
-      apiGet({ action:'getAuctionIntroNote' })
-    ]).then(([bracketsRes, noteRes])=>{
+      apiGet({ action:'getAuctionIntroContent' })
+    ]).then(([bracketsRes, contentRes])=>{
       priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
-      const bHost = document.getElementById('auctionIntroBracketsHost');
-      if(bHost){
-        bHost.innerHTML = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
-          priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
-          `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
-      }
-      const nHost = document.getElementById('auctionIntroNoteHost');
-      if(nHost) nHost.textContent = noteRes.ok ? (noteRes.data.note||'') : '';
+      const content = contentRes.ok ? contentRes.data : {};
+      const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
+        priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
+        `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
+      root.innerHTML = `
+        <div class="card">
+          <h2>${esc(content.title||'สรุปขั้นตอนการประมูลสินค้า')}</h2>
+          <h3>📦 รายการสินค้า</h3>
+          <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
+            <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>${esc(content.writeoffNote||'')}</td></tr>
+            <tr><td><span class="badge badge-pending">รอขาย</span></td><td>${esc(content.saleNote||'')}</td></tr>
+          </table>
+          <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
+          ${bracketsHtml}
+          <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
+          <div style="white-space:pre-wrap;line-height:1.7;font-size:14px;">${esc(content.note||'')}</div>
+          <div style="margin-top:20px;">
+            <button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>
+          </div>
+        </div>
+      `;
+      const viewBtn = document.getElementById('btnAuctionViewProducts');
+      if(viewBtn) viewBtn.onclick = showListing;
     });
-    const viewBtn = document.getElementById('btnAuctionViewProducts');
-    if(viewBtn) viewBtn.onclick = showListing;
   }
 
   function showListing(){
@@ -2987,10 +2984,17 @@ function renderSettings(root){
         </div>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ข้อความหน้าแรกประมูลขาย (วิธีเข้าร่วม + ไทม์ไลน์)</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า (ตารางประเภทสินค้าและช่วงราคากลางแสดงให้อัตโนมัติแยกต่างหากแล้ว ไม่ต้องพิมพ์ซ้ำในนี้) แก้ไขวันที่/ขั้นตอนตรงนี้ทุกรอบที่มีการประมูลใหม่</p>
+        <label>เนื้อหาหน้าแรกประมูลขาย</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า แก้ไขได้ทั้งหมด (ตารางเกณฑ์ราคา Rank แสดงให้อัตโนมัติจากช่วงราคากลางด้านบนแยกต่างหาก ไม่ต้องพิมพ์ซ้ำในนี้) แก้ไขวันที่/ขั้นตอนในช่องล่างสุดทุกรอบที่มีการประมูลใหม่</p>
+        <label>หัวข้อหน้าแรก</label>
+        <input type="text" id="auctionIntroTitle" placeholder="สรุปขั้นตอนการประมูลสินค้า">
+        <div class="row" style="margin-top:10px;">
+          <div><label>คำอธิบายประเภท "รอขาย"</label><input type="text" id="auctionSaleNote" placeholder="อุปกรณ์ที่ยังใช้งานได้"></div>
+          <div><label>คำอธิบายประเภท "รอตัดชำรุด"</label><input type="text" id="auctionWriteoffNote" placeholder="สินค้าชำรุด"></div>
+        </div>
+        <label style="margin-top:10px;">วิธีเข้าร่วมประมูล + ไทม์ไลน์</label>
         <textarea id="auctionIntroNote" rows="10" style="width:100%;font-family:inherit;"></textarea>
-        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionIntroNote" style="margin-top:8px;">บันทึกข้อความ</button>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionIntroNote" style="margin-top:8px;">บันทึกเนื้อหาหน้าแรก</button>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ราคาซาก = มูลค่าตามบัญชี</label>
@@ -3225,20 +3229,26 @@ function renderSettings(root){
   }
 
   function loadAuctionIntroNote(){
-    apiGet({ action:'getAuctionIntroNote' }).then(res=>{
+    apiGet({ action:'getAuctionIntroContent' }).then(res=>{
       if(!res.ok) return;
+      document.getElementById('auctionIntroTitle').value = res.data.title || '';
+      document.getElementById('auctionSaleNote').value = res.data.saleNote || '';
+      document.getElementById('auctionWriteoffNote').value = res.data.writeoffNote || '';
       document.getElementById('auctionIntroNote').value = res.data.note || '';
     });
   }
 
   function saveAuctionIntroNote(){
+    const title = document.getElementById('auctionIntroTitle').value;
+    const saleNote = document.getElementById('auctionSaleNote').value;
+    const writeoffNote = document.getElementById('auctionWriteoffNote').value;
     const note = document.getElementById('auctionIntroNote').value;
     const btn = document.getElementById('btnSaveAuctionIntroNote');
     btn.disabled = true;
-    apiPost({ action:'adminSaveAuctionIntroNote', password: STATE.adminPassword, note }).then(res=>{
+    apiPost({ action:'adminSaveAuctionIntroContent', password: STATE.adminPassword, title, saleNote, writeoffNote, note }).then(res=>{
       btn.disabled = false;
-      if(!res.ok){ toast(res.error||'บันทึกข้อความไม่สำเร็จ','err'); return; }
-      toast('บันทึกข้อความหน้าแรกประมูลขายสำเร็จ','ok');
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('บันทึกเนื้อหาหน้าแรกประมูลขายสำเร็จ','ok');
     });
   }
 
