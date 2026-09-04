@@ -154,6 +154,9 @@ function doGet(e) {
       case 'getAuctionPriceBrackets':
         result = { ok: true, data: { brackets: getAuctionPriceBrackets_() } };
         break;
+      case 'getAuctionIntroNote':
+        result = { ok: true, data: { note: getAuctionIntroNote_() } };
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -285,6 +288,9 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
+        break;
+      case 'adminSaveAuctionIntroNote':
+        result = adminSaveAuctionIntroNote_(body);
         break;
       case 'adminSetQueueReferencePrice':
         result = adminSetQueueReferencePrice_(body);
@@ -1039,6 +1045,30 @@ function adminSaveAuctionPriceBrackets_(body) {
   cleaned.sort((a, b) => a.min - b.min);
   PropertiesService.getScriptProperties().setProperty(AUCTION_PRICE_BRACKETS_PROP, JSON.stringify(cleaned));
   logActivity_('', 'ADMIN_SET_AUCTION_BRACKETS', 'admin', 'ตั้งค่าช่วงราคากลางหน้าประมูลขาย ' + cleaned.length + ' ช่วง');
+  return { ok: true };
+}
+
+// ข้อความอธิบายขั้นตอน/วิธีร่วมประมูล + ไทม์ไลน์ ที่แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า
+// Admin แก้ไขได้เองที่หน้าตั้งค่า (ต้องอัปเดตทุกรอบประมูล เช่น วันที่ปิดรับ/ประกาศผล) — อ่านได้โดยไม่ต้องรหัสผ่าน
+// เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน เหมือน getAuctionPublicEnabled/getAuctionPriceBrackets
+const AUCTION_INTRO_NOTE_PROP = 'AUCTION_INTRO_NOTE';
+const DEFAULT_AUCTION_INTRO_NOTE =
+  'ผู้ที่สนใจให้จัดส่งข้อมูลต่อไปนี้มาที่ ฝ่ายจัดซื้อ\n' +
+  '- รหัสสินค้า\n' +
+  '- ชื่อสินค้า\n' +
+  '- ราคาที่ต้องการประมูล (ต้องไม่ต่ำกว่าราคาเริ่มต้นตาม Rank)\n\n' +
+  'ไทม์ไลน์สำคัญ\n' +
+  '- ส่งใบประมูลมาที่ฝ่ายจัดซื้อ ภายใน 15 กันยายน 2569\n' +
+  '- ประกาศผลผู้ชนะการประมูล 18 กันยายน 2569\n' +
+  '- ชำระเงิน & รับสินค้า ภายใน 25 กันยายน 2569\n\n' +
+  'การชำระเงินและรับสินค้าในวัน-เวลาทำการเท่านั้น';
+function getAuctionIntroNote_() {
+  return PropertiesService.getScriptProperties().getProperty(AUCTION_INTRO_NOTE_PROP) || DEFAULT_AUCTION_INTRO_NOTE;
+}
+function adminSaveAuctionIntroNote_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  PropertiesService.getScriptProperties().setProperty(AUCTION_INTRO_NOTE_PROP, String(body.note || ''));
+  logActivity_('', 'ADMIN_SET_AUCTION_INTRO_NOTE', 'admin', 'แก้ไขข้อความหน้าแรกประมูลขาย');
   return { ok: true };
 }
 
