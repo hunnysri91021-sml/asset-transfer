@@ -1247,38 +1247,83 @@ function renderAuction(root){
   const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
-  root.innerHTML = `
-    <div class="card">
-      <h2>ประมูลขาย</h2>
-      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
-      <div class="toolbar no-print">
-        <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
-        <select id="auctionTypeFilter" style="max-width:150px;">
-          <option value="">ทุกประเภท</option>
-          <option value="sale">รอขาย</option>
-          <option value="writeoff">รอตัดชำรุด</option>
-        </select>
-        <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
-        ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
-        ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>` : ''}
+  // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
+  function showIntro(){
+    root.innerHTML = `
+      <div class="card">
+        <h2>สรุปขั้นตอนการประมูลสินค้า</h2>
+        <h3>📦 รายการสินค้า</h3>
+        <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
+          <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>สินค้าชำรุด</td></tr>
+          <tr><td><span class="badge badge-pending">รอขาย</span></td><td>อุปกรณ์ที่ยังใช้งานได้</td></tr>
+        </table>
+        <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
+        <div id="auctionIntroBracketsHost"><div class="empty">กำลังโหลด...</div></div>
+        <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
+        <div id="auctionIntroNoteHost" style="white-space:pre-wrap;line-height:1.7;font-size:14px;"></div>
+        <div style="margin-top:20px;">
+          <button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>
+        </div>
       </div>
-      <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
-      <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
-    </div>
-  `;
+    `;
+    Promise.all([
+      apiGet({ action:'getAuctionPriceBrackets' }),
+      apiGet({ action:'getAuctionIntroNote' })
+    ]).then(([bracketsRes, noteRes])=>{
+      priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
+      const bHost = document.getElementById('auctionIntroBracketsHost');
+      if(bHost){
+        bHost.innerHTML = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
+          priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
+          `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
+      }
+      const nHost = document.getElementById('auctionIntroNoteHost');
+      if(nHost) nHost.textContent = noteRes.ok ? (noteRes.data.note||'') : '';
+    });
+    const viewBtn = document.getElementById('btnAuctionViewProducts');
+    if(viewBtn) viewBtn.onclick = showListing;
+  }
 
-  document.getElementById('auctionSearch').oninput = renderAuctionTable;
-  document.getElementById('auctionTypeFilter').onchange = renderAuctionTable;
-  document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
-  const exportBtn = document.getElementById('btnAuctionExport');
-  if(exportBtn) exportBtn.onclick = exportAuction;
-  const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
-  if(toggleBtn){
-    toggleBtn.onclick = ()=>{
-      showBookValue = !showBookValue;
-      toggleBtn.textContent = showBookValue ? '🙈 ซ่อนมูลค่าตามบัญชี' : '👁 แสดงมูลค่าตามบัญชี';
-      renderAuctionTable();
-    };
+  function showListing(){
+    root.innerHTML = `
+      <div class="card">
+        <div class="toolbar no-print" style="margin-bottom:6px;">
+          <button class="btn btn-secondary btn-sm" id="btnAuctionBackToIntro">← กลับไปหน้าหลักการประมูล</button>
+        </div>
+        <h2>ประมูลขาย</h2>
+        <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
+        <div class="toolbar no-print">
+          <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+          <select id="auctionTypeFilter" style="max-width:150px;">
+            <option value="">ทุกประเภท</option>
+            <option value="sale">รอขาย</option>
+            <option value="writeoff">รอตัดชำรุด</option>
+          </select>
+          <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
+          ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
+          ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>` : ''}
+        </div>
+        <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+        <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
+      </div>
+    `;
+
+    document.getElementById('btnAuctionBackToIntro').onclick = showIntro;
+    document.getElementById('auctionSearch').oninput = renderAuctionTable;
+    document.getElementById('auctionTypeFilter').onchange = renderAuctionTable;
+    document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
+    const exportBtn = document.getElementById('btnAuctionExport');
+    if(exportBtn) exportBtn.onclick = exportAuction;
+    const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
+    if(toggleBtn){
+      toggleBtn.onclick = ()=>{
+        showBookValue = !showBookValue;
+        toggleBtn.textContent = showBookValue ? '🙈 ซ่อนมูลค่าตามบัญชี' : '👁 แสดงมูลค่าตามบัญชี';
+        renderAuctionTable();
+      };
+    }
+
+    load();
   }
 
   function load(){
@@ -1399,7 +1444,7 @@ function renderAuction(root){
     exportExcel('ประมูลขาย.xlsx', [{ name:'ประมูลขาย', header, rows: dataRows }]);
   }
 
-  load();
+  showIntro();
 }
 
 /* ================= LIST VIEW ================= */
@@ -2942,6 +2987,12 @@ function renderSettings(root){
         </div>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ข้อความหน้าแรกประมูลขาย (วิธีเข้าร่วม + ไทม์ไลน์)</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า (ตารางประเภทสินค้าและช่วงราคากลางแสดงให้อัตโนมัติแยกต่างหากแล้ว ไม่ต้องพิมพ์ซ้ำในนี้) แก้ไขวันที่/ขั้นตอนตรงนี้ทุกรอบที่มีการประมูลใหม่</p>
+        <textarea id="auctionIntroNote" rows="10" style="width:100%;font-family:inherit;"></textarea>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionIntroNote" style="margin-top:8px;">บันทึกข้อความ</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ราคาซาก = มูลค่าตามบัญชี</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ราคาซากของทุกทรัพย์สินถูกกำหนดให้เท่ากับมูลค่าตามบัญชีเสมอ (ปรับอัตโนมัติทุกครั้งที่แก้ไข/เพิ่มทรัพย์สิน หรือดึงข้อมูลจากบัญชี) หากมีรายการเก่าที่ราคาซากยังไม่ตรงกับมูลค่าตามบัญชี กดปุ่มด้านล่างเพื่อไล่ตรวจสอบและอัปเดตให้ตรงกันย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
         <button class="btn btn-secondary btn-sm" id="btnSyncScrapPrice">🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง</button>
@@ -2974,6 +3025,7 @@ function renderSettings(root){
   loadSourceLink();
   loadOnlineUsers();
   loadAuctionBrackets();
+  loadAuctionIntroNote();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
@@ -2981,6 +3033,7 @@ function renderSettings(root){
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
   document.getElementById('btnAddAuctionBracket').onclick = addAuctionBracketRow;
   document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
+  document.getElementById('btnSaveAuctionIntroNote').onclick = saveAuctionIntroNote;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
@@ -3168,6 +3221,24 @@ function renderSettings(root){
       if(!res.ok){ toast(res.error||'บันทึกช่วงราคาไม่สำเร็จ','err'); return; }
       toast('บันทึกช่วงราคากลางสำเร็จ','ok');
       loadAuctionBrackets();
+    });
+  }
+
+  function loadAuctionIntroNote(){
+    apiGet({ action:'getAuctionIntroNote' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('auctionIntroNote').value = res.data.note || '';
+    });
+  }
+
+  function saveAuctionIntroNote(){
+    const note = document.getElementById('auctionIntroNote').value;
+    const btn = document.getElementById('btnSaveAuctionIntroNote');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionIntroNote', password: STATE.adminPassword, note }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกข้อความไม่สำเร็จ','err'); return; }
+      toast('บันทึกข้อความหน้าแรกประมูลขายสำเร็จ','ok');
     });
   }
 
