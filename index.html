@@ -448,6 +448,19 @@ function enterApp(){
   const params = new URLSearchParams(location.search);
   const av = params.get('view');
   if(av==='approve' || av==='approveSale' || av==='approveWriteOff'){ route(); return; }
+  // ?view=auction เปิดหน้าประมูลขายแบบสาธารณะได้โดยไม่ต้องล็อกอิน — แต่ต้องเช็คก่อนว่า Admin เปิดใช้งานฟีเจอร์นี้ไว้จริง
+  // (ค่านี้อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะผู้เข้าชมยังไม่ได้ล็อกอิน) ถ้ายังไม่เปิด/เช็คไม่สำเร็จ กลับไปตามสิทธิ์ปกติ
+  if(av==='auction' && !checkAuth()){
+    apiGet({action:'getAuctionPublicEnabled'}).then(res=>{
+      if(res.ok && res.data.enabled){
+        hideAppChrome();
+        renderAuction(document.getElementById('viewRoot'));
+      } else {
+        renderLogin();
+      }
+    });
+    return;
+  }
   if(checkAuth()){ startHeartbeat(); route(); } else { stopHeartbeat(); renderLogin(); }
 }
 
@@ -1226,22 +1239,31 @@ function renderDashboard(root){
 function renderAuction(root){
   let showBookValue = false;
   let auctionRows = [];
+  const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
 
   root.innerHTML = `
     <div class="card">
       <h2>ประมูลขาย</h2>
-      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล</p>
+      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน</p>
       <div class="toolbar no-print">
         <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        <select id="auctionTypeFilter" style="max-width:150px;">
+          <option value="">ทุกประเภท</option>
+          <option value="sale">รอขาย</option>
+          <option value="writeoff">รอตัดชำรุด</option>
+        </select>
+        <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
         ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
-        <span id="auctionCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
         <button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>
       </div>
+      <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
       <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
 
   document.getElementById('auctionSearch').oninput = renderAuctionTable;
+  document.getElementById('auctionTypeFilter').onchange = renderAuctionTable;
+  document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
   document.getElementById('btnAuctionExport').onclick = exportAuction;
   const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
   if(toggleBtn){
@@ -1259,18 +1281,32 @@ function renderAuction(root){
       const saleRows = (res.data.saleQueue||[]).map(a=>Object.assign({}, a, { queueType:'sale' }));
       const woRows = (res.data.writeOffQueue||[]).map(a=>Object.assign({}, a, { queueType:'writeoff' }));
       auctionRows = saleRows.concat(woRows).sort((a,b)=> new Date(b.AddedAt) - new Date(a.AddedAt));
+      const deptSel = document.getElementById('auctionDeptFilter');
+      const depts = [...new Set(auctionRows.map(a=>a.Department).filter(Boolean))].sort();
+      deptSel.innerHTML = '<option value="">ทุกหน่วยงาน</option>' + depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
       renderAuctionTable();
     });
   }
 
+  function filteredAuctionRows(){
+    const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
+    const typeFilter = document.getElementById('auctionTypeFilter').value;
+    const deptFilter = document.getElementById('auctionDeptFilter').value;
+    return auctionRows.filter(r =>
+      (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
+      (!typeFilter || r.queueType===typeFilter) &&
+      (!deptFilter || r.Department===deptFilter)
+    );
+  }
+
   function renderAuctionTable(){
     const host = document.getElementById('auctionTableHost');
-    const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
-    const rows = qq ? auctionRows.filter(r => String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) : auctionRows;
-    document.getElementById('auctionCount').textContent = 'รวม '+rows.length+' รายการ';
-    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่มีทรัพย์สินรอขาย/ตัดชำรุด</div>'; return; }
-    const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคาซาก</th><th>มูลค่าตามบัญชี</th></tr>`;
+    const rows = filteredAuctionRows();
+    const saleCount = rows.filter(r=>r.queueType==='sale').length;
+    const woCount = rows.filter(r=>r.queueType==='writeoff').length;
+    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ (รอขาย ${saleCount} / รอตัดชำรุด ${woCount})`;
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1278,7 +1314,6 @@ function renderAuction(root){
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
         <td><span class="badge badge-pending">${typeLabel[a.queueType]}</span></td>
-        <td class="money">${fmtMoneyOrHidden(a.ScrapPrice)}</td>
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
       </tr>`;
     });
@@ -1287,16 +1322,15 @@ function renderAuction(root){
   }
 
   function exportAuction(){
-    if(!auctionRows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคาซาก','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
-    const rows = auctionRows.map(a => [
+    const rows = filteredAuctionRows();
+    if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
+    const dataRows = rows.map(a => [
       a.AssetID, a.AssetName, a.Department, typeLabel[a.queueType],
-      canSeePrice() ? (Number(a.ScrapPrice)||0) : 'ไม่มีสิทธิ์ดู',
       showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
       a.DisplayImage||''
     ]);
-    exportExcel('ประมูลขาย.xlsx', [{ name:'ประมูลขาย', header, rows }]);
+    exportExcel('ประมูลขาย.xlsx', [{ name:'ประมูลขาย', header, rows: dataRows }]);
   }
 
   load();
@@ -2823,6 +2857,16 @@ function renderSettings(root){
         </div>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>หน้าประมูลขายแบบสาธารณะ</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เปิดให้ใครก็ตามเปิดหน้า "ประมูลขาย" ดูได้ทันทีโดยไม่ต้องล็อกอิน (ใช้ตอนแชร์ลิงก์/เปิดจอให้ผู้เข้าประมูลดูรายการ) — ไม่แสดงราคาซากและซ่อนมูลค่าตามบัญชีเสมอสำหรับผู้ที่ไม่ได้ล็อกอิน</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="auctionPublicEnabled" style="width:auto;">
+          <label for="auctionPublicEnabled" style="margin:0;font-weight:400;">เปิดให้เข้าดูได้โดยไม่ต้องล็อกอิน</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionPublic" style="margin-top:8px;">บันทึก</button>
+        <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ราคาซาก = มูลค่าตามบัญชี</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ราคาซากของทุกทรัพย์สินถูกกำหนดให้เท่ากับมูลค่าตามบัญชีเสมอ (ปรับอัตโนมัติทุกครั้งที่แก้ไข/เพิ่มทรัพย์สิน หรือดึงข้อมูลจากบัญชี) หากมีรายการเก่าที่ราคาซากยังไม่ตรงกับมูลค่าตามบัญชี กดปุ่มด้านล่างเพื่อไล่ตรวจสอบและอัปเดตให้ตรงกันย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
         <button class="btn btn-secondary btn-sm" id="btnSyncScrapPrice">🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง</button>
@@ -2858,6 +2902,7 @@ function renderSettings(root){
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
+  document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
@@ -2973,6 +3018,19 @@ function renderSettings(root){
       document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
       document.getElementById('accountingEmail').value = res.data.accountingEmail || '';
       document.getElementById('gaEmail').value = res.data.gaEmail || '';
+      document.getElementById('auctionPublicEnabled').checked = !!res.data.auctionPublicEnabled;
+    });
+    document.getElementById('auctionPublicLink').textContent = location.origin + location.pathname + '?view=auction';
+  }
+
+  function saveAuctionPublic(){
+    const enabled = document.getElementById('auctionPublicEnabled').checked;
+    const btn = document.getElementById('btnSaveAuctionPublic');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionPublicSetting', password: STATE.adminPassword, enabled }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast(enabled ? 'เปิดหน้าประมูลขายแบบสาธารณะแล้ว' : 'ปิดหน้าประมูลขายแบบสาธารณะแล้ว','ok');
     });
   }
 
