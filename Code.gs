@@ -2366,7 +2366,7 @@ function sendSaleApprovalEmail_(saleId, runningNo, body, items, token) {
 function sendSaleDecisionNotification_(saleObj, decision, comment) {
   try {
     if (!saleObj.CreatedByEmail) return;
-    const statusThai = decision === STATUS.APPROVED ? 'ขายแล้ว' : 'ไม่อนุมัติ';
+    const statusThai = decision === STATUS.APPROVED ? (saleObj.Channel === 'ประมูล' ? 'รอประมูล' : 'ขายแล้ว') : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
@@ -2591,8 +2591,9 @@ function pdfImgGallery_(images) {
   return '<div class="doc-img-gallery">' + list.map(u => '<img src="' + escapeHtml_(u) + '">').join('') + '</div>';
 }
 
-function pdfStatusBadge_(status, isSale) {
-  const labels = { Draft: 'ฉบับร่าง', PendingApproval: 'รออนุมัติ', Approved: (isSale ? 'ขายแล้ว' : 'อนุมัติแล้ว'), Rejected: 'ไม่อนุมัติ', Voided: 'ยกเลิกแล้ว' };
+function pdfStatusBadge_(status, isSale, isAuctionChannel) {
+  const approvedLabel = isSale ? (isAuctionChannel ? 'รอประมูล' : 'ขายแล้ว') : 'อนุมัติแล้ว';
+  const labels = { Draft: 'ฉบับร่าง', PendingApproval: 'รออนุมัติ', Approved: approvedLabel, Rejected: 'ไม่อนุมัติ', Voided: 'ยกเลิกแล้ว' };
   const colors = { Draft: ['#e2e3e5', '#555'], PendingApproval: ['#fff3cd', '#b8860b'], Approved: ['#d4edda', '#1a7d3c'], Rejected: ['#f8d7da', '#c0392b'], Voided: ['#e2e3e5', '#555'] };
   const c = colors[status] || colors.Draft;
   return '<span class="badge" style="background:' + c[0] + ';color:' + c[1] + ';">' + escapeHtml_(labels[status] || status) + '</span>';
@@ -2614,10 +2615,10 @@ function pdfSignBlock_(leftLabel, leftName, rightLabel, rightName) {
     '</tr></table>';
 }
 
-function pdfApprovalFooter_(obj, isSale) {
+function pdfApprovalFooter_(obj, isSale, isAuctionChannel) {
   if (obj.Status === 'Draft') return '';
   let html = '<div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">' +
-    '<b>สถานะการอนุมัติ:</b> ' + pdfStatusBadge_(obj.Status, isSale) + '&nbsp; ';
+    '<b>สถานะการอนุมัติ:</b> ' + pdfStatusBadge_(obj.Status, isSale, isAuctionChannel) + '&nbsp; ';
   if (obj.ApproverName || obj.ApproverEmail) html += 'โดย ' + escapeHtml_(obj.ApproverName || obj.ApproverEmail);
   if (obj.ApprovedAt) html += ' เมื่อ ' + fmtDateServer_(obj.ApprovedAt);
   if (obj.ApproverComment) html += '<br><b>ความเห็น:</b> ' + escapeHtml_(obj.ApproverComment);
@@ -2665,13 +2666,14 @@ function buildSalePdfHtml_(s) {
     '<div class="doc-title">ใบขายออกทรัพย์สิน</div>' +
     '<div class="doc-meta"><b>เลขที่</b> ' + escapeHtml_(s.RunningNo) + ' &nbsp;&nbsp;&nbsp; <b>วันที่</b> ' + fmtDateServer_(s.CreatedAt) + '</div>' +
     '<div class="doc-field"><b>หน่วยงาน</b> ' + escapeHtml_(s.FromDept) + '</div>' +
+    '<div class="doc-field"><b>ช่องทางจำหน่าย</b> ' + (s.Channel === 'ประมูล' ? 'ประมูล' : 'ขาย') + '</div>' +
     '<div class="doc-field"><b>ผู้ซื้อ/ผู้ประมูลได้</b> ' + escapeHtml_(s.Buyer || '-') + '</div>' +
     '<div class="doc-field"><b>หมายเหตุ</b> ' + escapeHtml_(s.Remark || '-') + '</div>' +
     '<table class="doc-table"><tr><th style="width:5%;">ลำดับ</th><th style="width:15%;">รูปภาพ</th><th style="width:10%;">รหัส</th><th style="width:21%;">รายการ</th>' +
     '<th style="width:12%;">ราคาซาก</th><th style="width:12%;">ราคาประมูล</th><th style="width:12%;">ราคาขาย</th><th style="width:13%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="6" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
     pdfSignBlock_('ผู้บันทึก', s.CreatedBy, 'ผู้อนุมัติ', s.ApproverName) +
-    pdfApprovalFooter_(s, true) +
+    pdfApprovalFooter_(s, true, s.Channel === 'ประมูล') +
     '</body></html>';
 }
 
