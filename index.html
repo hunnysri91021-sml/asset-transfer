@@ -1472,17 +1472,22 @@ function renderAuctionSelection(root){
   root.innerHTML = `
     <div class="card">
       <h2>คัดเลือกรายการประมูล</h2>
-      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว หรือขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — รายการขายออกช่องทาง "ขาย" ปกติจะย้ายไปแสดงในส่วน "ประวัติทรัพย์สินที่ขายแล้ว" ด้านล่างแทน</p>
+      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว หรือขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก และยังไม่ได้ส่งประมูล — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — เมื่อส่งประมูลแล้วรายการจะย้ายไปแสดงในส่วน "รายการที่ส่งประมูลแล้ว" ด้านล่างแทน</p>
       <div class="toolbar no-print">
         <input type="text" id="aselSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
-        <select id="aselSentFilter" style="max-width:170px;">
-          <option value="">ทั้งหมด</option>
-          <option value="yes">ส่งประมูลแล้ว</option>
-          <option value="no">ยังไม่ส่งประมูล</option>
-        </select>
       </div>
       <div id="aselCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
       <div id="aselTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>รายการที่ส่งประมูลแล้ว</h2>
+      <p style="color:var(--muted);font-size:13px;">รายการที่กำลังแสดงอยู่ในหน้า "ประมูลขาย" สาธารณะ — กดถอนออกได้หากต้องการนำกลับไปคัดเลือกใหม่</p>
+      <div class="toolbar no-print">
+        <input type="text" id="aselSentSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+      </div>
+      <div id="aselSentCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div id="aselSentTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
 
     <div class="card">
@@ -1497,20 +1502,23 @@ function renderAuctionSelection(root){
   `;
 
   document.getElementById('aselSearch').oninput = renderTable;
-  document.getElementById('aselSentFilter').onchange = renderTable;
+  document.getElementById('aselSentSearch').oninput = renderSentTable;
   document.getElementById('aselHistSearch').oninput = renderHistoryTable;
 
   function load(){
     document.getElementById('aselTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    document.getElementById('aselSentTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     document.getElementById('aselHistTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiPost({ action:'adminGetAuctionCandidates', password: STATE.adminPassword }).then(res=>{
       if(!res.ok){
         document.getElementById('aselTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||'');
+        document.getElementById('aselSentTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||'');
         document.getElementById('aselHistTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||'');
         return;
       }
       candidates = res.data || [];
       renderTable();
+      renderSentTable();
       renderHistoryTable();
     });
   }
@@ -1521,20 +1529,17 @@ function renderAuctionSelection(root){
 
   function filteredCandidates(){
     const qq = (document.getElementById('aselSearch').value||'').trim().toLowerCase();
-    const sentFilter = document.getElementById('aselSentFilter').value;
-    return activeCandidates().filter(a =>
-      (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1) &&
-      (!sentFilter || (sentFilter==='yes' ? a.SendToAuction : !a.SendToAuction))
+    return activeCandidates().filter(a => !a.SendToAuction &&
+      (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1)
     );
   }
 
   function renderTable(){
     const host = document.getElementById('aselTableHost');
     const rows = filteredCandidates();
-    document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ (ส่งประมูลแล้ว '+activeCandidates().filter(a=>a.SendToAuction).length+' รายการ)';
+    document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    const allSelected = rows.every(a=>a.SendToAuction);
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll" ${allSelected?'checked':''}> ส่งประมูล</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1544,7 +1549,7 @@ function renderAuctionSelection(root){
         <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
-        <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}" ${a.SendToAuction?'checked':''}></td>
+        <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}"></td>
       </tr>`;
     });
     html += '</table></div>';
@@ -1556,9 +1561,36 @@ function renderAuctionSelection(root){
     });
     host.querySelectorAll('.aselPriceInput').forEach(inp=>{
       inp.onchange = ()=>{
-        const row = candidates.find(a=>a.AssetID===inp.dataset.id);
-        saveSelection(inp.dataset.id, row?row.SendToAuction:false, inp.value.trim());
+        saveSelection(inp.dataset.id, false, inp.value.trim());
       };
+    });
+  }
+
+  function renderSentTable(){
+    const host = document.getElementById('aselSentTableHost');
+    const qq = (document.getElementById('aselSentSearch').value||'').trim().toLowerCase();
+    const rows = activeCandidates().filter(a => a.SendToAuction &&
+      (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
+    document.getElementById('aselSentCount').textContent = 'รวม '+rows.length+' รายการ';
+    if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่ส่งประมูล</div>'; return; }
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th></th></tr>`;
+    rows.forEach(a=>{
+      html += `<tr>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
+        <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
+        <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
+        <td><button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    host.querySelectorAll('.aselRetractBtn').forEach(btn=>{
+      btn.onclick = ()=> saveSelection(btn.dataset.id, false);
     });
   }
 
@@ -1595,6 +1627,7 @@ function renderAuctionSelection(root){
       }
       toast('บันทึกสำเร็จ','ok');
       renderTable();
+      renderSentTable();
     });
   }
 
@@ -1609,6 +1642,7 @@ function renderAuctionSelection(root){
       });
       toast(failed ? `บันทึกสำเร็จบางส่วน (ล้มเหลว ${failed} รายการ)` : `บันทึกสำเร็จ ${assetIds.length} รายการ`, failed ? 'err' : 'ok');
       renderTable();
+      renderSentTable();
     });
   }
 
