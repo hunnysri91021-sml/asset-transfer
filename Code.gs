@@ -151,6 +151,9 @@ function doGet(e) {
       case 'getAuctionPublicEnabled':
         result = { ok: true, data: { enabled: getAuctionPublicEnabled_() } };
         break;
+      case 'getAuctionPriceBrackets':
+        result = { ok: true, data: { brackets: getAuctionPriceBrackets_() } };
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -279,6 +282,9 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionPublicSetting':
         result = adminSaveAuctionPublicSetting_(body);
+        break;
+      case 'adminSaveAuctionPriceBrackets':
+        result = adminSaveAuctionPriceBrackets_(body);
         break;
       case 'adminSetQueueReferencePrice':
         result = adminSetQueueReferencePrice_(body);
@@ -991,6 +997,48 @@ function adminSaveAuctionPublicSetting_(body) {
   const enabled = !!body.enabled;
   PropertiesService.getScriptProperties().setProperty(AUCTION_PUBLIC_ENABLED_PROP, enabled ? '1' : '0');
   logActivity_('', 'ADMIN_SET_AUCTION_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การเข้าดูหน้าประมูลขายแบบสาธารณะ (ไม่ต้องล็อกอิน)');
+  return { ok: true };
+}
+
+// ช่วงราคากลาง (rank) สำหรับหน้าประมูลขาย — Admin กำหนดเองได้ที่หน้าตั้งค่า เก็บเป็น JSON ใน Script Properties
+// การอ่านค่านี้ (getAuctionPriceBrackets) ไม่ต้องใช้รหัสผ่านตั้งใจ เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน
+// ทุกคนที่เห็นหน้านี้ต้องเห็นช่วงราคาเดียวกันเพื่อจัดกลุ่มรายการได้ถูกต้อง
+const AUCTION_PRICE_BRACKETS_PROP = 'AUCTION_PRICE_BRACKETS';
+const DEFAULT_AUCTION_PRICE_BRACKETS = [
+  { label: '1 - 1,000', min: 0, max: 1000, defaultPrice: 100 },
+  { label: '1,000 - 5,000', min: 1000, max: 5000, defaultPrice: 1000 },
+  { label: '5,000 - 10,000', min: 5000, max: 10000, defaultPrice: 5000 },
+  { label: 'มากกว่า 10,000', min: 10000, max: null, defaultPrice: null }
+];
+function getAuctionPriceBrackets_() {
+  const raw = PropertiesService.getScriptProperties().getProperty(AUCTION_PRICE_BRACKETS_PROP);
+  if (!raw) return DEFAULT_AUCTION_PRICE_BRACKETS;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch (err) { /* ข้อมูลเสีย ใช้ค่าเริ่มต้นแทน */ }
+  return DEFAULT_AUCTION_PRICE_BRACKETS;
+}
+function adminSaveAuctionPriceBrackets_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const brackets = body.brackets;
+  if (!Array.isArray(brackets) || !brackets.length) return { ok: false, error: 'กรุณาระบุช่วงราคาอย่างน้อย 1 ช่วง' };
+  const cleaned = [];
+  for (const b of brackets) {
+    const min = parseFloat(b.min);
+    const max = (b.max === '' || b.max === null || b.max === undefined) ? null : parseFloat(b.max);
+    if (isNaN(min) || min < 0) return { ok: false, error: 'ค่าต่ำสุดของช่วงราคาต้องเป็นตัวเลขไม่ติดลบ' };
+    if (max !== null && (isNaN(max) || max <= min)) return { ok: false, error: 'ค่าสูงสุดของช่วงราคาต้องมากกว่าค่าต่ำสุด' };
+    let defaultPrice = (b.defaultPrice === '' || b.defaultPrice === null || b.defaultPrice === undefined) ? null : parseFloat(b.defaultPrice);
+    if (defaultPrice !== null && isNaN(defaultPrice)) defaultPrice = null;
+    cleaned.push({
+      label: String(b.label || '').trim() || (max !== null ? (min + ' - ' + max) : ('มากกว่า ' + min)),
+      min: min, max: max, defaultPrice: defaultPrice
+    });
+  }
+  cleaned.sort((a, b) => a.min - b.min);
+  PropertiesService.getScriptProperties().setProperty(AUCTION_PRICE_BRACKETS_PROP, JSON.stringify(cleaned));
+  logActivity_('', 'ADMIN_SET_AUCTION_BRACKETS', 'admin', 'ตั้งค่าช่วงราคากลางหน้าประมูลขาย ' + cleaned.length + ' ช่วง');
   return { ok: true };
 }
 
