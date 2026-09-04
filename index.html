@@ -1720,7 +1720,7 @@ window.openPrint = function(id){
 // ไปยังอีเมลฝ่ายบัญชี/GA ที่ Admin ตั้งค่าไว้ในหน้า "ตั้งค่า"
 window.sendNotifyEmail = function(docType, id, btn){
   if(btn) btn.disabled = true;
-  apiPost({ action:'notifyAccountingGA', docType, id, by: STATE.username||'' }).then(res=>{
+  apiPost({ action:'notifyAccountingGA', password: STATE.adminPassword, docType, id }).then(res=>{
     if(btn) btn.disabled = false;
     if(!res.ok){ toast(res.error||'ส่งอีเมลแจ้งเตือนไม่สำเร็จ','err'); return; }
     toast('ส่งอีเมลแจ้งบัญชี/GA สำเร็จ','ok');

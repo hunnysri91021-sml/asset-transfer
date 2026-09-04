@@ -49,7 +49,7 @@ const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
-  TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt', 'ReferencePrice'],
+  TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
@@ -401,7 +401,6 @@ function buildQueueRow_(q, a, disposed) {
     AssetID: q.AssetID,
     AddedBy: q.AddedBy,
     AddedAt: q.AddedAt,
-    ReferencePrice: q.ReferencePrice || '',
     AssetName: a.AssetName || '',
     Department: a.Department || '',
     DisplayImage: a.DisplayImage || '',
@@ -928,9 +927,26 @@ function adminRestoreAsset_(body) {
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
   setAssetsTag_([assetId], 'ใช้งาน');
+  clearAuctionSelection_(assetId);
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะใช้งานทรัพย์สิน ' + assetId);
   return { ok: true, data: { voidedCount } };
+}
+
+// ล้างค่า "ส่งประมูล"/ราคากลางเดิมเมื่อคืนสถานะทรัพย์สินกลับเป็น "ใช้งาน" — ค่าที่เคยตั้งไว้ผูกกับรอบขาย/ตัดชำรุดที่ถูกยกเลิกไปแล้ว
+// ถ้าทรัพย์สินนี้ถูกขาย/ตัดชำรุดใหม่อีกครั้งในอนาคต Admin ต้องพิจารณา/ติ๊กส่งประมูลใหม่ ไม่ใช่โผล่ขึ้นอัตโนมัติด้วยค่าเก่า
+function clearAuctionSelection_(assetId) {
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.SendToAuction === undefined) return;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.getRange(i + 1, idx.SendToAuction + 1).setValue('FALSE');
+      if (idx.AuctionReferencePrice !== undefined) sh.getRange(i + 1, idx.AuctionReferencePrice + 1).setValue('');
+      return;
+    }
+  }
 }
 
 function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, assetId) {
@@ -1238,6 +1254,8 @@ function adminSaveNotifyEmails_(body) {
 const NOTIFY_DOC_LABELS_TH = { transfer: 'ใบโอนย้ายทรัพย์สิน', sale: 'ใบขายออกทรัพย์สิน', writeoff: 'ใบตัดชำรุดทรัพย์สิน' };
 
 function notifyAccountingGA_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนแจ้งเตือน' };
   const docType = body.docType;
   const id = String(body.id || '').trim();
   const docLabel = NOTIFY_DOC_LABELS_TH[docType];
@@ -1282,7 +1300,7 @@ function notifyAccountingGA_(body) {
       sh.getRange(found.rowNum, found.idx.NotifiedAt + 1).setValue(new Date());
     }
 
-    logActivity_(id, 'NOTIFY_ACCOUNTING_GA', body.by || '', 'แจ้งเตือนฝ่ายบัญชี/GA สำหรับ' + docLabel + ' ' + found.obj.RunningNo);
+    logActivity_(id, 'NOTIFY_ACCOUNTING_GA', user.username, 'แจ้งเตือนฝ่ายบัญชี/GA สำหรับ' + docLabel + ' ' + found.obj.RunningNo);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
