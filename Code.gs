@@ -154,8 +154,8 @@ function doGet(e) {
       case 'getAuctionPriceBrackets':
         result = { ok: true, data: { brackets: getAuctionPriceBrackets_() } };
         break;
-      case 'getAuctionIntroNote':
-        result = { ok: true, data: { note: getAuctionIntroNote_() } };
+      case 'getAuctionIntroContent':
+        result = { ok: true, data: getAuctionIntroContent_() };
         break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
@@ -289,8 +289,8 @@ function doPost(e) {
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
         break;
-      case 'adminSaveAuctionIntroNote':
-        result = adminSaveAuctionIntroNote_(body);
+      case 'adminSaveAuctionIntroContent':
+        result = adminSaveAuctionIntroContent_(body);
         break;
       case 'adminSetQueueReferencePrice':
         result = adminSetQueueReferencePrice_(body);
@@ -1048,9 +1048,16 @@ function adminSaveAuctionPriceBrackets_(body) {
   return { ok: true };
 }
 
-// ข้อความอธิบายขั้นตอน/วิธีร่วมประมูล + ไทม์ไลน์ ที่แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า
-// Admin แก้ไขได้เองที่หน้าตั้งค่า (ต้องอัปเดตทุกรอบประมูล เช่น วันที่ปิดรับ/ประกาศผล) — อ่านได้โดยไม่ต้องรหัสผ่าน
-// เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน เหมือน getAuctionPublicEnabled/getAuctionPriceBrackets
+// เนื้อหาหน้าแรกของ "ประมูลขาย" (ก่อนเข้าดูรายการสินค้า) — Admin แก้ไขได้ทั้งหมดที่หน้าตั้งค่า
+// (หัวข้อ, คำอธิบายประเภทสินค้าทั้ง 2 แบบ, ข้อความวิธีร่วมประมูล+ไทม์ไลน์) ยกเว้นตารางเกณฑ์ราคา Rank
+// ซึ่งดึงจากช่วงราคากลางที่ตั้งไว้แยกต่างหากอยู่แล้ว (ดู getAuctionPriceBrackets)
+// อ่านได้โดยไม่ต้องรหัสผ่าน เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน เหมือน getAuctionPublicEnabled/getAuctionPriceBrackets
+const AUCTION_INTRO_TITLE_PROP = 'AUCTION_INTRO_TITLE';
+const DEFAULT_AUCTION_INTRO_TITLE = 'สรุปขั้นตอนการประมูลสินค้า';
+const AUCTION_SALE_NOTE_PROP = 'AUCTION_SALE_NOTE';
+const DEFAULT_AUCTION_SALE_NOTE = 'อุปกรณ์ที่ยังใช้งานได้';
+const AUCTION_WRITEOFF_NOTE_PROP = 'AUCTION_WRITEOFF_NOTE';
+const DEFAULT_AUCTION_WRITEOFF_NOTE = 'สินค้าชำรุด';
 const AUCTION_INTRO_NOTE_PROP = 'AUCTION_INTRO_NOTE';
 const DEFAULT_AUCTION_INTRO_NOTE =
   'ผู้ที่สนใจให้จัดส่งข้อมูลต่อไปนี้มาที่ ฝ่ายจัดซื้อ\n' +
@@ -1062,13 +1069,23 @@ const DEFAULT_AUCTION_INTRO_NOTE =
   '- ประกาศผลผู้ชนะการประมูล 18 กันยายน 2569\n' +
   '- ชำระเงิน & รับสินค้า ภายใน 25 กันยายน 2569\n\n' +
   'การชำระเงินและรับสินค้าในวัน-เวลาทำการเท่านั้น';
-function getAuctionIntroNote_() {
-  return PropertiesService.getScriptProperties().getProperty(AUCTION_INTRO_NOTE_PROP) || DEFAULT_AUCTION_INTRO_NOTE;
+function getAuctionIntroContent_() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    title: props.getProperty(AUCTION_INTRO_TITLE_PROP) || DEFAULT_AUCTION_INTRO_TITLE,
+    saleNote: props.getProperty(AUCTION_SALE_NOTE_PROP) || DEFAULT_AUCTION_SALE_NOTE,
+    writeoffNote: props.getProperty(AUCTION_WRITEOFF_NOTE_PROP) || DEFAULT_AUCTION_WRITEOFF_NOTE,
+    note: props.getProperty(AUCTION_INTRO_NOTE_PROP) || DEFAULT_AUCTION_INTRO_NOTE
+  };
 }
-function adminSaveAuctionIntroNote_(body) {
+function adminSaveAuctionIntroContent_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  PropertiesService.getScriptProperties().setProperty(AUCTION_INTRO_NOTE_PROP, String(body.note || ''));
-  logActivity_('', 'ADMIN_SET_AUCTION_INTRO_NOTE', 'admin', 'แก้ไขข้อความหน้าแรกประมูลขาย');
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(AUCTION_INTRO_TITLE_PROP, String(body.title || '').trim() || DEFAULT_AUCTION_INTRO_TITLE);
+  props.setProperty(AUCTION_SALE_NOTE_PROP, String(body.saleNote || '').trim() || DEFAULT_AUCTION_SALE_NOTE);
+  props.setProperty(AUCTION_WRITEOFF_NOTE_PROP, String(body.writeoffNote || '').trim() || DEFAULT_AUCTION_WRITEOFF_NOTE);
+  props.setProperty(AUCTION_INTRO_NOTE_PROP, String(body.note || ''));
+  logActivity_('', 'ADMIN_SET_AUCTION_INTRO_CONTENT', 'admin', 'แก้ไขเนื้อหาหน้าแรกประมูลขาย');
   return { ok: true };
 }
 
