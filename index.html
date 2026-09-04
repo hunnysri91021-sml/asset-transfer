@@ -1240,30 +1240,17 @@ function renderDashboard(root){
 
 /* ================= AUCTION VIEW (ประมูลขาย) — รวมคิวรอขาย + รอตัดชำรุด ให้ทุกคนดูได้ ================= */
 // ช่วงราคากลางสำหรับกรองหน้าประมูลขาย — min ไม่รวม, max รวม (ยกเว้นช่วงสุดท้ายไม่มี max)
-const AUCTION_PRICE_BRACKETS = [
-  { key:'1', label:'1 - 1,000', min:0, max:1000, defaultPrice:100 },
-  { key:'2', label:'1,000 - 5,000', min:1000, max:5000, defaultPrice:1000 },
-  { key:'3', label:'5,000 - 10,000', min:5000, max:10000, defaultPrice:5000 },
-  { key:'4', label:'มากกว่า 10,000', min:10000, max:Infinity, defaultPrice:null }
-];
-// ราคากลางเริ่มต้นที่แนะนำให้ตามช่วงมูลค่าตามบัญชี (Admin แก้ไขเป็นค่าอื่นได้เสมอ) — ใช้แค่เป็นค่าเริ่มต้นตอนยังไม่เคยตั้งราคากลาง
-function suggestedReferencePrice_(bookValue){
-  const bv = parseFloat(bookValue) || 0;
-  const bracket = AUCTION_PRICE_BRACKETS.find(b => bv > b.min && bv <= b.max);
-  return bracket ? bracket.defaultPrice : null;
-}
-
 function renderAuction(root){
   let showBookValue = false;
-  let activePriceBracket = '';
   let auctionRows = [];
+  let priceBrackets = [];
   const typeLabel = { sale:'รอขาย', writeoff:'รอตัดชำรุด' };
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
   root.innerHTML = `
     <div class="card">
       <h2>ประมูลขาย</h2>
-      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน</p>
+      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่อยู่ในคิวรอขาย และคิวรอตัดชำรุดทั้งหมด สำหรับใช้ประกอบการประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
       <div class="toolbar no-print">
         <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <select id="auctionTypeFilter" style="max-width:150px;">
@@ -1275,23 +1262,10 @@ function renderAuction(root){
         ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
         ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>` : ''}
       </div>
-      <div class="toolbar no-print" id="auctionPriceTabs" style="margin-top:6px;"></div>
       <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
       <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
-
-  function renderPriceTabs(){
-    const host = document.getElementById('auctionPriceTabs');
-    const tabs = [{ key:'', label:'ทุกช่วงราคากลาง' }].concat(AUCTION_PRICE_BRACKETS);
-    host.innerHTML = tabs.map(b=>
-      `<button class="btn ${activePriceBracket===b.key?'btn-primary':'btn-secondary'} btn-sm" data-bracket="${b.key}">${b.label}</button>`
-    ).join('');
-    host.querySelectorAll('button[data-bracket]').forEach(btn=>{
-      btn.onclick = ()=>{ activePriceBracket = btn.dataset.bracket; renderPriceTabs(); renderAuctionTable(); };
-    });
-  }
-  renderPriceTabs();
 
   document.getElementById('auctionSearch').oninput = renderAuctionTable;
   document.getElementById('auctionTypeFilter').onchange = renderAuctionTable;
@@ -1309,8 +1283,12 @@ function renderAuction(root){
 
   function load(){
     document.getElementById('auctionTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiGet({ action:'getAssetListBundle' }).then(res=>{
+    Promise.all([
+      apiGet({ action:'getAssetListBundle' }),
+      apiGet({ action:'getAuctionPriceBrackets' })
+    ]).then(([res, bracketsRes])=>{
       if(!res.ok){ document.getElementById('auctionTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
       const saleRows = (res.data.saleQueue||[]).map(a=>Object.assign({}, a, { queueType:'sale' }));
       const woRows = (res.data.writeOffQueue||[]).map(a=>Object.assign({}, a, { queueType:'writeoff' }));
       auctionRows = saleRows.concat(woRows).sort((a,b)=> new Date(b.AddedAt) - new Date(a.AddedAt));
@@ -1321,37 +1299,35 @@ function renderAuction(root){
     });
   }
 
+  // ราคากลางเริ่มต้นที่แนะนำให้ตามช่วงมูลค่าตามบัญชี (Admin แก้ไขเป็นค่าอื่นได้เสมอ) — ใช้แค่เป็นค่าเริ่มต้นตอนยังไม่เคยตั้งราคากลาง
+  function suggestedReferencePrice(bookValue){
+    const bv = parseFloat(bookValue) || 0;
+    const bracket = priceBrackets.find(b => bv > b.min && (b.max==null || bv <= b.max));
+    return bracket && bracket.defaultPrice!=null ? bracket.defaultPrice : null;
+  }
+
   function effectiveReferencePrice(a){
     if(a.ReferencePrice) return Number(a.ReferencePrice)||0;
-    const suggested = suggestedReferencePrice_(a.BookValue);
+    const suggested = suggestedReferencePrice(a.BookValue);
     return suggested!=null ? suggested : 0;
   }
 
-  function filteredAuctionRows(){
+  function baseFilteredRows(){
     const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
     const typeFilter = document.getElementById('auctionTypeFilter').value;
     const deptFilter = document.getElementById('auctionDeptFilter').value;
-    const bracket = AUCTION_PRICE_BRACKETS.find(b=>b.key===activePriceBracket);
-    return auctionRows.filter(r => {
-      const price = effectiveReferencePrice(r);
-      return (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
-        (!typeFilter || r.queueType===typeFilter) &&
-        (!deptFilter || r.Department===deptFilter) &&
-        (!bracket || (price > bracket.min && price <= bracket.max));
-    });
+    return auctionRows.filter(r =>
+      (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
+      (!typeFilter || r.queueType===typeFilter) &&
+      (!deptFilter || r.Department===deptFilter)
+    );
   }
 
-  function renderAuctionTable(){
-    const host = document.getElementById('auctionTableHost');
-    const rows = filteredAuctionRows();
-    const saleCount = rows.filter(r=>r.queueType==='sale').length;
-    const woCount = rows.filter(r=>r.queueType==='writeoff').length;
-    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ (รอขาย ${saleCount} / รอตัดชำรุด ${woCount})`;
-    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
+  function renderRowsTable(rows){
     const isAdmin = STATE.role==='admin';
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th></tr>`;
     rows.forEach(a=>{
-      const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice_(a.BookValue) || '');
+      const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice(a.BookValue) || '');
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
         <td><b>${esc(a.AssetID)}</b></td>
@@ -1365,6 +1341,34 @@ function renderAuction(root){
       </tr>`;
     });
     html += '</table></div>';
+    return html;
+  }
+
+  function renderAuctionTable(){
+    const host = document.getElementById('auctionTableHost');
+    const rows = baseFilteredRows();
+    const saleCount = rows.filter(r=>r.queueType==='sale').length;
+    const woCount = rows.filter(r=>r.queueType==='writeoff').length;
+    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ (รอขาย ${saleCount} / รอตัดชำรุด ${woCount})`;
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
+
+    // จัดกลุ่มตามช่วงราคากลาง แสดงเรียงลงมาเป็นส่วนๆ แทนแท็บ
+    const groups = priceBrackets.map(b=>({ bracket:b, rows:[] }));
+    const unassigned = [];
+    rows.forEach(r=>{
+      const price = effectiveReferencePrice(r);
+      const g = groups.find(g => price > g.bracket.min && (g.bracket.max==null || price <= g.bracket.max));
+      if(g) g.rows.push(r); else unassigned.push(r);
+    });
+
+    let html = '';
+    groups.forEach(g=>{
+      if(!g.rows.length) return;
+      html += `<h3 style="margin-top:20px;">${esc(g.bracket.label)} (${g.rows.length} รายการ)</h3>` + renderRowsTable(g.rows);
+    });
+    if(unassigned.length){
+      html += `<h3 style="margin-top:20px;">ไม่ระบุช่วงราคา (${unassigned.length} รายการ)</h3>` + renderRowsTable(unassigned);
+    }
     host.innerHTML = html;
 
     host.querySelectorAll('.refPriceInput').forEach(inp=>{
@@ -1383,7 +1387,7 @@ function renderAuction(root){
 
   function exportAuction(){
     if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
-    const rows = filteredAuctionRows();
+    const rows = baseFilteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
     const dataRows = rows.map(a => [
@@ -2929,6 +2933,15 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
+        <div id="auctionBracketsHost">กำลังโหลด...</div>
+        <div class="toolbar" style="margin-top:8px;">
+          <button class="btn btn-secondary btn-sm" id="btnAddAuctionBracket">+ เพิ่มช่วงราคา</button>
+          <button class="btn btn-primary btn-sm" id="btnSaveAuctionBrackets">บันทึกช่วงราคาทั้งหมด</button>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ราคาซาก = มูลค่าตามบัญชี</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ราคาซากของทุกทรัพย์สินถูกกำหนดให้เท่ากับมูลค่าตามบัญชีเสมอ (ปรับอัตโนมัติทุกครั้งที่แก้ไข/เพิ่มทรัพย์สิน หรือดึงข้อมูลจากบัญชี) หากมีรายการเก่าที่ราคาซากยังไม่ตรงกับมูลค่าตามบัญชี กดปุ่มด้านล่างเพื่อไล่ตรวจสอบและอัปเดตให้ตรงกันย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
         <button class="btn btn-secondary btn-sm" id="btnSyncScrapPrice">🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง</button>
@@ -2960,11 +2973,14 @@ function renderSettings(root){
   loadDeptCodes().then(loadUsers);
   loadSourceLink();
   loadOnlineUsers();
+  loadAuctionBrackets();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
+  document.getElementById('btnAddAuctionBracket').onclick = addAuctionBracketRow;
+  document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
@@ -3093,6 +3109,65 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast(enabled ? 'เปิดหน้าประมูลขายแบบสาธารณะแล้ว' : 'ปิดหน้าประมูลขายแบบสาธารณะแล้ว','ok');
+    });
+  }
+
+  let auctionBracketsDraft = [];
+
+  function loadAuctionBrackets(){
+    apiGet({ action:'getAuctionPriceBrackets' }).then(res=>{
+      if(!res.ok) return;
+      auctionBracketsDraft = (res.data.brackets||[]).map(b=>Object.assign({}, b));
+      renderAuctionBracketsTable();
+    });
+  }
+
+  function renderAuctionBracketsTable(){
+    const host = document.getElementById('auctionBracketsHost');
+    let html = '<div style="overflow-x:auto;"><table><tr><th>ป้ายชื่อช่วง</th><th>ราคาต่ำสุด (มากกว่า)</th><th>ราคาสูงสุด (ถึง)</th><th>ราคาเริ่มต้นแนะนำ</th><th class="no-print">ลบ</th></tr>';
+    auctionBracketsDraft.forEach((b,i)=>{
+      html += `<tr>
+        <td><input type="text" data-bfield="label" data-bi="${i}" value="${esc(b.label||'')}" placeholder="เช่น 1 - 1,000"></td>
+        <td><input type="text" inputmode="decimal" data-bfield="min" data-bi="${i}" value="${b.min!=null?b.min:''}"></td>
+        <td><input type="text" inputmode="decimal" data-bfield="max" data-bi="${i}" value="${b.max!=null?b.max:''}" placeholder="ไม่จำกัด"></td>
+        <td><input type="text" inputmode="decimal" data-bfield="defaultPrice" data-bi="${i}" value="${b.defaultPrice!=null?b.defaultPrice:''}" placeholder="ไม่แนะนำ"></td>
+        <td class="no-print"><button class="btn btn-red btn-sm" onclick="removeAuctionBracketRow(${i})">✕</button></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+  }
+
+  window.removeAuctionBracketRow = (i)=>{
+    syncAuctionBracketsDraftFromInputs();
+    auctionBracketsDraft.splice(i,1);
+    renderAuctionBracketsTable();
+  };
+
+  function addAuctionBracketRow(){
+    syncAuctionBracketsDraftFromInputs();
+    auctionBracketsDraft.push({ label:'', min:0, max:null, defaultPrice:null });
+    renderAuctionBracketsTable();
+  }
+
+  function syncAuctionBracketsDraftFromInputs(){
+    document.querySelectorAll('#auctionBracketsHost [data-bfield]').forEach(inp=>{
+      const i = parseInt(inp.dataset.bi, 10);
+      const field = inp.dataset.bfield;
+      if(field==='label'){ auctionBracketsDraft[i].label = inp.value.trim(); return; }
+      auctionBracketsDraft[i][field] = inp.value.trim()==='' ? null : parseFloat(inp.value);
+    });
+  }
+
+  function saveAuctionBrackets(){
+    syncAuctionBracketsDraftFromInputs();
+    const btn = document.getElementById('btnSaveAuctionBrackets');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionPriceBrackets', password: STATE.adminPassword, brackets: auctionBracketsDraft }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกช่วงราคาไม่สำเร็จ','err'); return; }
+      toast('บันทึกช่วงราคากลางสำเร็จ','ok');
+      loadAuctionBrackets();
     });
   }
 
