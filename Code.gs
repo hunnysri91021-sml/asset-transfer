@@ -46,7 +46,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
@@ -294,6 +294,9 @@ function doPost(e) {
         break;
       case 'adminSetAuctionSelection':
         result = adminSetAuctionSelection_(body);
+        break;
+      case 'adminSetAuctionSold':
+        result = adminSetAuctionSold_(body);
         break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
@@ -991,6 +994,10 @@ function clearAuctionSelection_(assetId) {
     if (String(values[i][idx.AssetID]) === assetId) {
       sh.getRange(i + 1, idx.SendToAuction + 1).setValue('FALSE');
       if (idx.AuctionReferencePrice !== undefined) sh.getRange(i + 1, idx.AuctionReferencePrice + 1).setValue('');
+      if (idx.AuctionSold !== undefined) sh.getRange(i + 1, idx.AuctionSold + 1).setValue('FALSE');
+      if (idx.AuctionBuyer !== undefined) sh.getRange(i + 1, idx.AuctionBuyer + 1).setValue('');
+      if (idx.AuctionSoldPrice !== undefined) sh.getRange(i + 1, idx.AuctionSoldPrice + 1).setValue('');
+      if (idx.AuctionSoldAt !== undefined) sh.getRange(i + 1, idx.AuctionSoldAt + 1).setValue('');
       return;
     }
   }
@@ -1071,7 +1078,10 @@ function getAuctionCandidates_(body) {
       AssetStatus: disposed[String(r.AssetID)],
       SaleChannel: disposed[String(r.AssetID)] === 'Sold' ? (saleAuctionChannel[String(r.AssetID)] ? 'ประมูล' : 'ขาย') : '',
       SendToAuction: String(r.SendToAuction).toLowerCase() === 'true',
-      AuctionReferencePrice: r.AuctionReferencePrice || ''
+      AuctionReferencePrice: r.AuctionReferencePrice || '',
+      AuctionSold: String(r.AuctionSold).toLowerCase() === 'true',
+      AuctionBuyer: r.AuctionBuyer || '',
+      AuctionSoldPrice: r.AuctionSoldPrice || ''
     }));
   return { ok: true, data: candidates };
 }
@@ -1105,7 +1115,41 @@ function adminSetAuctionSelection_(body) {
   return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
 }
 
-// รายการที่แสดงจริงในหน้า "ประมูลขาย" สาธารณะ — เฉพาะทรัพย์สินที่ Admin ติ๊กส่งประมูลไว้เท่านั้น
+// Admin ทำเครื่องหมายว่าทรัพย์สินที่ส่งประมูลอยู่ "ขายแล้ว" (มีคนประมูลได้แล้ว) พร้อมบันทึกผู้ประมูลได้ + ราคาที่ประมูลได้
+// รายการที่ขายแล้วจะหายไปจากหน้า "ประมูลขาย" สาธารณะทันที (ดู getAuctionListing_) — ส่ง sold:false เพื่อยกเลิกเครื่องหมายนี้ได้
+function adminSetAuctionSold_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const sold = !!body.sold;
+  const buyer = String(body.buyer || '').trim();
+  let soldPrice = null;
+  if (sold) {
+    if (!buyer) return { ok: false, error: 'กรุณาระบุผู้ประมูลได้' };
+    soldPrice = parseFloat(body.soldPrice);
+    if (isNaN(soldPrice) || soldPrice < 0) return { ok: false, error: 'กรุณาระบุราคาที่ประมูลได้ให้ถูกต้อง' };
+  }
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.AuctionSold === undefined || idx.AuctionBuyer === undefined || idx.AuctionSoldPrice === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ AuctionSold ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.getRange(i + 1, idx.AuctionSold + 1).setValue(sold ? 'TRUE' : 'FALSE');
+      sh.getRange(i + 1, idx.AuctionBuyer + 1).setValue(sold ? buyer : '');
+      sh.getRange(i + 1, idx.AuctionSoldPrice + 1).setValue(sold ? soldPrice : '');
+      if (idx.AuctionSoldAt !== undefined) sh.getRange(i + 1, idx.AuctionSoldAt + 1).setValue(sold ? new Date() : '');
+      logActivity_('', 'ADMIN_SET_AUCTION_SOLD', 'admin', (sold ? ('ทำเครื่องหมายทรัพย์สิน ' + assetId + ' ขายแล้ว ผู้ประมูลได้ ' + buyer + ' ราคา ' + soldPrice) : ('ยกเลิกเครื่องหมายขายแล้วของทรัพย์สิน ' + assetId)));
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
+}
+
+// รายการที่แสดงจริงในหน้า "ประมูลขาย" สาธารณะ — เฉพาะทรัพย์สินที่ Admin ติ๊กส่งประมูลไว้ และยังไม่มีคนประมูลได้ (AuctionSold)
 // อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะหน้านี้เปิดดูได้โดยไม่ต้องล็อกอิน เหมือนการตั้งค่าหน้าประมูลขายอื่นๆ
 function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
@@ -1115,7 +1159,7 @@ function getAuctionListing_() {
     .filter(r => {
       const status = disposed[String(r.AssetID)];
       const eligible = status === 'WrittenOff' || (status === 'Sold' && saleAuctionChannel[String(r.AssetID)]);
-      return eligible && String(r.SendToAuction).toLowerCase() === 'true';
+      return eligible && String(r.SendToAuction).toLowerCase() === 'true' && String(r.AuctionSold).toLowerCase() !== 'true';
     })
     .map(r => ({
       AssetID: r.AssetID,

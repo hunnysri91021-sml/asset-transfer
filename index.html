@@ -324,10 +324,20 @@ function assetStatusBadge(s){
   const map = {
     Active: ['approved','ใช้งาน'],
     Sold: ['rejected','ขายแล้ว'],
-    WrittenOff: ['draft','ตัดชำรุด']
+    WrittenOff: ['draft','ตัดชำรุด'],
+    Auction: ['pending','ประมูลขาย']
   };
   const v = map[s] || ['approved', 'ใช้งาน'];
   return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
+}
+// ทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้ว และ Admin ส่งขึ้นหน้า "ประมูลขาย" สาธารณะอยู่ (ยังไม่มีคนประมูลได้ — AuctionSold)
+// ให้แสดงสถานะเป็น "ประมูลขาย" แทนสถานะจริง (ขายแล้ว/ตัดชำรุด) ในทุกหน้าที่แสดงสถานะทรัพย์สินให้ผู้ใช้ดู
+// เพื่อสื่อสารว่ารายการนี้ยังไม่จบ (อยู่ระหว่างรอผู้ประมูล) ไม่ใช่ตัดจบแล้ว — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น
+function auctionAwareStatus(a){
+  const sendToAuction = String(a.SendToAuction).toLowerCase()==='true';
+  const auctionSold = String(a.AuctionSold).toLowerCase()==='true';
+  if((a.AssetStatus==='Sold' || a.AssetStatus==='WrittenOff') && sendToAuction && !auctionSold) return 'Auction';
+  return a.AssetStatus || 'Active';
 }
 
 // ป้ายแจ้งเตือนข้อมูลจากการดึงข้อมูลบัญชี (adminSyncFromSource) — หายไปเองเมื่อมีคนแก้ไข/บันทึกรายการนั้น
@@ -804,11 +814,11 @@ function renderAssetList(root){
   function exportAssetList(){
     const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
+    const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด', Auction:'ประมูลขาย' };
     const queuePurposeLabel = { transfer:'รอโอนย้าย', sale:'รอขาย', writeoff:'รอตัดชำรุด' };
     const queueStatusOf = a => (STATE.assetQueuedPurposes[a.AssetID]||[]).map(p=>queuePurposeLabel[p]||p).join('/');
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, statusLabel[a.AssetStatus]||'ใช้งาน', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, statusLabel[auctionAwareStatus(a)]||'ใช้งาน', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
@@ -903,7 +913,7 @@ function renderAssetList(root){
         <td>${esc(a.Location||'-')}</td>
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
-        <td>${assetStatusBadge(a.AssetStatus)}</td>
+        <td>${assetStatusBadge(auctionAwareStatus(a))}</td>
         ${manageMode
           ? `<td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="width:100%;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>`
           : `<td>${esc(curTag)}</td>`}
@@ -1117,10 +1127,10 @@ function renderDashboard(root){
     mark(transferQueue, 'transfer');
     mark(saleQueue, 'sale');
     mark(writeOffQueue, 'writeoff');
-    const statusLabels = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด' };
+    const statusLabels = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด', Auction:'ประมูลขาย' };
     const byStatus = {};
     assets.forEach(a=>{
-      const st = a.AssetStatus || 'Active';
+      const st = auctionAwareStatus(a);
       if(!byStatus[st]) byStatus[st] = { count:0, purchase:0, book:0 };
       byStatus[st].count++;
       byStatus[st].purchase += parseFloat(a.PurchasePrice)||0;
@@ -1128,7 +1138,7 @@ function renderDashboard(root){
     });
 
     let tilesHtml = '<div class="row">';
-    ['Active','Sold','WrittenOff'].forEach(st=>{
+    ['Active','Sold','WrittenOff','Auction'].forEach(st=>{
       const d = byStatus[st] || { count:0, purchase:0, book:0 };
       tilesHtml += `
         <div class="stat-tile">
@@ -1148,14 +1158,15 @@ function renderDashboard(root){
     const byDept = {};
     assets.forEach(a=>{
       const d = a.Department || '-';
-      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
+      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, auction:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
       byDept[d].count++;
       byDept[d].purchase += parseFloat(a.PurchasePrice)||0;
       byDept[d].book += parseFloat(a.BookValue)||0;
-      const st = a.AssetStatus || 'Active';
+      const st = auctionAwareStatus(a);
       if(st==='Active') byDept[d].active++;
       else if(st==='Sold') byDept[d].sold++;
       else if(st==='WrittenOff') byDept[d].writtenOff++;
+      else if(st==='Auction') byDept[d].auction++;
       const purpose = queuedPurposeByAsset[a.AssetID];
       if(purpose==='transfer') byDept[d].transfer++;
       else if(purpose==='sale') byDept[d].sale++;
@@ -1164,7 +1175,7 @@ function renderDashboard(root){
     });
     const deptRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
-      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td style="text-align:center;">${v.auction}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
     }).join('');
     const deptQueueRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
@@ -1188,8 +1199,8 @@ function renderDashboard(root){
         <div style="flex:2;min-width:280px;">
           <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
           <div style="overflow-x:auto;">
-            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
-            ${deptRows || '<tr><td colspan="7" class="empty">ไม่มีข้อมูล</td></tr>'}
+            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ประมูลขาย</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
+            ${deptRows || '<tr><td colspan="8" class="empty">ไม่มีข้อมูล</td></tr>'}
             </table>
           </div>
         </div>
@@ -1213,17 +1224,17 @@ function renderDashboard(root){
       const statusSheet = {
         name: 'สรุปตามสถานะ',
         header: ['สถานะ','จำนวน','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
-        rows: ['Active','Sold','WrittenOff'].map(st=>{
+        rows: ['Active','Sold','WrittenOff','Auction'].map(st=>{
           const d = byStatus[st] || { count:0, purchase:0, book:0 };
           return [statusLabels[st], d.count, d.purchase, canSeePrice() ? d.book : 'ไม่มีสิทธิ์ดู'];
         }).concat([['ทั้งหมด', assets.length, assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0), canSeePrice() ? assets.reduce((s,a)=>s+(parseFloat(a.BookValue)||0),0) : 'ไม่มีสิทธิ์ดู']])
       };
       const deptSheet = {
         name: 'สรุปตามหน่วยงาน',
-        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
+        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ประมูลขาย','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
         rows: Object.keys(byDept).sort().map(d=>{
           const v = byDept[d];
-          return [d, v.count, v.active, v.sold, v.writtenOff, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
+          return [d, v.count, v.active, v.sold, v.writtenOff, v.auction, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
         })
       };
       const deptQueueSheet = {
@@ -1388,8 +1399,8 @@ function renderAuction(root){
   }
 
   function renderRowsTable(rows){
-    const canEditPrice = STATE.role==='admin';
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th></tr>`;
+    const isAdmin = STATE.role==='admin';
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th></tr>`;
     rows.forEach(a=>{
       const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice(a.BookValue) || '');
       html += `<tr>
@@ -1398,10 +1409,16 @@ function renderAuction(root){
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
         <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
-        <td class="money">${canEditPrice
+        <td class="money">${isAdmin
           ? `<input type="text" inputmode="decimal" class="auctionPriceInput" data-id="${esc(a.AssetID)}" value="${esc(refValue||'')}" style="width:90px;" placeholder="ราคากลาง">`
           : (refValue ? fmtMoney(refValue) : '-')}</td>
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
+        <td class="no-print">${isAdmin ? `
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:110px;">
+            <input type="text" class="auctionSoldBuyerInput" data-id="${esc(a.AssetID)}" placeholder="ผู้ประมูลได้" style="width:100px;">
+            <input type="text" inputmode="decimal" class="auctionSoldPriceInput" data-id="${esc(a.AssetID)}" placeholder="ราคาที่ประมูลได้" style="width:100px;">
+            <button class="btn btn-primary btn-sm auctionMarkSoldBtn" data-id="${esc(a.AssetID)}">✔ ขายแล้ว</button>
+          </div>` : `<span class="badge badge-pending">🔨 เปิดประมูล</span>`}</td>
       </tr>`;
     });
     html += '</table></div>';
@@ -1415,6 +1432,16 @@ function renderAuction(root){
       if(row) row.ReferencePrice = referencePrice;
       toast('บันทึกราคากลางสำเร็จ','ok');
       renderAuctionTable();
+    });
+  }
+
+  function markAuctionSold(assetId, buyer, soldPrice){
+    if(!buyer.trim()){ toast('กรุณาระบุผู้ประมูลได้','err'); return; }
+    if(!soldPrice.trim() || isNaN(parseFloat(soldPrice))){ toast('กรุณาระบุราคาที่ประมูลได้ให้ถูกต้อง','err'); return; }
+    apiPost({ action:'adminSetAuctionSold', password: STATE.adminPassword, assetId, sold: true, buyer, soldPrice }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('ทำเครื่องหมายขายแล้วสำเร็จ','ok');
+      load();
     });
   }
 
@@ -1445,6 +1472,14 @@ function renderAuction(root){
 
     host.querySelectorAll('.auctionPriceInput').forEach(inp=>{
       inp.onchange = ()=> saveReferencePrice(inp.dataset.id, inp.value.trim());
+    });
+    host.querySelectorAll('.auctionMarkSoldBtn').forEach(btn=>{
+      btn.onclick = ()=>{
+        const row = btn.closest('tr');
+        const buyer = row.querySelector('.auctionSoldBuyerInput').value;
+        const soldPrice = row.querySelector('.auctionSoldPriceInput').value;
+        markAuctionSold(btn.dataset.id, buyer, soldPrice);
+      };
     });
   }
 
@@ -1578,7 +1613,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselSentCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่ส่งประมูล</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th></th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>สถานะ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1588,7 +1623,9 @@ function renderAuctionSelection(root){
         <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
-        <td><button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button></td>
+        <td>${a.AuctionSold
+          ? `<span class="badge badge-approved">ขายแล้ว</span><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(a.AuctionBuyer||'')} · ${a.AuctionSoldPrice?fmtMoneyOrHidden(a.AuctionSoldPrice):''}</div>`
+          : `<button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button>`}</td>
       </tr>`;
     });
     html += '</table></div>';
@@ -2167,6 +2204,12 @@ function doSubmitTransfer(){
 /* ================= SALE LIST VIEW ================= */
 function renderSaleList(root){
   root.innerHTML = `
+    <div class="card">
+      <h2>ภาพรวมรายการขายออก</h2>
+      <p style="color:var(--muted);font-size:13px;">สรุปสถานะรายการขายออกในแต่ละขั้นตอน — รายการที่เลือกช่องทาง "ประมูล" และอนุมัติแล้วจะไปติดตามต่อที่หน้า "ประมูลขาย"/"คัดเลือกรายการประมูล" แทน ไม่นับรวมในช่อง "ขายแล้ว" นี้</p>
+      <div id="saleKanbanHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
     <div class="card" id="saleQueueCard" ${isViewOnly() ? 'style="display:none;"' : ''}>
       <h2>รายการรอออกใบขายออก</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวขาย") รอรวมออกเป็นใบขายออก — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
@@ -2210,6 +2253,7 @@ function renderSaleList(root){
   document.getElementById('saleQSearch').oninput = renderSaleQueueTable;
   loadSaleList();
   loadSaleQueue();
+  loadKanbanSales();
 
   function loadSaleQueue(){
     document.getElementById('saleQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
@@ -2218,7 +2262,43 @@ function renderSaleList(root){
       STATE.saleQueue = deptFilterRows(res.data, ['Department']);
       STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id => STATE.saleQueue.some(q=>q.AssetID===id));
       renderSaleQueueTable();
+      renderSaleKanban();
     });
+  }
+
+  let allSalesForKanban = [];
+  function loadKanbanSales(){
+    apiGet({action:'getSales'}).then(res=>{
+      if(!res.ok) return;
+      allSalesForKanban = deptFilterRows(res.data, ['FromDept']);
+      renderSaleKanban();
+    });
+  }
+
+  function renderSaleKanban(){
+    const host = document.getElementById('saleKanbanHost');
+    if(!host) return;
+    const queueCount = (STATE.saleQueue||[]).length;
+    const pendingCount = allSalesForKanban.filter(s=>s.Status==='PendingApproval').length;
+    const soldCount = allSalesForKanban.filter(s=>s.Status==='Approved' && s.Channel!=='ประมูล').length;
+    host.innerHTML = `
+      <div class="row">
+        <div class="stat-tile">
+          <div class="label">รอคิวขาย/ประมูล</div>
+          <div class="num">${queueCount}</div>
+          <div class="sub">ทรัพย์สินที่มาร์คไว้ ยังไม่ออกใบขายออก</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">ออกแบบฟอร์มแล้ว</div>
+          <div class="num">${pendingCount}</div>
+          <div class="sub">ใบขายออกที่สร้างแล้ว รออนุมัติ</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">ขายแล้ว</div>
+          <div class="num">${soldCount}</div>
+          <div class="sub">ใบขายออกช่องทาง "ขาย" อนุมัติแล้ว (ขายให้ผู้รับเหมา)</div>
+        </div>
+      </div>`;
   }
 
   function renderSaleQueueTable(){
