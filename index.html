@@ -1413,16 +1413,44 @@ function renderAuction(root){
           ? `<input type="text" inputmode="decimal" class="auctionPriceInput" data-id="${esc(a.AssetID)}" value="${esc(refValue||'')}" style="width:90px;" placeholder="ราคากลาง">`
           : (refValue ? fmtMoney(refValue) : '-')}</td>
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
-        <td class="no-print">${isAdmin ? `
+        <td class="no-print">
           <div style="display:flex;flex-direction:column;gap:3px;min-width:110px;">
+            ${interestButtonHtml(a)}
+            ${isAdmin ? `
             <input type="text" class="auctionSoldBuyerInput" data-id="${esc(a.AssetID)}" placeholder="ผู้ประมูลได้" style="width:100px;">
             <input type="text" inputmode="decimal" class="auctionSoldPriceInput" data-id="${esc(a.AssetID)}" placeholder="ราคาที่ประมูลได้" style="width:100px;">
             <button class="btn btn-primary btn-sm auctionMarkSoldBtn" data-id="${esc(a.AssetID)}">✔ ขายแล้ว</button>
-          </div>` : `<span class="badge badge-pending">🔨 เปิดประมูล</span>`}</td>
+            ` : `<span class="badge badge-pending">🔨 เปิดประมูล</span>`}
+          </div>
+        </td>
       </tr>`;
     });
     html += '</table></div>';
     return html;
+  }
+
+  // จำนวนคนสนใจ — ทุกคนที่เข้าดูหน้านี้ (ไม่ต้องล็อกอิน) กด "สนใจ" ได้ ระบบนับรวมไว้ที่ AuctionInterestCount
+  // กันกดซ้ำจากเบราว์เซอร์เดียวกันด้วย localStorage เท่านั้น (ไม่ใช่การยืนยันตัวตนที่รัดกุม แค่กันสแปมเบื้องต้น)
+  function hasMarkedInterest(assetId){
+    try { return localStorage.getItem('auctionInterested_'+assetId) === '1'; } catch(e){ return false; }
+  }
+  function interestButtonHtml(a){
+    const count = a.InterestCount||0;
+    if(hasMarkedInterest(a.AssetID)){
+      return `<span class="badge badge-approved">✓ สนใจแล้ว (${count})</span>`;
+    }
+    return `<button class="btn btn-secondary btn-sm auctionInterestBtn" data-id="${esc(a.AssetID)}">👍 สนใจ (${count})</button>`;
+  }
+  function markInterest(assetId, btn){
+    if(hasMarkedInterest(assetId)) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'markAuctionInterest', assetId }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); if(btn) btn.disabled = false; return; }
+      try { localStorage.setItem('auctionInterested_'+assetId, '1'); } catch(e){}
+      const row = auctionRows.find(r=>r.AssetID===assetId);
+      if(row) row.InterestCount = res.data.count;
+      renderAuctionTable();
+    });
   }
 
   function saveReferencePrice(assetId, referencePrice){
@@ -1481,17 +1509,21 @@ function renderAuction(root){
         markAuctionSold(btn.dataset.id, buyer, soldPrice);
       };
     });
+    host.querySelectorAll('.auctionInterestBtn').forEach(btn=>{
+      btn.onclick = ()=> markInterest(btn.dataset.id, btn);
+    });
   }
 
   function exportAuction(){
     if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
     const rows = baseFilteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','ลิงก์รูปภาพ'];
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','จำนวนคนสนใจ','ลิงก์รูปภาพ'];
     const dataRows = rows.map(a => [
       a.AssetID, a.AssetName, a.Department, typeLabel[a.AssetStatus]||a.AssetStatus,
       effectiveReferencePrice(a) || 'ยังไม่ระบุ',
       showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
+      a.InterestCount||0,
       a.DisplayImage||''
     ]);
     exportExcel('ประมูลขาย.xlsx', [{ name:'ประมูลขาย', header, rows: dataRows }]);
