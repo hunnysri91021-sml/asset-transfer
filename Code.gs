@@ -46,7 +46,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
@@ -297,6 +297,9 @@ function doPost(e) {
         break;
       case 'adminSetAuctionSold':
         result = adminSetAuctionSold_(body);
+        break;
+      case 'markAuctionInterest':
+        result = markAuctionInterest_(body);
         break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
@@ -1168,8 +1171,33 @@ function getAuctionListing_() {
       DisplayImage: r.DisplayImage,
       BookValue: r.BookValue || 0,
       AssetStatus: disposed[String(r.AssetID)],
-      ReferencePrice: r.AuctionReferencePrice || ''
+      ReferencePrice: r.AuctionReferencePrice || '',
+      InterestCount: parseInt(r.AuctionInterestCount, 10) || 0
     }));
+}
+
+// ผู้เข้าชมหน้าประมูลขาย (ไม่ต้องล็อกอิน) กด "สนใจ" ทรัพย์สินรายการหนึ่ง — เพิ่มตัวนับ AuctionInterestCount ทีละ 1
+// ไม่ต้องใช้รหัสผ่านตั้งใจ เพราะเป็นฟีเจอร์สาธารณะ ล็อกด้วย withLock_ กันหลายคนกดพร้อมกันแล้วนับตกหล่น
+// ฝั่งหน้าเว็บกันกดซ้ำจากเบราว์เซอร์เดียวกันด้วย localStorage (ไม่ใช่การยืนยันตัวตนที่รัดกุม แค่กันสแปมเบื้องต้น)
+function markAuctionInterest_(body) {
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  return withLock_(() => {
+    const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+    const values = sh.getDataRange().getValues();
+    const idx = indexMap_(values[0]);
+    if (idx.AuctionInterestCount === undefined) {
+      return { ok: false, error: 'ไม่พบคอลัมน์ AuctionInterestCount ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+    }
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][idx.AssetID]) === assetId) {
+        const next = (parseInt(values[i][idx.AuctionInterestCount], 10) || 0) + 1;
+        sh.getRange(i + 1, idx.AuctionInterestCount + 1).setValue(next);
+        return { ok: true, data: { count: next } };
+      }
+    }
+    return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
+  });
 }
 
 // Admin กรอกอีเมลผู้บริหาร + ข้อความ/หมายเหตุเอง แล้วกดส่ง — ระบบดึงรายการที่กำลังเปิดประมูลอยู่ (เหมือนหน้า
