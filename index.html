@@ -1620,7 +1620,7 @@ function renderAuctionSelection(root){
     const rows = filteredCandidates();
     document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1631,6 +1631,7 @@ function renderAuctionSelection(root){
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
         <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}"></td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button></td>
       </tr>`;
     });
     html += '</table></div>';
@@ -1649,6 +1650,9 @@ function renderAuctionSelection(root){
         saveSelection(inp.dataset.id, false, inp.value.trim());
       };
     });
+    host.querySelectorAll('.aselRestoreBtn').forEach(btn=>{
+      btn.onclick = ()=> restoreAsset(btn.dataset.id, btn);
+    });
   }
 
   function renderSentTable(){
@@ -1658,7 +1662,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselSentCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่ส่งประมูล</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>สถานะ</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>สถานะ</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1671,6 +1675,7 @@ function renderAuctionSelection(root){
         <td>${a.AuctionSold
           ? `<span class="badge badge-approved">ขายแล้ว</span><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(a.AuctionBuyer||'')} · ${a.AuctionSoldPrice?fmtMoneyOrHidden(a.AuctionSoldPrice):''}</div>`
           : `<button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button>`}</td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button></td>
       </tr>`;
     });
     html += '</table></div>';
@@ -1678,6 +1683,9 @@ function renderAuctionSelection(root){
 
     host.querySelectorAll('.aselRetractBtn').forEach(btn=>{
       btn.onclick = ()=> saveSelection(btn.dataset.id, false);
+    });
+    host.querySelectorAll('.aselRestoreBtn').forEach(btn=>{
+      btn.onclick = ()=> restoreAsset(btn.dataset.id, btn);
     });
   }
 
@@ -1688,7 +1696,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselHistCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1698,10 +1706,15 @@ function renderAuctionSelection(root){
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td><span class="badge ${a.SendToAuction?'badge-approved':'badge-pending'}">${a.SendToAuction?'เคยส่ง':'ไม่เคยส่ง'}</span></td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button></td>
       </tr>`;
     });
     html += '</table></div>';
     host.innerHTML = html;
+
+    host.querySelectorAll('.aselRestoreBtn').forEach(btn=>{
+      btn.onclick = ()=> restoreAsset(btn.dataset.id, btn);
+    });
   }
 
   // โหลดข้อมูลใหม่จาก server เสมอหลังบันทึกสำเร็จ (แทนการแก้ไข candidates ในเครื่องแล้วเรนเดอร์ซ้ำ)
@@ -1720,6 +1733,19 @@ function renderAuctionSelection(root){
     )).then(results=>{
       const failed = results.filter(res=>!res.ok).length;
       toast(failed ? `บันทึกสำเร็จบางส่วน (ล้มเหลว ${failed} รายการ)` : `บันทึกสำเร็จ ${assetIds.length} รายการ`, failed ? 'err' : 'ok');
+      load();
+    });
+  }
+
+  // คืนสถานะทรัพย์สินกลับเป็น "ใช้งาน" (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว) — ใช้ action เดียวกับหน้ารายการทรัพย์สิน
+  // ทรัพย์สินจะหายไปจากทั้ง 3 ตารางในหน้านี้ทันที และไปแสดงเป็น "ใช้งาน" ตามประเภทของมันที่หน้ารายการทรัพย์สินแทน
+  function restoreAsset(assetId, btn){
+    if(!confirm('ยืนยันคืนสถานะใช้งานทรัพย์สิน '+assetId+' ? (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว กลับไปเป็นสถานะใช้งานปกติ)')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'คืนสถานะไม่สำเร็จ','err'); return; }
+      toast('คืนสถานะใช้งานสำเร็จ','ok');
       load();
     });
   }
