@@ -53,9 +53,9 @@ const HEADERS = {
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
-  SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL'],
+  SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
-  WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL'],
+  WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL', 'Voided'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
 };
 
@@ -681,7 +681,10 @@ function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, 
   const itemHeaders = itemValues.shift();
   const itemIdx = indexMap_(itemHeaders);
   itemValues.forEach(r => {
-    if (approvedDocIds[String(r[itemIdx[docIdField]])]) status[String(r[itemIdx.AssetID])] = label;
+    // แถวรายการเดี่ยวๆ ที่ Admin กด "คืนสถานะ" ไปแล้ว (Voided='TRUE') ไม่ถือว่าสิ้นสภาพอีกต่อไป
+    // แม้เอกสารหลักโดยรวมจะยังอนุมัติอยู่ (เอกสารมีทรัพย์สินอื่นที่ยังไม่ได้คืนสถานะ) — ดู voidApprovedDocsForAsset_
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (approvedDocIds[String(r[itemIdx[docIdField]])] && !voided) status[String(r[itemIdx.AssetID])] = label;
   });
 }
 
@@ -976,9 +979,12 @@ function adminRestoreAsset_(body) {
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
-  const voidedCount =
-    voidApprovedDocsForAsset_(SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', assetId) +
-    voidApprovedDocsForAsset_(SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', assetId);
+  const saleVoided = voidApprovedDocsForAsset_(SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', assetId);
+  const writeOffVoided = voidApprovedDocsForAsset_(SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', assetId);
+  if (saleVoided === -1 || writeOffVoided === -1) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ Voided ในชีต SaleItems/WriteOffItems กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  const voidedCount = saleVoided + writeOffVoided;
 
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
@@ -1009,29 +1015,56 @@ function clearAuctionSelection_(assetId) {
   }
 }
 
+// คืนสถานะทรัพย์สิน "รายชิ้น" เดียว ไม่ใช่ทั้งเอกสาร — เอกสารขาย/ตัดชำรุด 1 ใบมักมีทรัพย์สินหลายรายการรวมกัน
+// (เดิมฟังก์ชันนี้ตั้งสถานะทั้งเอกสารเป็น Voided ทำให้คืนสถานะทรัพย์สิน 1 ชิ้น กลับไปคืนสถานะทรัพย์สินอื่นทุกชิ้น
+// ในเอกสารเดียวกันไปด้วยโดยไม่ตั้งใจ — แก้เป็นตั้งค่า Voided ที่ "แถวรายการ" ของ assetId นั้นเท่านั้น)
+// ถ้าทำให้ทุกแถวรายการในเอกสารกลายเป็น Voided ครบทุกชิ้นแล้ว ถึงจะตั้งสถานะทั้งเอกสารเป็น Voided ตามไปด้วย
+// เพื่อไม่ให้เอกสารค้างสถานะ "อนุมัติแล้ว" ทั้งที่ไม่มีทรัพย์สินเหลืออยู่จริงสักชิ้น
 function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, assetId) {
-  const itemSh = getSS_().getSheetByName(itemSheetName);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemHeaders = itemValues.shift();
-  const itemIdx = indexMap_(itemHeaders);
-  const docIds = {};
-  itemValues.forEach(r => {
-    if (String(r[itemIdx.AssetID]) === assetId) docIds[String(r[itemIdx[docIdField]])] = true;
-  });
-  if (!Object.keys(docIds).length) return 0;
-
   const docSh = getSS_().getSheetByName(docSheetName);
   const docValues = docSh.getDataRange().getValues();
   const docHeaders = docValues[0];
   const docIdx = indexMap_(docHeaders);
-  let count = 0;
+  const approvedDocIds = {};
   for (let i = 1; i < docValues.length; i++) {
-    const id = String(docValues[i][docIdx[docIdField]]);
-    if (docIds[id] && docValues[i][docIdx.Status] === STATUS.APPROVED) {
-      docSh.getRange(i + 1, docIdx.Status + 1).setValue(STATUS.VOIDED);
+    if (docValues[i][docIdx.Status] === STATUS.APPROVED) approvedDocIds[String(docValues[i][docIdx[docIdField]])] = true;
+  }
+  if (!Object.keys(approvedDocIds).length) return 0;
+
+  const itemSh = getSS_().getSheetByName(itemSheetName);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues[0];
+  const itemIdx = indexMap_(itemHeaders);
+  if (itemIdx.Voided === undefined) return -1; // สัญญาณพิเศษ: ยังไม่ได้รัน setup() ใหม่ — ให้ผู้เรียกแจ้งเตือนแทนที่จะเงียบ
+
+  const affectedDocIds = {};
+  let count = 0;
+  for (let i = 1; i < itemValues.length; i++) {
+    const row = itemValues[i];
+    const docId = String(row[itemIdx[docIdField]]);
+    const alreadyVoided = String(row[itemIdx.Voided]).toLowerCase() === 'true';
+    if (String(row[itemIdx.AssetID]) === assetId && approvedDocIds[docId] && !alreadyVoided) {
+      itemSh.getRange(i + 1, itemIdx.Voided + 1).setValue('TRUE');
+      row[itemIdx.Voided] = 'TRUE'; // sync ค่าในหน่วยความจำ ให้เช็ค "เหลือรายการที่ยังไม่คืนสถานะไหม" ด้านล่างเห็นค่าล่าสุด
       count++;
+      affectedDocIds[docId] = true;
     }
   }
+  if (!count) return 0;
+
+  Object.keys(affectedDocIds).forEach(docId => {
+    const stillActive = itemValues.some((row, i) =>
+      i > 0 && String(row[itemIdx[docIdField]]) === docId && String(row[itemIdx.Voided]).toLowerCase() !== 'true'
+    );
+    if (!stillActive) {
+      for (let i = 1; i < docValues.length; i++) {
+        if (String(docValues[i][docIdx[docIdField]]) === docId) {
+          docSh.getRange(i + 1, docIdx.Status + 1).setValue(STATUS.VOIDED);
+          break;
+        }
+      }
+    }
+  });
   return count;
 }
 
@@ -2047,19 +2080,23 @@ function createSale_(body) {
   });
 
   const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
-  const itemRows = items.map((it, i) => [
-    saleId,
-    i + 1,
-    it.assetId || '',
-    it.assetName || '',
-    it.scrapPrice || 0,
-    it.auctionPrice || 0,
-    it.salePrice || 0,
-    it.remark || '',
-    imagesToCell_(it.images)
-  ]);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const itemRows = items.map((it, i) => {
+    const row = iHeaders.map(() => '');
+    row[iIdx.SaleID] = saleId;
+    row[iIdx.LineNo] = i + 1;
+    row[iIdx.AssetID] = it.assetId || '';
+    row[iIdx.AssetName] = it.assetName || '';
+    row[iIdx.ScrapPrice] = it.scrapPrice || 0;
+    row[iIdx.AuctionPrice] = it.auctionPrice || 0;
+    row[iIdx.SalePrice] = it.salePrice || 0;
+    row[iIdx.Remark] = it.remark || '';
+    row[iIdx.ImageURL] = imagesToCell_(it.images);
+    return row;
+  });
   if (itemRows.length) {
-    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.SALE_ITEMS.length).setValues(itemRows);
+    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, iHeaders.length).setValues(itemRows);
   }
 
   let emailResult = { ok: true };
@@ -2246,17 +2283,21 @@ function createWriteOff_(body) {
   });
 
   const iSheet = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
-  const itemRows = items.map((it, i) => [
-    writeOffId,
-    i + 1,
-    it.assetId || '',
-    it.assetName || '',
-    it.scrapPrice || 0,
-    it.remark || '',
-    imagesToCell_(it.images)
-  ]);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const itemRows = items.map((it, i) => {
+    const row = iHeaders.map(() => '');
+    row[iIdx.WriteOffID] = writeOffId;
+    row[iIdx.LineNo] = i + 1;
+    row[iIdx.AssetID] = it.assetId || '';
+    row[iIdx.AssetName] = it.assetName || '';
+    row[iIdx.ScrapPrice] = it.scrapPrice || 0;
+    row[iIdx.Remark] = it.remark || '';
+    row[iIdx.ImageURL] = imagesToCell_(it.images);
+    return row;
+  });
   if (itemRows.length) {
-    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.WRITEOFF_ITEMS.length).setValues(itemRows);
+    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, iHeaders.length).setValues(itemRows);
   }
 
   let emailResult = { ok: true };
