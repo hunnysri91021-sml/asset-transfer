@@ -1691,17 +1691,13 @@ function renderAuctionSelection(root){
     host.innerHTML = html;
   }
 
+  // โหลดข้อมูลใหม่จาก server เสมอหลังบันทึกสำเร็จ (แทนการแก้ไข candidates ในเครื่องแล้วเรนเดอร์ซ้ำ)
+  // เพื่อให้ตาราง "คัดเลือกรายการประมูล"/"รายการที่ส่งประมูลแล้ว" ตรงกับสถานะจริงบน server เสมอ ไม่มีโอกาสค้าง/ไม่ย้ายกลับ
   function saveSelection(assetId, sendToAuction, referencePrice){
     apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId, sendToAuction, referencePrice }).then(res=>{
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); load(); return; }
-      const row = candidates.find(a=>a.AssetID===assetId);
-      if(row){
-        row.SendToAuction = sendToAuction;
-        if(referencePrice !== undefined && referencePrice !== '') row.AuctionReferencePrice = referencePrice;
-      }
       toast('บันทึกสำเร็จ','ok');
-      renderTable();
-      renderSentTable();
+      load();
     });
   }
 
@@ -1710,13 +1706,8 @@ function renderAuctionSelection(root){
       apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId, sendToAuction })
     )).then(results=>{
       const failed = results.filter(res=>!res.ok).length;
-      assetIds.forEach(assetId=>{
-        const row = candidates.find(a=>a.AssetID===assetId);
-        if(row) row.SendToAuction = sendToAuction;
-      });
       toast(failed ? `บันทึกสำเร็จบางส่วน (ล้มเหลว ${failed} รายการ)` : `บันทึกสำเร็จ ${assetIds.length} รายการ`, failed ? 'err' : 'ok');
-      renderTable();
-      renderSentTable();
+      load();
     });
   }
 
