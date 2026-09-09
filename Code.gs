@@ -52,7 +52,7 @@ const HEADERS = {
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
-  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel'],
+  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL'],
@@ -240,6 +240,9 @@ function doPost(e) {
         break;
       case 'createSale':
         result = createSale_(body);
+        break;
+      case 'adminConfirmSale':
+        result = adminConfirmSale_(body);
         break;
       case 'decideSale':
         result = decideSale_(body);
@@ -1975,6 +1978,26 @@ function findSaleRow_(saleId) {
   return null;
 }
 
+// Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
+// เพิ่มขั้นตอนนี้เพื่อให้ระดับความมั่นใจเดียวกับช่องทาง "ประมูล" ที่ต้องรอจนมีคนประมูลได้ก่อนถึงจะนับว่าขายแล้วจริง —
+// ไม่กระทบ AssetStatus/Tag ที่ตัดสินจากการอนุมัติเอกสารเหมือนเดิม (ดู CLAUDE.md) เป็นสถานะเสริมสำหรับ Kanban หน้ารายการขายออกเท่านั้น
+function adminConfirmSale_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const saleId = String(body.saleId || '').trim();
+  if (!saleId) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
+  const found = findSaleRow_(saleId);
+  if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
+  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ยืนยันได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น' };
+  if (found.obj.Channel === 'ประมูล') return { ok: false, error: 'ใบขายออกช่องทางประมูลไม่ต้องยืนยันขั้นนี้ (ติดตามความคืบหน้าที่หน้าประมูลขายแทน)' };
+  if (found.idx.SaleConfirmedAt === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ SaleConfirmedAt ในชีต Sales กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  const sh = getSS_().getSheetByName(SHEETS.SALES);
+  sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(new Date());
+  logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', 'ยืนยันขายแล้วสำหรับใบขายออก ' + found.obj.RunningNo);
+  return { ok: true };
+}
+
 function createSale_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
@@ -2438,7 +2461,7 @@ function sendSaleApprovalEmail_(saleId, runningNo, body, items, token) {
 function sendSaleDecisionNotification_(saleObj, decision, comment) {
   try {
     if (!saleObj.CreatedByEmail) return;
-    const statusThai = decision === STATUS.APPROVED ? (saleObj.Channel === 'ประมูล' ? 'รอประมูล' : 'ขายแล้ว') : 'ไม่อนุมัติ';
+    const statusThai = decision === STATUS.APPROVED ? (saleObj.Channel === 'ประมูล' ? 'รอประมูล' : 'รอขาย (รอ Admin ยืนยันขายแล้ว)') : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
@@ -2663,8 +2686,8 @@ function pdfImgGallery_(images) {
   return '<div class="doc-img-gallery">' + list.map(u => '<img src="' + escapeHtml_(u) + '">').join('') + '</div>';
 }
 
-function pdfStatusBadge_(status, isSale, isAuctionChannel) {
-  const approvedLabel = isSale ? (isAuctionChannel ? 'รอประมูล' : 'ขายแล้ว') : 'อนุมัติแล้ว';
+function pdfStatusBadge_(status, isSale, approvedLabelOverride) {
+  const approvedLabel = approvedLabelOverride || (isSale ? 'ขายแล้ว' : 'อนุมัติแล้ว');
   const labels = { Draft: 'ฉบับร่าง', PendingApproval: 'รออนุมัติ', Approved: approvedLabel, Rejected: 'ไม่อนุมัติ', Voided: 'ยกเลิกแล้ว' };
   const colors = { Draft: ['#e2e3e5', '#555'], PendingApproval: ['#fff3cd', '#b8860b'], Approved: ['#d4edda', '#1a7d3c'], Rejected: ['#f8d7da', '#c0392b'], Voided: ['#e2e3e5', '#555'] };
   const c = colors[status] || colors.Draft;
@@ -2687,10 +2710,10 @@ function pdfSignBlock_(leftLabel, leftName, rightLabel, rightName) {
     '</tr></table>';
 }
 
-function pdfApprovalFooter_(obj, isSale, isAuctionChannel) {
+function pdfApprovalFooter_(obj, isSale, approvedLabelOverride) {
   if (obj.Status === 'Draft') return '';
   let html = '<div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">' +
-    '<b>สถานะการอนุมัติ:</b> ' + pdfStatusBadge_(obj.Status, isSale, isAuctionChannel) + '&nbsp; ';
+    '<b>สถานะการอนุมัติ:</b> ' + pdfStatusBadge_(obj.Status, isSale, approvedLabelOverride) + '&nbsp; ';
   if (obj.ApproverName || obj.ApproverEmail) html += 'โดย ' + escapeHtml_(obj.ApproverName || obj.ApproverEmail);
   if (obj.ApprovedAt) html += ' เมื่อ ' + fmtDateServer_(obj.ApprovedAt);
   if (obj.ApproverComment) html += '<br><b>ความเห็น:</b> ' + escapeHtml_(obj.ApproverComment);
@@ -2726,6 +2749,11 @@ function buildTransferPdfHtml_(t) {
     '</body></html>';
 }
 
+function saleApprovedLabel_(s) {
+  if (s.Channel === 'ประมูล') return 'รอประมูล';
+  return s.SaleConfirmedAt ? 'ขายแล้ว' : 'รอขาย';
+}
+
 function buildSalePdfHtml_(s) {
   const rows = (s.Items || []).map((it, i) =>
     '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
@@ -2745,7 +2773,7 @@ function buildSalePdfHtml_(s) {
     '<th style="width:12%;">ราคาซาก</th><th style="width:12%;">ราคาประมูล</th><th style="width:12%;">ราคาขาย</th><th style="width:13%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="6" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
     pdfSignBlock_('ผู้บันทึก', s.CreatedBy, 'ผู้อนุมัติ', s.ApproverName) +
-    pdfApprovalFooter_(s, true, s.Channel === 'ประมูล') +
+    pdfApprovalFooter_(s, true, saleApprovedLabel_(s)) +
     '</body></html>';
 }
 

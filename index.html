@@ -311,10 +311,23 @@ function statusBadge(s){
 }
 // เหมือน statusBadge แต่สถานะ Approved ของใบขายออกให้อ่านว่า "ขายแล้ว" แทน "อนุมัติแล้ว" เพื่อให้ตรงกับสถานะทรัพย์สินจริง
 // (ยกเว้นช่องทาง "ประมูล" ที่อนุมัติแล้วยังไม่ถือว่าขายจบ ให้อ่านว่า "รอประมูล" แทน — ดู getSaleAuctionChannelMap_ ฝั่ง backend)
-function saleStatusBadge(s, channel){
+// ใบขายออกช่องทาง "ประมูล" ที่อนุมัติแล้วยังไม่ถือว่าขายจบ (รอมีคนประมูลได้) ส่วนช่องทาง "ขาย" ปกติ
+// ต้องรอ Admin กด "ยืนยันขายแล้ว" อีกขั้นก่อนถึงจะนับว่าขายแล้วจริง (ดู adminConfirmSale_/SaleConfirmedAt)
+function saleApprovedLabel(s){
+  if(s.Channel==='ประมูล') return 'รอประมูล';
+  return s.SaleConfirmedAt ? 'ขายแล้ว' : 'รอขาย';
+}
+function saleBucketOf(s){
+  if(s.Status==='PendingApproval') return 'PendingApproval';
+  if(s.Status==='Rejected') return 'Rejected';
+  if(s.Status==='Approved') return s.Channel==='ประมูล' ? 'AwaitingAuction' : (s.SaleConfirmedAt ? 'Sold' : 'AwaitingSale');
+  return 'Other';
+}
+const SALE_BUCKET_LABELS = { PendingApproval:'รออนุมัติ', AwaitingSale:'รอขาย', AwaitingAuction:'รอประมูล', Sold:'ขายแล้ว', Rejected:'ไม่อนุมัติ', Other:'อื่นๆ' };
+function saleStatusBadge(s){
   const cls = { Draft:'draft', PendingApproval:'pending', Approved:'approved', Rejected:'rejected', Voided:'draft' };
-  const label = s === 'Approved' ? (channel === 'ประมูล' ? 'รอประมูล' : 'ขายแล้ว') : (STATUS_LABELS[s]||s);
-  return '<span class="badge badge-'+(cls[s]||'draft')+'">'+label+'</span>';
+  const label = s.Status === 'Approved' ? saleApprovedLabel(s) : (STATUS_LABELS[s.Status]||s.Status);
+  return '<span class="badge badge-'+(cls[s.Status]||'draft')+'">'+label+'</span>';
 }
 function deptSkipsApproval(deptName){
   const d = STATE.deptCodes.find(x=>x.DeptName===deptName);
@@ -2249,10 +2262,12 @@ function renderSaleList(root){
       <h2>รายการขายออกทรัพย์สิน</h2>
       <div class="toolbar no-print">
         <input type="text" id="fSaleSearch" placeholder="ค้นหาเลขที่ / ผู้ซื้อ..." style="max-width:220px;">
-        <select id="fSaleStatus" style="max-width:160px;">
+        <select id="fSaleStatus" style="max-width:170px;">
           <option value="">ทุกสถานะ</option>
           <option value="PendingApproval">รออนุมัติ</option>
-          <option value="Approved">ขายแล้ว</option>
+          <option value="AwaitingSale">รอขาย</option>
+          <option value="AwaitingAuction">รอประมูล</option>
+          <option value="Sold">ขายแล้ว</option>
           <option value="Rejected">ไม่อนุมัติ</option>
         </select>
         <input type="date" id="fSaleFrom" style="max-width:150px;">
@@ -2265,18 +2280,17 @@ function renderSaleList(root){
       <div id="saleListTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
-  document.getElementById('btnSaleFilter').onclick = loadSaleList;
-  document.getElementById('btnSaleRefresh').onclick = loadSaleList;
-  document.getElementById('fSaleStatus').onchange = loadSaleList;
-  document.getElementById('fSaleFrom').onchange = loadSaleList;
-  document.getElementById('fSaleTo').onchange = loadSaleList;
+  document.getElementById('btnSaleFilter').onclick = renderSaleListTable;
+  document.getElementById('btnSaleRefresh').onclick = loadSales;
+  document.getElementById('fSaleStatus').onchange = renderSaleListTable;
+  document.getElementById('fSaleFrom').onchange = renderSaleListTable;
+  document.getElementById('fSaleTo').onchange = renderSaleListTable;
   document.getElementById('btnSaleExport').onclick = exportSaleList;
   document.getElementById('btnCreateFromSaleQueue').onclick = createSaleFromQueue;
   document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
   document.getElementById('saleQSearch').oninput = renderSaleQueueTable;
-  loadSaleList();
+  loadSales();
   loadSaleQueue();
-  loadKanbanSales();
 
   function loadSaleQueue(){
     document.getElementById('saleQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
@@ -2289,37 +2303,58 @@ function renderSaleList(root){
     });
   }
 
-  let allSalesForKanban = [];
-  function loadKanbanSales(){
+  // โหลดใบขายออกทั้งหมด (ไม่กรอง) ครั้งเดียว ใช้ร่วมกันทั้ง Kanban สรุปและตารางรายการด้านล่าง
+  // กรอง q/สถานะ(bucket)/ช่วงวันที่ ทำฝั่ง client ทั้งหมด (ดู applySaleFilters/saleBucketOf) เพื่อให้ Kanban
+  // นับจากข้อมูลชุดเดียวกับตารางเสมอ ไม่ผันตามตัวกรองที่ผู้ใช้ตั้งไว้ในตาราง
+  let allSales = [];
+  function loadSales(){
+    document.getElementById('saleListTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet({action:'getSales'}).then(res=>{
-      if(!res.ok) return;
-      allSalesForKanban = deptFilterRows(res.data, ['FromDept']);
+      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
+      allSales = deptFilterRows(res.data, ['FromDept']);
       renderSaleKanban();
+      renderSaleListTable();
     });
   }
+
+  window.filterSaleByBucket = function(bucket){
+    document.getElementById('fSaleStatus').value = bucket;
+    renderSaleListTable();
+  };
 
   function renderSaleKanban(){
     const host = document.getElementById('saleKanbanHost');
     if(!host) return;
     const queueCount = (STATE.saleQueue||[]).length;
-    const pendingCount = allSalesForKanban.filter(s=>s.Status==='PendingApproval').length;
-    const soldCount = allSalesForKanban.filter(s=>s.Status==='Approved' && s.Channel!=='ประมูล').length;
+    const counts = { PendingApproval:0, AwaitingSale:0, AwaitingAuction:0, Sold:0 };
+    allSales.forEach(s=>{ const b = saleBucketOf(s); if(counts[b]!==undefined) counts[b]++; });
+    const clickable = (bucket)=> `style="cursor:pointer;" onclick="filterSaleByBucket('${bucket}')"`;
     host.innerHTML = `
       <div class="row">
         <div class="stat-tile">
           <div class="label">รอคิวขาย/ประมูล</div>
           <div class="num">${queueCount}</div>
-          <div class="sub">ทรัพย์สินที่มาร์คไว้ ยังไม่ออกใบขายออก</div>
+          <div class="sub">ทรัพย์สินที่มาร์คไว้ ยังไม่ออกใบขายออก (ดูรายการด้านล่าง)</div>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile" ${clickable('PendingApproval')}>
           <div class="label">ออกแบบฟอร์มแล้ว</div>
-          <div class="num">${pendingCount}</div>
+          <div class="num">${counts.PendingApproval}</div>
           <div class="sub">ใบขายออกที่สร้างแล้ว รออนุมัติ</div>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile" ${clickable('AwaitingSale')}>
+          <div class="label">รอขาย</div>
+          <div class="num">${counts.AwaitingSale}</div>
+          <div class="sub">ช่องทาง "ขาย" อนุมัติแล้ว รอ Admin ยืนยันขายแล้ว</div>
+        </div>
+        <div class="stat-tile" ${clickable('AwaitingAuction')}>
+          <div class="label">รอประมูล</div>
+          <div class="num">${counts.AwaitingAuction}</div>
+          <div class="sub">ช่องทาง "ประมูล" อนุมัติแล้ว ติดตามต่อที่หน้าประมูลขาย</div>
+        </div>
+        <div class="stat-tile" ${clickable('Sold')}>
           <div class="label">ขายแล้ว</div>
-          <div class="num">${soldCount}</div>
-          <div class="sub">ใบขายออกช่องทาง "ขาย" อนุมัติแล้ว (ขายให้ผู้รับเหมา)</div>
+          <div class="num">${counts.Sold}</div>
+          <div class="sub">ยืนยันขายแล้ว (ขายให้ผู้รับเหมา)</div>
         </div>
       </div>`;
   }
@@ -2400,32 +2435,29 @@ function renderSaleList(root){
     const header = ['เลขที่','วันที่','หน่วยงาน','ช่องทาง','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ','ลิงก์รูปภาพ'];
     const dataRows = STATE.sales.map(s => [
       s.RunningNo, fmtDate(s.CreatedAt), s.FromDept, (s.Channel==='ประมูล'?'ประมูล':'ขาย'), s.Buyer||'', s.ItemCount,
-      Number(s.TotalSalePrice)||0, (s.Status==='Approved'?(s.Channel==='ประมูล'?'รอประมูล':'ขายแล้ว'):(STATUS_LABELS[s.Status]||s.Status)), s.ApproverName||s.ApproverEmail||'', s.AllImages||''
+      Number(s.TotalSalePrice)||0, (s.Status==='Approved'?saleApprovedLabel(s):(STATUS_LABELS[s.Status]||s.Status)), s.ApproverName||s.ApproverEmail||'', s.AllImages||''
     ]);
     exportExcel('รายการขายออก.xlsx', [{ name:'ขายออก', header, rows: dataRows }]);
   }
 
-  function loadSaleList(){
-    const params = { action:'getSales' };
-    const q = document.getElementById('fSaleSearch').value.trim();
-    const status = document.getElementById('fSaleStatus').value;
+  function applySaleFilters(){
+    const qq = document.getElementById('fSaleSearch').value.trim().toLowerCase();
+    const bucket = document.getElementById('fSaleStatus').value;
     const from = document.getElementById('fSaleFrom').value;
     const to = document.getElementById('fSaleTo').value;
-    if(q) params.q = q;
-    if(status) params.status = status;
-    if(from) params.from = from;
-    if(to) params.to = to;
-    document.getElementById('saleListTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiGet(params).then(res=>{
-      if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
-      STATE.sales = deptFilterRows(res.data, ['FromDept']);
-      renderSaleListTable();
-    });
+    return allSales.filter(s =>
+      (!qq || String(s.RunningNo).toLowerCase().indexOf(qq)!==-1 || String(s.Buyer||'').toLowerCase().indexOf(qq)!==-1) &&
+      (!bucket || saleBucketOf(s)===bucket) &&
+      (!from || new Date(s.CreatedAt) >= new Date(from)) &&
+      (!to || new Date(s.CreatedAt) <= new Date(to+'T23:59:59'))
+    ).sort((a,b)=> new Date(b.CreatedAt) - new Date(a.CreatedAt));
   }
+
   function renderSaleListTable(){
+    STATE.sales = applySaleFilters();
     const host = document.getElementById('saleListTableHost');
     document.getElementById('saleListCount').textContent = 'รวม '+STATE.sales.length+' รายการ';
-    if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการขายออก</div>'; return; }
+    if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ไม่พบรายการขายออกที่ตรงกับตัวกรอง</div>'; return; }
     let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ช่องทาง</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
     STATE.sales.forEach(s=>{
       html += `<tr>
@@ -2436,10 +2468,11 @@ function renderSaleList(root){
         <td>${esc(s.Buyer||'-')}</td>
         <td style="text-align:center;">${s.ItemCount}</td>
         <td class="money">${fmtMoney(s.TotalSalePrice)}</td>
-        <td>${saleStatusBadge(s.Status, s.Channel)}</td>
+        <td>${saleStatusBadge(s)}</td>
         <td>${esc(s.ApproverName||s.ApproverEmail||'-')}</td>
         <td class="no-print">
           <button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button>
+          ${saleBucketOf(s)==='AwaitingSale' ? `<button class="btn btn-primary btn-sm" onclick="confirmSale('${s.SaleID}',this)">✔ ยืนยันขายแล้ว</button>` : ''}
           ${s.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('sale','${s.SaleID}',this)">📧 ${s.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${s.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${s.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(s.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
         </td>
@@ -2448,6 +2481,17 @@ function renderSaleList(root){
     html += '</table>';
     host.innerHTML = html;
   }
+
+  window.confirmSale = function(saleId, btn){
+    if(!confirm('ยืนยันว่าใบขายออกนี้ขายเรียบร้อยแล้ว (ขายให้ผู้รับเหมา)?')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'adminConfirmSale', password: STATE.adminPassword, saleId }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
+      toast('ยืนยันขายแล้วสำเร็จ','ok');
+      loadSales();
+    });
+  };
 }
 
 window.openSalePrint = function(id){
@@ -2763,6 +2807,12 @@ function doSubmitSale(){
 /* ================= WRITE-OFF LIST VIEW ================= */
 function renderWriteOffList(root){
   root.innerHTML = `
+    <div class="card">
+      <h2>ภาพรวมรายการตัดชำรุด</h2>
+      <p style="color:var(--muted);font-size:13px;">สรุปสถานะรายการตัดชำรุดในแต่ละขั้นตอน — รายการที่อนุมัติแล้วสามารถส่งต่อไปคัดเลือกขึ้นหน้าประมูลขายได้ที่หน้า "คัดเลือกรายการประมูล"</p>
+      <div id="woKanbanHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
     <div class="card" id="writeOffQueueCard" ${isViewOnly() ? 'style="display:none;"' : ''}>
       <h2>รายการรอตัดชำรุด</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวตัดชำรุด") รอรวมออกเป็นใบตัดชำรุด — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
@@ -2806,6 +2856,7 @@ function renderWriteOffList(root){
   document.getElementById('woQSearch').oninput = renderWriteOffQueueTable;
   loadWoList();
   loadWriteOffQueue();
+  loadWriteOffKanban();
 
   function loadWriteOffQueue(){
     document.getElementById('writeOffQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
@@ -2814,7 +2865,44 @@ function renderWriteOffList(root){
       STATE.writeOffQueue = deptFilterRows(res.data, ['Department']);
       STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id => STATE.writeOffQueue.some(q=>q.AssetID===id));
       renderWriteOffQueueTable();
+      renderWriteOffKanban();
     });
+  }
+
+  // การ์ดสรุปดึงจากข้อมูลไม่กรอง (แยกจากตัวกรองในตารางด้านล่าง) เพื่อให้ตัวเลขคงที่ไม่ผันตามตัวกรองที่ผู้ใช้ตั้งไว้
+  let allWriteOffsForKanban = [];
+  function loadWriteOffKanban(){
+    apiGet({action:'getWriteOffs'}).then(res=>{
+      if(!res.ok) return;
+      allWriteOffsForKanban = deptFilterRows(res.data, ['FromDept']);
+      renderWriteOffKanban();
+    });
+  }
+
+  function renderWriteOffKanban(){
+    const host = document.getElementById('woKanbanHost');
+    if(!host) return;
+    const queueCount = (STATE.writeOffQueue||[]).length;
+    const pendingCount = allWriteOffsForKanban.filter(w=>w.Status==='PendingApproval').length;
+    const doneCount = allWriteOffsForKanban.filter(w=>w.Status==='Approved').length;
+    host.innerHTML = `
+      <div class="row">
+        <div class="stat-tile">
+          <div class="label">รอคิวตัดชำรุด</div>
+          <div class="num">${queueCount}</div>
+          <div class="sub">ทรัพย์สินที่มาร์คไว้ ยังไม่ออกใบตัดชำรุด (ดูรายการด้านล่าง)</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">ออกแบบฟอร์มแล้ว</div>
+          <div class="num">${pendingCount}</div>
+          <div class="sub">ใบตัดชำรุดที่สร้างแล้ว รออนุมัติ</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">ตัดชำรุดแล้ว</div>
+          <div class="num">${doneCount}</div>
+          <div class="sub">อนุมัติแล้ว — คัดเลือกส่งประมูลได้ที่หน้า "คัดเลือกรายการประมูล"</div>
+        </div>
+      </div>`;
   }
 
   function renderWriteOffQueueTable(){
@@ -3831,7 +3919,7 @@ function buildSaleDocHtml(s, withToolbar){
     <div class="toolbar no-print">
       <button class="btn btn-secondary btn-sm" onclick="STATE.view='saleList';render();">← กลับรายการ</button>
       <button class="btn btn-primary btn-sm" id="btnPrintSaleNow">🖨️ พิมพ์ / บันทึก PDF</button>
-      <span style="margin-left:auto;">${saleStatusBadge(s.Status, s.Channel)}</span>
+      <span style="margin-left:auto;">${saleStatusBadge(s)}</span>
     </div>` : ''}
     <div class="card" id="printArea">
       <div class="doc">
@@ -3867,10 +3955,11 @@ function buildSaleDocHtml(s, withToolbar){
 
         ${s.Status !== 'Draft' ? `
         <div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">
-          <b>สถานะการอนุมัติ:</b> ${saleStatusBadge(s.Status, s.Channel)} &nbsp;
+          <b>สถานะการอนุมัติ:</b> ${saleStatusBadge(s)} &nbsp;
           ${s.ApproverName || s.ApproverEmail ? 'โดย '+esc(s.ApproverName||s.ApproverEmail) : ''}
           ${s.ApprovedAt ? ' เมื่อ '+fmtDate(s.ApprovedAt) : ''}
           ${s.ApproverComment ? '<br><b>ความเห็น:</b> '+esc(s.ApproverComment) : ''}
+          ${s.SaleConfirmedAt ? '<br><b>ยืนยันขายแล้วเมื่อ:</b> '+fmtDate(s.SaleConfirmedAt) : ''}
         </div>` : ''}
       </div>
     </div>
@@ -4015,7 +4104,7 @@ function renderApproveSale(){
           </div>
         </div>`;
     } else {
-      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${saleStatusBadge(s.Status, s.Channel)}</div></div>`;
+      actionHtml = `<div class="card"><div class="empty">รายการนี้ถูกดำเนินการแล้ว: ${saleStatusBadge(s)}</div></div>`;
     }
     root.innerHTML = buildSaleDocHtml(s, false) + actionHtml;
 
