@@ -53,9 +53,9 @@ const HEADERS = {
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
-  SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL'],
+  SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
-  WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL'],
+  WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL', 'Voided'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
 };
 
@@ -448,8 +448,16 @@ function getAssetQueue_(purpose) {
 // แทนที่จะให้ 4 request แยกกัน (เดิม) ต่างคนต่างอ่านชีตเดิมซ้ำ — action เดิมทั้ง 4 ยังคงอยู่ตามปกติสำหรับหน้าอื่นที่ใช้แยกกัน
 function getAssetListBundle_(q) {
   const disposed = getDisposedAssetStatus_();
+  const lifecycleMeta = getAssetLifecycleMeta_();
   const allAssets = getAssetsRaw_();
-  allAssets.forEach(r => { r.AssetStatus = disposed[String(r.AssetID)] || 'Active'; });
+  allAssets.forEach(r => {
+    const id = String(r.AssetID);
+    r.AssetStatus = disposed[id] || 'Active';
+    r.SaleChannel = lifecycleMeta.channelByAsset[id] || '';
+    r.SaleConfirmedAt = lifecycleMeta.confirmedByAsset[id] ? 1 : '';
+    r.PendingSale = !!lifecycleMeta.pendingSaleByAsset[id];
+    r.PendingWriteOff = !!lifecycleMeta.pendingWriteOffByAsset[id];
+  });
 
   let assets = allAssets;
   if (q) {
@@ -623,6 +631,7 @@ function invalidateDisposedAssetStatusCache_() {
     const cache = CacheService.getScriptCache();
     cache.remove(DISPOSED_STATUS_CACHE_KEY);
     cache.remove(SALE_AUCTION_CHANNEL_CACHE_KEY);
+    cache.remove(ASSET_LIFECYCLE_META_CACHE_KEY);
   } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
 }
 
@@ -666,6 +675,76 @@ function getSaleAuctionChannelMap_() {
   return map;
 }
 
+// ข้อมูลเสริมระดับทรัพย์สิน ใช้ประกอบสถานะละเอียดที่ Dashboard/รายการทรัพย์สินแสดง (รอขาย/รอตัดชำรุด/รอประมูล/ขายแล้ว ฯลฯ)
+// เกินเลย Active/Sold/WrittenOff ธรรมดา — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น เป็นแค่ข้อมูลเสริมสำหรับแสดงผล
+// แคชคู่กับ getDisposedAssetStatus_/getSaleAuctionChannelMap_ (ล้างพร้อมกันใน invalidateDisposedAssetStatusCache_)
+const ASSET_LIFECYCLE_META_CACHE_KEY = 'assetLifecycleMeta_v1';
+
+function getAssetLifecycleMeta_() {
+  let cache;
+  try {
+    cache = CacheService.getScriptCache();
+    const cached = cache.get(ASSET_LIFECYCLE_META_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
+
+  const meta = { channelByAsset: {}, confirmedByAsset: {}, pendingSaleByAsset: {}, pendingWriteOffByAsset: {} };
+
+  const saleDocSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleDocValues = saleDocSh.getDataRange().getValues();
+  const saleDocIdx = indexMap_(saleDocValues.shift());
+  const approvedSaleDocs = {}, pendingSaleDocs = {};
+  saleDocValues.forEach(r => {
+    const saleId = String(r[saleDocIdx.SaleID]);
+    if (r[saleDocIdx.Status] === STATUS.APPROVED) {
+      approvedSaleDocs[saleId] = {
+        channel: saleDocIdx.Channel !== undefined ? String(r[saleDocIdx.Channel]) : '',
+        confirmedAt: saleDocIdx.SaleConfirmedAt !== undefined ? r[saleDocIdx.SaleConfirmedAt] : ''
+      };
+    } else if (r[saleDocIdx.Status] === STATUS.PENDING) {
+      pendingSaleDocs[saleId] = true;
+    }
+  });
+  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const saleItemValues = saleItemSh.getDataRange().getValues();
+  const saleItemIdx = indexMap_(saleItemValues.shift());
+  saleItemValues.forEach(r => {
+    const saleId = String(r[saleItemIdx.SaleID]);
+    const assetId = String(r[saleItemIdx.AssetID]);
+    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    if (approvedSaleDocs[saleId]) {
+      meta.channelByAsset[assetId] = approvedSaleDocs[saleId].channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
+      if (approvedSaleDocs[saleId].confirmedAt) meta.confirmedByAsset[assetId] = true;
+    } else if (pendingSaleDocs[saleId]) {
+      meta.pendingSaleByAsset[assetId] = true;
+    }
+  });
+
+  const woDocSh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const woDocValues = woDocSh.getDataRange().getValues();
+  const woDocIdx = indexMap_(woDocValues.shift());
+  const pendingWoDocs = {};
+  woDocValues.forEach(r => {
+    if (r[woDocIdx.Status] === STATUS.PENDING) pendingWoDocs[String(r[woDocIdx.WriteOffID])] = true;
+  });
+  const woItemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const woItemValues = woItemSh.getDataRange().getValues();
+  const woItemIdx = indexMap_(woItemValues.shift());
+  woItemValues.forEach(r => {
+    const woId = String(r[woItemIdx.WriteOffID]);
+    const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[String(r[woItemIdx.AssetID])] = true;
+  });
+
+  try {
+    if (cache) cache.put(ASSET_LIFECYCLE_META_CACHE_KEY, JSON.stringify(meta), DISPOSED_STATUS_CACHE_TTL_SEC);
+  } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
+
+  return meta;
+}
+
 function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
   const docSh = getSS_().getSheetByName(docSheetName);
   const docValues = docSh.getDataRange().getValues();
@@ -681,7 +760,10 @@ function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, 
   const itemHeaders = itemValues.shift();
   const itemIdx = indexMap_(itemHeaders);
   itemValues.forEach(r => {
-    if (approvedDocIds[String(r[itemIdx[docIdField]])]) status[String(r[itemIdx.AssetID])] = label;
+    // แถวรายการเดี่ยวๆ ที่ Admin กด "คืนสถานะ" ไปแล้ว (Voided='TRUE') ไม่ถือว่าสิ้นสภาพอีกต่อไป
+    // แม้เอกสารหลักโดยรวมจะยังอนุมัติอยู่ (เอกสารมีทรัพย์สินอื่นที่ยังไม่ได้คืนสถานะ) — ดู voidApprovedDocsForAsset_
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (approvedDocIds[String(r[itemIdx[docIdField]])] && !voided) status[String(r[itemIdx.AssetID])] = label;
   });
 }
 
@@ -976,9 +1058,12 @@ function adminRestoreAsset_(body) {
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
-  const voidedCount =
-    voidApprovedDocsForAsset_(SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', assetId) +
-    voidApprovedDocsForAsset_(SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', assetId);
+  const saleVoided = voidApprovedDocsForAsset_(SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', assetId);
+  const writeOffVoided = voidApprovedDocsForAsset_(SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', assetId);
+  if (saleVoided === -1 || writeOffVoided === -1) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ Voided ในชีต SaleItems/WriteOffItems กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  const voidedCount = saleVoided + writeOffVoided;
 
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
@@ -1009,29 +1094,56 @@ function clearAuctionSelection_(assetId) {
   }
 }
 
+// คืนสถานะทรัพย์สิน "รายชิ้น" เดียว ไม่ใช่ทั้งเอกสาร — เอกสารขาย/ตัดชำรุด 1 ใบมักมีทรัพย์สินหลายรายการรวมกัน
+// (เดิมฟังก์ชันนี้ตั้งสถานะทั้งเอกสารเป็น Voided ทำให้คืนสถานะทรัพย์สิน 1 ชิ้น กลับไปคืนสถานะทรัพย์สินอื่นทุกชิ้น
+// ในเอกสารเดียวกันไปด้วยโดยไม่ตั้งใจ — แก้เป็นตั้งค่า Voided ที่ "แถวรายการ" ของ assetId นั้นเท่านั้น)
+// ถ้าทำให้ทุกแถวรายการในเอกสารกลายเป็น Voided ครบทุกชิ้นแล้ว ถึงจะตั้งสถานะทั้งเอกสารเป็น Voided ตามไปด้วย
+// เพื่อไม่ให้เอกสารค้างสถานะ "อนุมัติแล้ว" ทั้งที่ไม่มีทรัพย์สินเหลืออยู่จริงสักชิ้น
 function voidApprovedDocsForAsset_(docSheetName, itemSheetName, docIdField, assetId) {
-  const itemSh = getSS_().getSheetByName(itemSheetName);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemHeaders = itemValues.shift();
-  const itemIdx = indexMap_(itemHeaders);
-  const docIds = {};
-  itemValues.forEach(r => {
-    if (String(r[itemIdx.AssetID]) === assetId) docIds[String(r[itemIdx[docIdField]])] = true;
-  });
-  if (!Object.keys(docIds).length) return 0;
-
   const docSh = getSS_().getSheetByName(docSheetName);
   const docValues = docSh.getDataRange().getValues();
   const docHeaders = docValues[0];
   const docIdx = indexMap_(docHeaders);
-  let count = 0;
+  const approvedDocIds = {};
   for (let i = 1; i < docValues.length; i++) {
-    const id = String(docValues[i][docIdx[docIdField]]);
-    if (docIds[id] && docValues[i][docIdx.Status] === STATUS.APPROVED) {
-      docSh.getRange(i + 1, docIdx.Status + 1).setValue(STATUS.VOIDED);
+    if (docValues[i][docIdx.Status] === STATUS.APPROVED) approvedDocIds[String(docValues[i][docIdx[docIdField]])] = true;
+  }
+  if (!Object.keys(approvedDocIds).length) return 0;
+
+  const itemSh = getSS_().getSheetByName(itemSheetName);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues[0];
+  const itemIdx = indexMap_(itemHeaders);
+  if (itemIdx.Voided === undefined) return -1; // สัญญาณพิเศษ: ยังไม่ได้รัน setup() ใหม่ — ให้ผู้เรียกแจ้งเตือนแทนที่จะเงียบ
+
+  const affectedDocIds = {};
+  let count = 0;
+  for (let i = 1; i < itemValues.length; i++) {
+    const row = itemValues[i];
+    const docId = String(row[itemIdx[docIdField]]);
+    const alreadyVoided = String(row[itemIdx.Voided]).toLowerCase() === 'true';
+    if (String(row[itemIdx.AssetID]) === assetId && approvedDocIds[docId] && !alreadyVoided) {
+      itemSh.getRange(i + 1, itemIdx.Voided + 1).setValue('TRUE');
+      row[itemIdx.Voided] = 'TRUE'; // sync ค่าในหน่วยความจำ ให้เช็ค "เหลือรายการที่ยังไม่คืนสถานะไหม" ด้านล่างเห็นค่าล่าสุด
       count++;
+      affectedDocIds[docId] = true;
     }
   }
+  if (!count) return 0;
+
+  Object.keys(affectedDocIds).forEach(docId => {
+    const stillActive = itemValues.some((row, i) =>
+      i > 0 && String(row[itemIdx[docIdField]]) === docId && String(row[itemIdx.Voided]).toLowerCase() !== 'true'
+    );
+    if (!stillActive) {
+      for (let i = 1; i < docValues.length; i++) {
+        if (String(docValues[i][docIdx[docIdField]]) === docId) {
+          docSh.getRange(i + 1, docIdx.Status + 1).setValue(STATUS.VOIDED);
+          break;
+        }
+      }
+    }
+  });
   return count;
 }
 
@@ -1985,16 +2097,18 @@ function adminConfirmSale_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const saleId = String(body.saleId || '').trim();
   if (!saleId) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
+  const confirmed = body.confirmed !== false; // ค่าเริ่มต้น true (ยืนยันขายแล้ว) — ส่ง confirmed:false เพื่อยกเลิกการยืนยัน กลับไปเป็น "รอขาย" เท่านั้น
   const found = findSaleRow_(saleId);
   if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
-  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ยืนยันได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น' };
+  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ดำเนินการได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น' };
   if (found.obj.Channel === 'ประมูล') return { ok: false, error: 'ใบขายออกช่องทางประมูลไม่ต้องยืนยันขั้นนี้ (ติดตามความคืบหน้าที่หน้าประมูลขายแทน)' };
   if (found.idx.SaleConfirmedAt === undefined) {
     return { ok: false, error: 'ไม่พบคอลัมน์ SaleConfirmedAt ในชีต Sales กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
   }
   const sh = getSS_().getSheetByName(SHEETS.SALES);
-  sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(new Date());
-  logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', 'ยืนยันขายแล้วสำหรับใบขายออก ' + found.obj.RunningNo);
+  sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(confirmed ? new Date() : '');
+  invalidateDisposedAssetStatusCache_(); // getAssetLifecycleMeta_ นับ "ขายแล้ว"/"รอขาย" จาก SaleConfirmedAt ด้วย
+  logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', (confirmed ? 'ยืนยันขายแล้ว' : 'ยกเลิกการยืนยันขายแล้ว (กลับเป็นรอขาย)') + 'สำหรับใบขายออก ' + found.obj.RunningNo);
   return { ok: true };
 }
 
@@ -2047,19 +2161,23 @@ function createSale_(body) {
   });
 
   const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
-  const itemRows = items.map((it, i) => [
-    saleId,
-    i + 1,
-    it.assetId || '',
-    it.assetName || '',
-    it.scrapPrice || 0,
-    it.auctionPrice || 0,
-    it.salePrice || 0,
-    it.remark || '',
-    imagesToCell_(it.images)
-  ]);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const itemRows = items.map((it, i) => {
+    const row = iHeaders.map(() => '');
+    row[iIdx.SaleID] = saleId;
+    row[iIdx.LineNo] = i + 1;
+    row[iIdx.AssetID] = it.assetId || '';
+    row[iIdx.AssetName] = it.assetName || '';
+    row[iIdx.ScrapPrice] = it.scrapPrice || 0;
+    row[iIdx.AuctionPrice] = it.auctionPrice || 0;
+    row[iIdx.SalePrice] = it.salePrice || 0;
+    row[iIdx.Remark] = it.remark || '';
+    row[iIdx.ImageURL] = imagesToCell_(it.images);
+    return row;
+  });
   if (itemRows.length) {
-    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.SALE_ITEMS.length).setValues(itemRows);
+    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, iHeaders.length).setValues(itemRows);
   }
 
   let emailResult = { ok: true };
@@ -2071,6 +2189,7 @@ function createSale_(body) {
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
+    invalidateDisposedAssetStatusCache_(); // เพิ่งสร้างใบรออนุมัติ ต้องล้างแคช เพราะ getAssetLifecycleMeta_ นับรวม "รอขาย" จากใบรออนุมัติด้วย
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
     emailResult = sendSaleApprovalEmail_(saleId, runningNo, body, items, token);
   }
@@ -2246,17 +2365,21 @@ function createWriteOff_(body) {
   });
 
   const iSheet = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
-  const itemRows = items.map((it, i) => [
-    writeOffId,
-    i + 1,
-    it.assetId || '',
-    it.assetName || '',
-    it.scrapPrice || 0,
-    it.remark || '',
-    imagesToCell_(it.images)
-  ]);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const itemRows = items.map((it, i) => {
+    const row = iHeaders.map(() => '');
+    row[iIdx.WriteOffID] = writeOffId;
+    row[iIdx.LineNo] = i + 1;
+    row[iIdx.AssetID] = it.assetId || '';
+    row[iIdx.AssetName] = it.assetName || '';
+    row[iIdx.ScrapPrice] = it.scrapPrice || 0;
+    row[iIdx.Remark] = it.remark || '';
+    row[iIdx.ImageURL] = imagesToCell_(it.images);
+    return row;
+  });
   if (itemRows.length) {
-    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, HEADERS.WRITEOFF_ITEMS.length).setValues(itemRows);
+    iSheet.getRange(iSheet.getLastRow() + 1, 1, itemRows.length, iHeaders.length).setValues(itemRows);
   }
 
   let emailResult = { ok: true };
@@ -2268,6 +2391,7 @@ function createWriteOff_(body) {
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
+    invalidateDisposedAssetStatusCache_(); // เพิ่งสร้างใบรออนุมัติ ต้องล้างแคช เพราะ getAssetLifecycleMeta_ นับรวม "รอตัดชำรุด" จากใบรออนุมัติด้วย
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
     emailResult = sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token);
   }
