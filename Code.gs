@@ -448,8 +448,16 @@ function getAssetQueue_(purpose) {
 // แทนที่จะให้ 4 request แยกกัน (เดิม) ต่างคนต่างอ่านชีตเดิมซ้ำ — action เดิมทั้ง 4 ยังคงอยู่ตามปกติสำหรับหน้าอื่นที่ใช้แยกกัน
 function getAssetListBundle_(q) {
   const disposed = getDisposedAssetStatus_();
+  const lifecycleMeta = getAssetLifecycleMeta_();
   const allAssets = getAssetsRaw_();
-  allAssets.forEach(r => { r.AssetStatus = disposed[String(r.AssetID)] || 'Active'; });
+  allAssets.forEach(r => {
+    const id = String(r.AssetID);
+    r.AssetStatus = disposed[id] || 'Active';
+    r.SaleChannel = lifecycleMeta.channelByAsset[id] || '';
+    r.SaleConfirmedAt = lifecycleMeta.confirmedByAsset[id] ? 1 : '';
+    r.PendingSale = !!lifecycleMeta.pendingSaleByAsset[id];
+    r.PendingWriteOff = !!lifecycleMeta.pendingWriteOffByAsset[id];
+  });
 
   let assets = allAssets;
   if (q) {
@@ -623,6 +631,7 @@ function invalidateDisposedAssetStatusCache_() {
     const cache = CacheService.getScriptCache();
     cache.remove(DISPOSED_STATUS_CACHE_KEY);
     cache.remove(SALE_AUCTION_CHANNEL_CACHE_KEY);
+    cache.remove(ASSET_LIFECYCLE_META_CACHE_KEY);
   } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
 }
 
@@ -664,6 +673,76 @@ function getSaleAuctionChannelMap_() {
   } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
 
   return map;
+}
+
+// ข้อมูลเสริมระดับทรัพย์สิน ใช้ประกอบสถานะละเอียดที่ Dashboard/รายการทรัพย์สินแสดง (รอขาย/รอตัดชำรุด/รอประมูล/ขายแล้ว ฯลฯ)
+// เกินเลย Active/Sold/WrittenOff ธรรมดา — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น เป็นแค่ข้อมูลเสริมสำหรับแสดงผล
+// แคชคู่กับ getDisposedAssetStatus_/getSaleAuctionChannelMap_ (ล้างพร้อมกันใน invalidateDisposedAssetStatusCache_)
+const ASSET_LIFECYCLE_META_CACHE_KEY = 'assetLifecycleMeta_v1';
+
+function getAssetLifecycleMeta_() {
+  let cache;
+  try {
+    cache = CacheService.getScriptCache();
+    const cached = cache.get(ASSET_LIFECYCLE_META_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
+
+  const meta = { channelByAsset: {}, confirmedByAsset: {}, pendingSaleByAsset: {}, pendingWriteOffByAsset: {} };
+
+  const saleDocSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleDocValues = saleDocSh.getDataRange().getValues();
+  const saleDocIdx = indexMap_(saleDocValues.shift());
+  const approvedSaleDocs = {}, pendingSaleDocs = {};
+  saleDocValues.forEach(r => {
+    const saleId = String(r[saleDocIdx.SaleID]);
+    if (r[saleDocIdx.Status] === STATUS.APPROVED) {
+      approvedSaleDocs[saleId] = {
+        channel: saleDocIdx.Channel !== undefined ? String(r[saleDocIdx.Channel]) : '',
+        confirmedAt: saleDocIdx.SaleConfirmedAt !== undefined ? r[saleDocIdx.SaleConfirmedAt] : ''
+      };
+    } else if (r[saleDocIdx.Status] === STATUS.PENDING) {
+      pendingSaleDocs[saleId] = true;
+    }
+  });
+  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const saleItemValues = saleItemSh.getDataRange().getValues();
+  const saleItemIdx = indexMap_(saleItemValues.shift());
+  saleItemValues.forEach(r => {
+    const saleId = String(r[saleItemIdx.SaleID]);
+    const assetId = String(r[saleItemIdx.AssetID]);
+    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    if (approvedSaleDocs[saleId]) {
+      meta.channelByAsset[assetId] = approvedSaleDocs[saleId].channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
+      if (approvedSaleDocs[saleId].confirmedAt) meta.confirmedByAsset[assetId] = true;
+    } else if (pendingSaleDocs[saleId]) {
+      meta.pendingSaleByAsset[assetId] = true;
+    }
+  });
+
+  const woDocSh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const woDocValues = woDocSh.getDataRange().getValues();
+  const woDocIdx = indexMap_(woDocValues.shift());
+  const pendingWoDocs = {};
+  woDocValues.forEach(r => {
+    if (r[woDocIdx.Status] === STATUS.PENDING) pendingWoDocs[String(r[woDocIdx.WriteOffID])] = true;
+  });
+  const woItemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const woItemValues = woItemSh.getDataRange().getValues();
+  const woItemIdx = indexMap_(woItemValues.shift());
+  woItemValues.forEach(r => {
+    const woId = String(r[woItemIdx.WriteOffID]);
+    const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[String(r[woItemIdx.AssetID])] = true;
+  });
+
+  try {
+    if (cache) cache.put(ASSET_LIFECYCLE_META_CACHE_KEY, JSON.stringify(meta), DISPOSED_STATUS_CACHE_TTL_SEC);
+  } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
+
+  return meta;
 }
 
 function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
@@ -2028,6 +2107,7 @@ function adminConfirmSale_(body) {
   }
   const sh = getSS_().getSheetByName(SHEETS.SALES);
   sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(confirmed ? new Date() : '');
+  invalidateDisposedAssetStatusCache_(); // getAssetLifecycleMeta_ นับ "ขายแล้ว"/"รอขาย" จาก SaleConfirmedAt ด้วย
   logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', (confirmed ? 'ยืนยันขายแล้ว' : 'ยกเลิกการยืนยันขายแล้ว (กลับเป็นรอขาย)') + 'สำหรับใบขายออก ' + found.obj.RunningNo);
   return { ok: true };
 }
@@ -2109,6 +2189,7 @@ function createSale_(body) {
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
+    invalidateDisposedAssetStatusCache_(); // เพิ่งสร้างใบรออนุมัติ ต้องล้างแคช เพราะ getAssetLifecycleMeta_ นับรวม "รอขาย" จากใบรออนุมัติด้วย
     logActivity_(saleId, 'CREATE_SALE', body.createdBy || 'unknown', 'สร้างใบขายออกทรัพย์สิน ' + runningNo);
     emailResult = sendSaleApprovalEmail_(saleId, runningNo, body, items, token);
   }
@@ -2310,6 +2391,7 @@ function createWriteOff_(body) {
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
+    invalidateDisposedAssetStatusCache_(); // เพิ่งสร้างใบรออนุมัติ ต้องล้างแคช เพราะ getAssetLifecycleMeta_ นับรวม "รอตัดชำรุด" จากใบรออนุมัติด้วย
     logActivity_(writeOffId, 'CREATE_WRITEOFF', body.createdBy || 'unknown', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo);
     emailResult = sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token);
   }

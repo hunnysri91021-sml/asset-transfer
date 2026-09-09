@@ -223,6 +223,7 @@ let STATE = {
   approveSaleCtx: null,
   assetsFull: [],
   selectedAssetIds: [],
+  assetListPresetBucket: '',
   writeOffs: [],
   writeOffQueue: [],
   selectedWriteOffQueueAssetIds: [],
@@ -335,22 +336,51 @@ function deptSkipsApproval(deptName){
 }
 function assetStatusBadge(s){
   const map = {
-    Active: ['approved','ใช้งาน'],
+    Active: ['approved','ใช้งานอยู่'],
+    AwaitingSale: ['pending','รอขาย'],
+    AwaitingWriteOff: ['pending','รอตัดชำรุด'],
+    AwaitingAuction: ['pending','รอประมูล'],
+    InAuction: ['pending','กำลังประมูล'],
     Sold: ['rejected','ขายแล้ว'],
-    WrittenOff: ['draft','ตัดชำรุด'],
-    Auction: ['pending','ประมูลขาย']
+    WrittenOff: ['draft','ตัดชำรุดแล้ว']
   };
-  const v = map[s] || ['approved', 'ใช้งาน'];
+  const v = map[s] || ['approved', 'ใช้งานอยู่'];
   return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
 }
-// ทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้ว และ Admin ส่งขึ้นหน้า "ประมูลขาย" สาธารณะอยู่ (ยังไม่มีคนประมูลได้ — AuctionSold)
-// ให้แสดงสถานะเป็น "ประมูลขาย" แทนสถานะจริง (ขายแล้ว/ตัดชำรุด) ในทุกหน้าที่แสดงสถานะทรัพย์สินให้ผู้ใช้ดู
-// เพื่อสื่อสารว่ารายการนี้ยังไม่จบ (อยู่ระหว่างรอผู้ประมูล) ไม่ใช่ตัดจบแล้ว — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น
-function auctionAwareStatus(a){
+const LIFECYCLE_BUCKET_LABELS = {
+  Active: 'ใช้งานอยู่',
+  AwaitingSale: 'รอขาย',
+  AwaitingWriteOff: 'รอตัดชำรุด',
+  AwaitingAuction: 'รอประมูล',
+  InAuction: 'กำลังประมูล',
+  Sold: 'ขายแล้ว',
+  WrittenOff: 'ตัดชำรุดแล้ว'
+};
+const LIFECYCLE_BUCKET_ORDER = ['Active','AwaitingSale','AwaitingWriteOff','AwaitingAuction','InAuction','Sold','WrittenOff'];
+// สถานะละเอียดของทรัพย์สินตลอดวงจร (ครอบคลุมทั้งคิว/ใบรออนุมัติ/อนุมัติแล้ว/ประมูล) ใช้กับ Dashboard (คลิกกรอง)
+// และหน้ารายการทรัพย์สิน — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น (สิทธิ์แก้ไข/คิว ฯลฯ) เป็นแค่การจัดกลุ่มแสดงผล
+// queuedPurpose: purpose ('transfer'/'sale'/'writeoff') ของคิวที่ทรัพย์สินนี้ถูกมาร์คไว้ (ถ้ามี) — ใช้เฉพาะตอน AssetStatus ยัง Active
+function assetLifecycleBucket(a, queuedPurpose){
   const sendToAuction = String(a.SendToAuction).toLowerCase()==='true';
   const auctionSold = String(a.AuctionSold).toLowerCase()==='true';
-  if((a.AssetStatus==='Sold' || a.AssetStatus==='WrittenOff') && sendToAuction && !auctionSold) return 'Auction';
-  return a.AssetStatus || 'Active';
+
+  if(a.AssetStatus==='WrittenOff'){
+    if(sendToAuction && !auctionSold) return 'InAuction';
+    if(auctionSold) return 'Sold';
+    return 'WrittenOff';
+  }
+  if(a.AssetStatus==='Sold'){
+    if(a.SaleChannel==='ประมูล'){
+      if(sendToAuction && !auctionSold) return 'InAuction';
+      if(auctionSold) return 'Sold';
+      return 'AwaitingAuction';
+    }
+    return a.SaleConfirmedAt ? 'Sold' : 'AwaitingSale';
+  }
+  // AssetStatus Active — เช็คว่าอยู่ในคิว หรือมีใบขาย/ใบตัดชำรุดที่สร้างไว้แล้วแต่ยังรออนุมัติหรือไม่
+  if(queuedPurpose==='sale' || a.PendingSale) return 'AwaitingSale';
+  if(queuedPurpose==='writeoff' || a.PendingWriteOff) return 'AwaitingWriteOff';
+  return 'Active';
 }
 
 // ป้ายแจ้งเตือนข้อมูลจากการดึงข้อมูลบัญชี (adminSyncFromSource) — หายไปเองเมื่อมีคนแก้ไข/บันทึกรายการนั้น
@@ -778,11 +808,15 @@ function renderAssetList(root){
       <p style="color:var(--muted);font-size:13px;">${manageMode ? 'แก้ไข/เพิ่ม/ลบทรัพย์สิน — แสดงเฉพาะหน่วยงานที่คุณได้รับสิทธิ์ดูแล' + (isAdmin?' (Admin เห็นทุกหน่วยงาน)':'')  : 'ดูข้อมูลทรัพย์สินทั้งหมดของทุกหน่วยงาน (ไม่สามารถแก้ไขจากแถบนี้)'}</p>
       <div class="toolbar no-print">
         <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน / ผู้ดูแล..." style="max-width:220px;">
-        <select id="alStatus" style="max-width:160px;">
+        <select id="alStatus" style="max-width:170px;">
           <option value="">ทุกสถานะ</option>
-          <option value="Active">ใช้งาน</option>
+          <option value="Active">ใช้งานอยู่</option>
+          <option value="AwaitingSale">รอขาย</option>
+          <option value="AwaitingWriteOff">รอตัดชำรุด</option>
+          <option value="AwaitingAuction">รอประมูล</option>
+          <option value="InAuction">กำลังประมูล</option>
           <option value="Sold">ขายแล้ว</option>
-          <option value="WrittenOff">ตัดชำรุด</option>
+          <option value="WrittenOff">ตัดชำรุดแล้ว</option>
         </select>
         <select id="alDivision" autocomplete="off" style="max-width:160px;"><option value="">ทุกฝ่าย</option></select>
         <select id="alWorkGroup" autocomplete="off" style="max-width:160px;"><option value="">ทุกกลุ่มงาน</option></select>
@@ -824,15 +858,25 @@ function renderAssetList(root){
     document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
   }
 
+  function queuedPurposeOf(a){
+    return (STATE.assetQueuedPurposes[a.AssetID]||[])[0];
+  }
+
   function exportAssetList(){
     const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const statusLabel = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด', Auction:'ประมูลขาย' };
     const queuePurposeLabel = { transfer:'รอโอนย้าย', sale:'รอขาย', writeoff:'รอตัดชำรุด' };
     const queueStatusOf = a => (STATE.assetQueuedPurposes[a.AssetID]||[]).map(p=>queuePurposeLabel[p]||p).join('/');
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, statusLabel[auctionAwareStatus(a)]||'ใช้งาน', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
+  }
+
+  // มาจากการคลิกแถบสถานะที่ Dashboard — ตั้งค่าตัวกรองสถานะไว้ล่วงหน้าให้ครั้งเดียว แล้วล้างทิ้งทันที
+  // ไม่งั้นจะค้างกรองสถานะเดิมทุกครั้งที่กลับมาหน้านี้ในภายหลังโดยไม่ได้ตั้งใจ
+  if(STATE.assetListPresetBucket){
+    document.getElementById('alStatus').value = STATE.assetListPresetBucket;
+    STATE.assetListPresetBucket = '';
   }
 
   if(!noDeptsAssigned) load();
@@ -888,7 +932,7 @@ function renderAssetList(root){
   function filteredRows(){
     const statusFilter = document.getElementById('alStatus').value;
     let rows = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
-    if(statusFilter) rows = rows.filter(a => (a.AssetStatus||'Active') === statusFilter);
+    if(statusFilter) rows = rows.filter(a => assetLifecycleBucket(a, queuedPurposeOf(a)) === statusFilter);
     if(selectedDivision) rows = rows.filter(a => a.Division === selectedDivision);
     if(selectedWorkGroup) rows = rows.filter(a => a.WorkGroup === selectedWorkGroup);
     if(selectedLocation) rows = rows.filter(a => a.Location === selectedLocation);
@@ -926,7 +970,7 @@ function renderAssetList(root){
         <td>${esc(a.Location||'-')}</td>
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
-        <td>${assetStatusBadge(auctionAwareStatus(a))}</td>
+        <td>${assetStatusBadge(assetLifecycleBucket(a, queuedPurposeOf(a)))}</td>
         ${manageMode
           ? `<td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="width:100%;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>`
           : `<td>${esc(curTag)}</td>`}
@@ -1140,10 +1184,9 @@ function renderDashboard(root){
     mark(transferQueue, 'transfer');
     mark(saleQueue, 'sale');
     mark(writeOffQueue, 'writeoff');
-    const statusLabels = { Active:'ใช้งาน', Sold:'ขายแล้ว', WrittenOff:'ตัดชำรุด', Auction:'ประมูลขาย' };
     const byStatus = {};
     assets.forEach(a=>{
-      const st = auctionAwareStatus(a);
+      const st = assetLifecycleBucket(a, queuedPurposeByAsset[a.AssetID]);
       if(!byStatus[st]) byStatus[st] = { count:0, purchase:0, book:0 };
       byStatus[st].count++;
       byStatus[st].purchase += parseFloat(a.PurchasePrice)||0;
@@ -1151,17 +1194,17 @@ function renderDashboard(root){
     });
 
     let tilesHtml = '<div class="row">';
-    ['Active','Sold','WrittenOff','Auction'].forEach(st=>{
+    LIFECYCLE_BUCKET_ORDER.forEach(st=>{
       const d = byStatus[st] || { count:0, purchase:0, book:0 };
       tilesHtml += `
-        <div class="stat-tile">
-          <div class="label">${statusLabels[st]}</div>
+        <div class="stat-tile dashStatusTile" data-bucket="${st}" style="cursor:pointer;" title="คลิกเพื่อดูรายการที่หน้ารายการทรัพย์สิน">
+          <div class="label">${LIFECYCLE_BUCKET_LABELS[st]}</div>
           <div class="num">${d.count}</div>
           <div class="sub">มูลค่าตามบัญชีรวม ${fmtMoneyOrHidden(d.book)} บาท</div>
         </div>`;
     });
     tilesHtml += `
-      <div class="stat-tile">
+      <div class="stat-tile dashStatusTile" data-bucket="" style="cursor:pointer;" title="คลิกเพื่อดูรายการที่หน้ารายการทรัพย์สิน">
         <div class="label">ทั้งหมด</div>
         <div class="num">${assets.length}</div>
         <div class="sub">ราคาซื้อรวม ${fmtMoney(assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0))} บาท</div>
@@ -1175,11 +1218,11 @@ function renderDashboard(root){
       byDept[d].count++;
       byDept[d].purchase += parseFloat(a.PurchasePrice)||0;
       byDept[d].book += parseFloat(a.BookValue)||0;
-      const st = auctionAwareStatus(a);
-      if(st==='Active') byDept[d].active++;
-      else if(st==='Sold') byDept[d].sold++;
+      const st = assetLifecycleBucket(a, queuedPurposeByAsset[a.AssetID]);
+      if(st==='Sold') byDept[d].sold++;
       else if(st==='WrittenOff') byDept[d].writtenOff++;
-      else if(st==='Auction') byDept[d].auction++;
+      else if(st==='InAuction' || st==='AwaitingAuction') byDept[d].auction++;
+      else byDept[d].active++; // Active/AwaitingSale/AwaitingWriteOff — ยังไม่ถูกจำหน่ายจริง นับเป็นใช้งานอยู่
       const purpose = queuedPurposeByAsset[a.AssetID];
       if(purpose==='transfer') byDept[d].transfer++;
       else if(purpose==='sale') byDept[d].sale++;
@@ -1233,13 +1276,21 @@ function renderDashboard(root){
       </div>
     `;
 
+    document.getElementById('dashHost').querySelectorAll('.dashStatusTile').forEach(el=>{
+      el.onclick = ()=>{
+        STATE.assetListPresetBucket = el.dataset.bucket;
+        STATE.view = 'assetList';
+        render();
+      };
+    });
+
     document.getElementById('btnDashExport').onclick = ()=>{
       const statusSheet = {
         name: 'สรุปตามสถานะ',
         header: ['สถานะ','จำนวน','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
-        rows: ['Active','Sold','WrittenOff','Auction'].map(st=>{
+        rows: LIFECYCLE_BUCKET_ORDER.map(st=>{
           const d = byStatus[st] || { count:0, purchase:0, book:0 };
-          return [statusLabels[st], d.count, d.purchase, canSeePrice() ? d.book : 'ไม่มีสิทธิ์ดู'];
+          return [LIFECYCLE_BUCKET_LABELS[st], d.count, d.purchase, canSeePrice() ? d.book : 'ไม่มีสิทธิ์ดู'];
         }).concat([['ทั้งหมด', assets.length, assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0), canSeePrice() ? assets.reduce((s,a)=>s+(parseFloat(a.BookValue)||0),0) : 'ไม่มีสิทธิ์ดู']])
       };
       const deptSheet = {
