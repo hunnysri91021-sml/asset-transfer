@@ -1563,7 +1563,7 @@ function renderAuctionSelection(root){
 
     <div class="card">
       <h2>รายการที่ส่งประมูลแล้ว</h2>
-      <p style="color:var(--muted);font-size:13px;">รายการที่กำลังแสดงอยู่ในหน้า "ประมูลขาย" สาธารณะ — กดถอนออกได้หากต้องการนำกลับไปคัดเลือกใหม่</p>
+      <p style="color:var(--muted);font-size:13px;">รายการที่กำลังแสดงอยู่ในหน้า "ประมูลขาย" สาธารณะ — กด "ถอนออกจากประมูล" ได้หากต้องการนำกลับไปคัดเลือกใหม่ ส่วนรายการที่ขายแล้ว กด "ยกเลิกขายแล้ว" เพื่อกลับไปเป็น "รอประมูล" ได้เช่นกัน</p>
       <div class="toolbar no-print">
         <input type="text" id="aselSentSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
       </div>
@@ -1674,8 +1674,10 @@ function renderAuctionSelection(root){
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td>${a.AuctionSold
           ? `<span class="badge badge-approved">ขายแล้ว</span><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(a.AuctionBuyer||'')} · ${a.AuctionSoldPrice?fmtMoneyOrHidden(a.AuctionSoldPrice):''}</div>`
+          : `<span class="badge badge-pending">รอประมูล</span>`}</td>
+        <td class="no-print">${a.AuctionSold
+          ? `<button class="btn btn-secondary btn-sm aselUndoSoldBtn" data-id="${esc(a.AssetID)}">ยกเลิกขายแล้ว</button>`
           : `<button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button>`}</td>
-        <td class="no-print"><button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button></td>
       </tr>`;
     });
     html += '</table></div>';
@@ -1684,8 +1686,8 @@ function renderAuctionSelection(root){
     host.querySelectorAll('.aselRetractBtn').forEach(btn=>{
       btn.onclick = ()=> saveSelection(btn.dataset.id, false);
     });
-    host.querySelectorAll('.aselRestoreBtn').forEach(btn=>{
-      btn.onclick = ()=> restoreAsset(btn.dataset.id, btn);
+    host.querySelectorAll('.aselUndoSoldBtn').forEach(btn=>{
+      btn.onclick = ()=> undoAuctionSold(btn.dataset.id, btn);
     });
   }
 
@@ -1696,7 +1698,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselHistCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1706,15 +1708,10 @@ function renderAuctionSelection(root){
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td><span class="badge ${a.SendToAuction?'badge-approved':'badge-pending'}">${a.SendToAuction?'เคยส่ง':'ไม่เคยส่ง'}</span></td>
-        <td class="no-print"><button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button></td>
       </tr>`;
     });
     html += '</table></div>';
     host.innerHTML = html;
-
-    host.querySelectorAll('.aselRestoreBtn').forEach(btn=>{
-      btn.onclick = ()=> restoreAsset(btn.dataset.id, btn);
-    });
   }
 
   // โหลดข้อมูลใหม่จาก server เสมอหลังบันทึกสำเร็จ (แทนการแก้ไข candidates ในเครื่องแล้วเรนเดอร์ซ้ำ)
@@ -1746,6 +1743,18 @@ function renderAuctionSelection(root){
       if(btn) btn.disabled = false;
       if(!res.ok){ toast(res.error||'คืนสถานะไม่สำเร็จ','err'); return; }
       toast('คืนสถานะใช้งานสำเร็จ','ok');
+      load();
+    });
+  }
+
+  // ยกเลิกเครื่องหมาย "ขายแล้ว" — ย้อนกลับไปเป็น "รอประมูล" เท่านั้น (ยังส่งประมูลอยู่) ไม่กระทบใบขาย/ใบตัดชำรุดเดิม
+  function undoAuctionSold(assetId, btn){
+    if(!confirm('ยืนยันยกเลิกเครื่องหมายขายแล้วของทรัพย์สิน '+assetId+' ? (กลับไปเป็น "รอประมูล")')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'adminSetAuctionSold', password: STATE.adminPassword, assetId, sold:false }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+      toast('ยกเลิกเครื่องหมายขายแล้วสำเร็จ','ok');
       load();
     });
   }
@@ -2499,6 +2508,7 @@ function renderSaleList(root){
         <td class="no-print">
           <button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button>
           ${saleBucketOf(s)==='AwaitingSale' ? `<button class="btn btn-primary btn-sm" onclick="confirmSale('${s.SaleID}',this)">✔ ยืนยันขายแล้ว</button>` : ''}
+          ${saleBucketOf(s)==='Sold' ? `<button class="btn btn-secondary btn-sm" onclick="unconfirmSale('${s.SaleID}',this)">↩ ยกเลิกการยืนยัน</button>` : ''}
           ${s.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('sale','${s.SaleID}',this)">📧 ${s.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${s.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${s.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(s.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
         </td>
@@ -2515,6 +2525,17 @@ function renderSaleList(root){
       if(btn) btn.disabled = false;
       if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
       toast('ยืนยันขายแล้วสำเร็จ','ok');
+      loadSales();
+    });
+  };
+
+  window.unconfirmSale = function(saleId, btn){
+    if(!confirm('ยืนยันยกเลิกการยืนยันขายแล้ว? (กลับไปเป็น "รอขาย")')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'adminConfirmSale', password: STATE.adminPassword, saleId, confirmed:false }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+      toast('ยกเลิกการยืนยันสำเร็จ','ok');
       loadSales();
     });
   };

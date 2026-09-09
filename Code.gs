@@ -2018,16 +2018,17 @@ function adminConfirmSale_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const saleId = String(body.saleId || '').trim();
   if (!saleId) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
+  const confirmed = body.confirmed !== false; // ค่าเริ่มต้น true (ยืนยันขายแล้ว) — ส่ง confirmed:false เพื่อยกเลิกการยืนยัน กลับไปเป็น "รอขาย" เท่านั้น
   const found = findSaleRow_(saleId);
   if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
-  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ยืนยันได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น' };
+  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ดำเนินการได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น' };
   if (found.obj.Channel === 'ประมูล') return { ok: false, error: 'ใบขายออกช่องทางประมูลไม่ต้องยืนยันขั้นนี้ (ติดตามความคืบหน้าที่หน้าประมูลขายแทน)' };
   if (found.idx.SaleConfirmedAt === undefined) {
     return { ok: false, error: 'ไม่พบคอลัมน์ SaleConfirmedAt ในชีต Sales กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
   }
   const sh = getSS_().getSheetByName(SHEETS.SALES);
-  sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(new Date());
-  logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', 'ยืนยันขายแล้วสำหรับใบขายออก ' + found.obj.RunningNo);
+  sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(confirmed ? new Date() : '');
+  logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', (confirmed ? 'ยืนยันขายแล้ว' : 'ยกเลิกการยืนยันขายแล้ว (กลับเป็นรอขาย)') + 'สำหรับใบขายออก ' + found.obj.RunningNo);
   return { ok: true };
 }
 
