@@ -1233,18 +1233,36 @@ function renderDashboard(root){
       const v = byDept[d];
       return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td style="text-align:center;">${v.auction}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
     }).join('');
+    const deptTotalRow = Object.keys(byDept).length ? `<tr style="font-weight:600;background:#f7f9fc;">
+      <td>รวมทั้งหมด</td>
+      <td style="text-align:center;">${assets.length}</td>
+      <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.active,0)}</td>
+      <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.sold,0)}</td>
+      <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.writtenOff,0)}</td>
+      <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.auction,0)}</td>
+      <td class="money">${fmtMoney(Object.values(byDept).reduce((s,v)=>s+v.purchase,0))}</td>
+      <td class="money">${fmtMoneyOrHidden(Object.values(byDept).reduce((s,v)=>s+v.book,0))}</td>
+    </tr>` : '';
+
     const deptQueueRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
       const totalQueued = v.transfer + v.sale + v.writeoff;
       return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.transfer}</td><td style="text-align:center;">${v.sale}</td><td style="text-align:center;">${v.writeoff}</td><td style="text-align:center;font-weight:600;">${totalQueued}</td></tr>`;
     }).join('');
+    const deptQueueTotalRow = Object.keys(byDept).length ? (()=>{
+      const t = Object.values(byDept).reduce((s,v)=>s+v.transfer,0);
+      const sl = Object.values(byDept).reduce((s,v)=>s+v.sale,0);
+      const w = Object.values(byDept).reduce((s,v)=>s+v.writeoff,0);
+      return `<tr style="font-weight:600;background:#f7f9fc;"><td>รวมทั้งหมด</td><td style="text-align:center;">${t}</td><td style="text-align:center;">${sl}</td><td style="text-align:center;">${w}</td><td style="text-align:center;">${t+sl+w}</td></tr>`;
+    })() : '';
 
     const byTag = {};
     assets.forEach(a=>{
       const t = a.Tag || 'ใช้งาน';
       byTag[t] = (byTag[t]||0) + 1;
     });
-    const tagRows = ASSET_TAGS.map(t=>`<tr><td>${esc(t)}</td><td style="text-align:center;">${byTag[t]||0}</td></tr>`).join('');
+    const tagRows = ASSET_TAGS.map(t=>`<tr><td>${esc(t)}</td><td style="text-align:center;">${byTag[t]||0}</td></tr>`).join('')
+      + `<tr style="font-weight:600;background:#f7f9fc;"><td>รวมทั้งหมด</td><td style="text-align:center;">${assets.length}</td></tr>`;
 
     document.getElementById('dashHost').innerHTML = `
       <div class="toolbar no-print" style="justify-content:flex-end;margin-bottom:10px;">
@@ -1257,6 +1275,7 @@ function renderDashboard(root){
           <div style="overflow-x:auto;">
             <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ประมูลขาย</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
             ${deptRows || '<tr><td colspan="8" class="empty">ไม่มีข้อมูล</td></tr>'}
+            ${deptTotalRow}
             </table>
           </div>
         </div>
@@ -1271,6 +1290,7 @@ function renderDashboard(root){
         <div style="overflow-x:auto;">
           <table><tr><th>หน่วยงาน</th><th>รอโอนย้าย</th><th>รอขาย</th><th>รอตัดชำรุด</th><th>รวมที่รอคิว</th></tr>
           ${deptQueueRows || '<tr><td colspan="5" class="empty">ไม่มีข้อมูล</td></tr>'}
+          ${deptQueueTotalRow}
           </table>
         </div>
       </div>
