@@ -767,6 +767,38 @@ function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, 
   });
 }
 
+// เลขที่ออกและวันที่ของใบขาย/ใบตัดชำรุดที่อนุมัติแล้วซึ่งทำให้ทรัพย์สินแต่ละชิ้นสิ้นสภาพ
+// (RunningNo/CreatedAt ของเอกสาร) — ใช้แสดงในหน้า "คัดเลือกรายการประมูล" เท่านั้น ไม่แคช เพราะเรียกไม่บ่อย
+function getDisposalDocMetaMap_() {
+  const meta = {};
+  markDisposalMetaFromDocs_(meta, SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID');
+  markDisposalMetaFromDocs_(meta, SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID');
+  return meta;
+}
+
+function markDisposalMetaFromDocs_(meta, docSheetName, itemSheetName, docIdField) {
+  const docSh = getSS_().getSheetByName(docSheetName);
+  const docValues = docSh.getDataRange().getValues();
+  const docHeaders = docValues.shift();
+  const docIdx = indexMap_(docHeaders);
+  const approvedDocs = {};
+  docValues.forEach(r => {
+    if (r[docIdx.Status] === STATUS.APPROVED) {
+      approvedDocs[String(r[docIdx[docIdField]])] = { RunningNo: r[docIdx.RunningNo], CreatedAt: r[docIdx.CreatedAt] };
+    }
+  });
+
+  const itemSh = getSS_().getSheetByName(itemSheetName);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+  itemValues.forEach(r => {
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    const doc = approvedDocs[String(r[itemIdx[docIdField]])];
+    if (doc && !voided) meta[String(r[itemIdx.AssetID])] = doc;
+  });
+}
+
 // ============================================================
 // ADMIN — แก้ไขข้อมูลทรัพย์สินหลัก (ชีต Assets ที่ทีมบัญชี upload เข้ามา)
 // ============================================================
@@ -1184,23 +1216,29 @@ function getAuctionCandidates_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const disposed = getDisposedAssetStatus_();
   const saleAuctionChannel = getSaleAuctionChannelMap_();
+  const disposalMeta = getDisposalDocMetaMap_();
   const rows = getAssetsRaw_();
   const candidates = rows
     .filter(r => disposed[String(r.AssetID)])
-    .map(r => ({
-      AssetID: r.AssetID,
-      AssetName: r.AssetName,
-      Department: r.Department,
-      DisplayImage: r.DisplayImage,
-      BookValue: r.BookValue || 0,
-      AssetStatus: disposed[String(r.AssetID)],
-      SaleChannel: disposed[String(r.AssetID)] === 'Sold' ? (saleAuctionChannel[String(r.AssetID)] ? 'ประมูล' : 'ขาย') : '',
-      SendToAuction: String(r.SendToAuction).toLowerCase() === 'true',
-      AuctionReferencePrice: r.AuctionReferencePrice || '',
-      AuctionSold: String(r.AuctionSold).toLowerCase() === 'true',
-      AuctionBuyer: r.AuctionBuyer || '',
-      AuctionSoldPrice: r.AuctionSoldPrice || ''
-    }));
+    .map(r => {
+      const meta = disposalMeta[String(r.AssetID)] || {};
+      return {
+        AssetID: r.AssetID,
+        AssetName: r.AssetName,
+        Department: r.Department,
+        DisplayImage: r.DisplayImage,
+        BookValue: r.BookValue || 0,
+        AssetStatus: disposed[String(r.AssetID)],
+        SaleChannel: disposed[String(r.AssetID)] === 'Sold' ? (saleAuctionChannel[String(r.AssetID)] ? 'ประมูล' : 'ขาย') : '',
+        DocRunningNo: meta.RunningNo || '',
+        DocCreatedAt: meta.CreatedAt || '',
+        SendToAuction: String(r.SendToAuction).toLowerCase() === 'true',
+        AuctionReferencePrice: r.AuctionReferencePrice || '',
+        AuctionSold: String(r.AuctionSold).toLowerCase() === 'true',
+        AuctionBuyer: r.AuctionBuyer || '',
+        AuctionSoldPrice: r.AuctionSoldPrice || ''
+      };
+    });
   return { ok: true, data: candidates };
 }
 
@@ -2251,6 +2289,9 @@ function decideSale_(body) {
 // ============================================================
 // WRITE-OFFS — ตัดชำรุดทรัพย์สิน (ราคาซาก)
 // ============================================================
+// params.status='Sold' เป็นสถานะพิเศษที่ไม่มีอยู่จริงในคอลัมน์ Status ของชีต WriteOffs เอง (มีแค่ PendingApproval/
+// Approved/Rejected/Voided) — ใช้กรอง "ตัดชำรุดแล้วขายได้" คือใบตัดชำรุดที่อนุมัติแล้ว และมีทรัพย์สินอย่างน้อย 1 รายการ
+// ในใบนั้นถูก Admin ทำเครื่องหมาย AuctionSold แล้วที่หน้า "คัดเลือกรายการประมูล" (ดู adminSetAuctionSold_)
 function getWriteOffs_(params) {
   const sh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
   const values = sh.getDataRange().getValues();
@@ -2258,7 +2299,8 @@ function getWriteOffs_(params) {
   const idx = indexMap_(headers);
   let rows = values.map(r => rowToObj_(r, idx));
 
-  if (params.status) rows = rows.filter(r => r.Status === params.status);
+  const filterSold = params.status === 'Sold';
+  if (params.status && !filterSold) rows = rows.filter(r => r.Status === params.status);
   if (params.dept) rows = rows.filter(r => r.FromDept === params.dept);
   if (params.from) rows = rows.filter(r => new Date(r.CreatedAt) >= new Date(params.from));
   if (params.to) rows = rows.filter(r => new Date(r.CreatedAt) <= new Date(params.to + 'T23:59:59'));
@@ -2277,13 +2319,23 @@ function getWriteOffs_(params) {
   const itemIdx = indexMap_(itemHeaders);
   const counts = {};
   const images = {};
+  const assetIdsByWriteOff = {};
   itemValues.forEach(r => {
     const wid = r[itemIdx.WriteOffID];
     counts[wid] = (counts[wid] || 0) + 1;
     const imgs = cellToImages_(r[itemIdx.ImageURL]);
     if (imgs.length) images[wid] = (images[wid] || []).concat(imgs);
+    (assetIdsByWriteOff[wid] = assetIdsByWriteOff[wid] || []).push(String(r[itemIdx.AssetID]));
   });
-  rows.forEach(r => { r.ItemCount = counts[r.WriteOffID] || 0; r.AllImages = (images[r.WriteOffID] || []).join(', '); });
+  const auctionSoldIds = {};
+  getAssetsRaw_().forEach(a => { if (String(a.AuctionSold).toLowerCase() === 'true') auctionSoldIds[String(a.AssetID)] = true; });
+  rows.forEach(r => {
+    r.ItemCount = counts[r.WriteOffID] || 0;
+    r.AllImages = (images[r.WriteOffID] || []).join(', ');
+    r.SoldViaAuction = (assetIdsByWriteOff[r.WriteOffID] || []).some(id => auctionSoldIds[id]);
+  });
+
+  if (filterSold) rows = rows.filter(r => r.Status === STATUS.APPROVED && r.SoldViaAuction);
 
   return rows;
 }
