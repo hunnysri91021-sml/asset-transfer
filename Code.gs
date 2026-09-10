@@ -1006,7 +1006,7 @@ function adminDeleteUser_(body) {
 const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
-const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
+const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'ขายแล้ว', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
 
 function adminSaveAsset_(body) {
   const user = getRequestingUser_(body.password);
