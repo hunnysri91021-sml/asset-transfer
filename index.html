@@ -330,6 +330,13 @@ function saleStatusBadge(s){
   const label = s.Status === 'Approved' ? saleApprovedLabel(s) : (STATUS_LABELS[s.Status]||s.Status);
   return '<span class="badge badge-'+(cls[s.Status]||'draft')+'">'+label+'</span>';
 }
+// เหมือน statusBadge แต่ถ้าใบตัดชำรุดอนุมัติแล้ว และมีทรัพย์สินในใบถูกทำเครื่องหมายขายได้จากประมูล (w.SoldViaAuction — ดู getWriteOffs_)
+// ให้อ่านว่า "ขายแล้ว" แทน "อนุมัติแล้ว" เพื่อให้ตรงกับสถานะทรัพย์สินจริง
+function woStatusBadge(w){
+  const cls = { Draft:'draft', PendingApproval:'pending', Approved:'approved', Rejected:'rejected', Voided:'draft' };
+  const label = (w.Status === 'Approved' && w.SoldViaAuction) ? 'ขายแล้ว' : (STATUS_LABELS[w.Status]||w.Status);
+  return '<span class="badge badge-'+(cls[w.Status]||'draft')+'">'+label+'</span>';
+}
 function deptSkipsApproval(deptName){
   const d = STATE.deptCodes.find(x=>x.DeptName===deptName);
   return !!(d && d.SkipApprovalEmail);
@@ -1691,7 +1698,7 @@ function renderAuctionSelection(root){
     const rows = filteredCandidates();
     document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1699,6 +1706,8 @@ function renderAuctionSelection(root){
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
         <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
+        <td>${a.DocCreatedAt ? fmtDate(a.DocCreatedAt) : '-'}</td>
+        <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
         <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}"></td>
@@ -1733,7 +1742,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselSentCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่ส่งประมูล</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>สถานะ</th><th class="no-print">จัดการ</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>สถานะ</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -1741,6 +1750,8 @@ function renderAuctionSelection(root){
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
         <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
+        <td>${a.DocCreatedAt ? fmtDate(a.DocCreatedAt) : '-'}</td>
+        <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td>${a.AuctionSold
@@ -1769,13 +1780,15 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselHistCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
+        <td>${a.DocCreatedAt ? fmtDate(a.DocCreatedAt) : '-'}</td>
+        <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td><span class="badge ${a.SendToAuction?'badge-approved':'badge-pending'}">${a.SendToAuction?'เคยส่ง':'ไม่เคยส่ง'}</span></td>
@@ -1857,6 +1870,7 @@ function renderList(root){
           <option value="PendingApproval">รออนุมัติ</option>
           <option value="Approved">อนุมัติแล้ว</option>
           <option value="Rejected">ไม่อนุมัติ</option>
+          <option value="Sold">ขายแล้ว</option>
         </select>
         <input type="date" id="fFrom" style="max-width:150px;">
         <input type="date" id="fTo" style="max-width:150px;">
@@ -2952,6 +2966,7 @@ function renderWriteOffList(root){
           <option value="PendingApproval">รออนุมัติ</option>
           <option value="Approved">อนุมัติแล้ว</option>
           <option value="Rejected">ไม่อนุมัติ</option>
+          <option value="Sold">ขายแล้ว</option>
         </select>
         <input type="date" id="fWoFrom" style="max-width:150px;">
         <input type="date" id="fWoTo" style="max-width:150px;">
@@ -3133,7 +3148,7 @@ function renderWriteOffList(root){
         <td>${esc(w.FromDept)}</td>
         <td>${esc(w.Reason||'-')}</td>
         <td style="text-align:center;">${w.ItemCount}</td>
-        <td>${statusBadge(w.Status)}</td>
+        <td>${woStatusBadge(w)}</td>
         <td>${esc(w.ApproverName||w.ApproverEmail||'-')}</td>
         <td class="no-print">
           <button class="btn btn-secondary btn-sm" onclick="openWriteOffPrint('${w.WriteOffID}')">ดู/พิมพ์</button>
