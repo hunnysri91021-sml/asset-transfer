@@ -1356,19 +1356,26 @@ function renderAuction(root){
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
   // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
+  function closedNoticeBannerHtml(notice){
+    if(!notice || !notice.enabled) return '';
+    return `<div style="background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔒 ${esc(notice.message||'ปิดรับการประมูลแล้ว')}</div>`;
+  }
   function showIntro(){
     root.innerHTML = `<div class="card"><div class="empty">กำลังโหลด...</div></div>`;
     Promise.all([
       apiGet({ action:'getAuctionPriceBrackets' }),
-      apiGet({ action:'getAuctionIntroContent' })
-    ]).then(([bracketsRes, contentRes])=>{
+      apiGet({ action:'getAuctionIntroContent' }),
+      apiGet({ action:'getAuctionClosedNotice' })
+    ]).then(([bracketsRes, contentRes, closedRes])=>{
       priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
       const content = contentRes.ok ? contentRes.data : {};
+      const closedNotice = closedRes.ok ? closedRes.data : null;
       const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
         priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
         `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
       root.innerHTML = `
         <div class="card">
+          ${closedNoticeBannerHtml(closedNotice)}
           <h2>${esc(content.title||'สรุปขั้นตอนการประมูลสินค้า')}</h2>
           <h3>📦 รายการสินค้า</h3>
           <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
@@ -1395,6 +1402,7 @@ function renderAuction(root){
         <div class="toolbar no-print" style="margin-bottom:6px;">
           <button class="btn btn-secondary btn-sm" id="btnAuctionBackToIntro">← กลับไปหน้าหลักการประมูล</button>
         </div>
+        <div id="auctionClosedBanner"></div>
         <h2>ประมูลขาย</h2>
         <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และทรัพย์สินขายออกที่เลือกช่องทางประมูล — Admin คัดเลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
@@ -1420,6 +1428,10 @@ function renderAuction(root){
     `;
 
     document.getElementById('btnAuctionBackToIntro').onclick = showIntro;
+    apiGet({ action:'getAuctionClosedNotice' }).then(res=>{
+      const banner = document.getElementById('auctionClosedBanner');
+      if(banner && res.ok) banner.innerHTML = closedNoticeBannerHtml(res.data);
+    });
     document.getElementById('auctionSearch').oninput = renderAuctionTable;
     document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
     const exportBtn = document.getElementById('btnAuctionExport');
@@ -3526,6 +3538,16 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ประกาศปิดประมูล</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="auctionClosedEnabled" style="width:auto;">
+          <label for="auctionClosedEnabled" style="margin:0;font-weight:400;">แสดงประกาศปิดประมูล</label>
+        </div>
+        <input type="text" id="auctionClosedMessage" placeholder="ปิดรับการประมูลแล้ว ขอบคุณทุกท่านที่ร่วมประมูล" style="margin-top:8px;">
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionClosedNotice" style="margin-top:8px;">บันทึก</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
         <div id="auctionBracketsHost">กำลังโหลด...</div>
@@ -3581,6 +3603,7 @@ function renderSettings(root){
   loadOnlineUsers();
   loadAuctionBrackets();
   loadAuctionIntroNote();
+  loadAuctionClosedNotice();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
@@ -3589,6 +3612,7 @@ function renderSettings(root){
   document.getElementById('btnAddAuctionBracket').onclick = addAuctionBracketRow;
   document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
   document.getElementById('btnSaveAuctionIntroNote').onclick = saveAuctionIntroNote;
+  document.getElementById('btnSaveAuctionClosedNotice').onclick = saveAuctionClosedNotice;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
@@ -3800,6 +3824,26 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกเนื้อหาหน้าแรกประมูลขายสำเร็จ','ok');
+    });
+  }
+
+  function loadAuctionClosedNotice(){
+    apiGet({ action:'getAuctionClosedNotice' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('auctionClosedEnabled').checked = !!res.data.enabled;
+      document.getElementById('auctionClosedMessage').value = res.data.message || '';
+    });
+  }
+
+  function saveAuctionClosedNotice(){
+    const enabled = document.getElementById('auctionClosedEnabled').checked;
+    const message = document.getElementById('auctionClosedMessage').value;
+    const btn = document.getElementById('btnSaveAuctionClosedNotice');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionClosedNotice', password: STATE.adminPassword, enabled, message }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast(enabled ? 'เปิดประกาศปิดประมูลแล้ว' : 'ปิดประกาศปิดประมูลแล้ว','ok');
     });
   }
 
