@@ -157,6 +157,9 @@ function doGet(e) {
       case 'getAuctionIntroContent':
         result = { ok: true, data: getAuctionIntroContent_() };
         break;
+      case 'getAuctionClosedNotice':
+        result = { ok: true, data: getAuctionClosedNotice_() };
+        break;
       case 'getAuctionListing':
         result = { ok: true, data: getAuctionListing_() };
         break;
@@ -309,6 +312,9 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionIntroContent':
         result = adminSaveAuctionIntroContent_(body);
+        break;
+      case 'adminSaveAuctionClosedNotice':
+        result = adminSaveAuctionClosedNotice_(body);
         break;
       case 'sendAuctionSummaryEmail':
         result = sendAuctionSummaryEmail_(body);
@@ -1204,6 +1210,29 @@ function adminSaveAuctionPublicSetting_(body) {
   const enabled = !!body.enabled;
   PropertiesService.getScriptProperties().setProperty(AUCTION_PUBLIC_ENABLED_PROP, enabled ? '1' : '0');
   logActivity_('', 'ADMIN_SET_AUCTION_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การเข้าดูหน้าประมูลขายแบบสาธารณะ (ไม่ต้องล็อกอิน)');
+  return { ok: true };
+}
+
+// ประกาศ "ปิดประมูลแล้ว" ที่ Admin เปิด/ปิดเองได้ที่หน้าตั้งค่า แสดงเป็นข้อความเด่นบนหน้า "ประมูลขาย" สาธารณะ
+// (ใช้แจ้งผู้เข้าประมูลว่าปิดรับแล้วโดยไม่ต้องปิดการเข้าดูหน้าประมูลขายทั้งหน้า — คนละเรื่องกับ AUCTION_PUBLIC_ENABLED_PROP ด้านบน)
+// การอ่านค่านี้ (getAuctionClosedNotice) ไม่ต้องใช้รหัสผ่านโดยตั้งใจ เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน
+const AUCTION_CLOSED_ENABLED_PROP = 'AUCTION_CLOSED_ENABLED';
+const AUCTION_CLOSED_MESSAGE_PROP = 'AUCTION_CLOSED_MESSAGE';
+const DEFAULT_AUCTION_CLOSED_MESSAGE = 'ปิดรับการประมูลแล้ว ขอบคุณทุกท่านที่ร่วมประมูล';
+function getAuctionClosedNotice_() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    enabled: props.getProperty(AUCTION_CLOSED_ENABLED_PROP) === '1',
+    message: props.getProperty(AUCTION_CLOSED_MESSAGE_PROP) || DEFAULT_AUCTION_CLOSED_MESSAGE
+  };
+}
+function adminSaveAuctionClosedNotice_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const props = PropertiesService.getScriptProperties();
+  const enabled = !!body.enabled;
+  props.setProperty(AUCTION_CLOSED_ENABLED_PROP, enabled ? '1' : '0');
+  props.setProperty(AUCTION_CLOSED_MESSAGE_PROP, String(body.message || '').trim() || DEFAULT_AUCTION_CLOSED_MESSAGE);
+  logActivity_('', 'ADMIN_SET_AUCTION_CLOSED_NOTICE', 'admin', (enabled ? 'ประกาศปิดประมูล: ' : 'ยกเลิกประกาศปิดประมูล — ข้อความไว้: ') + (props.getProperty(AUCTION_CLOSED_MESSAGE_PROP) || ''));
   return { ok: true };
 }
 
