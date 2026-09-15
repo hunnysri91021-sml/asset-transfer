@@ -1358,7 +1358,11 @@ function renderAuction(root){
   // หน้าแรก: สรุปขั้นตอน/วิธีร่วมประมูล + เกณฑ์ราคาเริ่มต้นตาม Rank ก่อนเข้าดูรายการสินค้าจริง
   function closedNoticeBannerHtml(notice){
     if(!notice || !notice.enabled) return '';
-    return `<div style="background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔒 ${esc(notice.message||'ปิดรับการประมูลแล้ว')}</div>`;
+    const parts = [];
+    if(notice.date) parts.push('วันที่ '+esc(fmtDate(notice.date)));
+    if(notice.time) parts.push('เวลา '+esc(notice.time)+' น.');
+    const when = parts.length ? ` (${parts.join(' ')})` : '';
+    return `<div style="background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔒 ${esc(notice.message||'ปิดรับการประมูลแล้ว')}${when}</div>`;
   }
   function showIntro(){
     root.innerHTML = `<div class="card"><div class="empty">กำลังโหลด...</div></div>`;
@@ -3545,6 +3549,10 @@ function renderSettings(root){
           <label for="auctionClosedEnabled" style="margin:0;font-weight:400;">แสดงประกาศปิดประมูล</label>
         </div>
         <input type="text" id="auctionClosedMessage" placeholder="ปิดรับการประมูลแล้ว ขอบคุณทุกท่านที่ร่วมประมูล" style="margin-top:8px;">
+        <div class="row" style="margin-top:8px;">
+          <div><label>วันที่ปิดประมูล</label><input type="date" id="auctionClosedDate"></div>
+          <div><label>เวลาปิดประมูล</label><input type="time" id="auctionClosedTime"></div>
+        </div>
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionClosedNotice" style="margin-top:8px;">บันทึก</button>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
@@ -3832,15 +3840,19 @@ function renderSettings(root){
       if(!res.ok) return;
       document.getElementById('auctionClosedEnabled').checked = !!res.data.enabled;
       document.getElementById('auctionClosedMessage').value = res.data.message || '';
+      document.getElementById('auctionClosedDate').value = res.data.date || '';
+      document.getElementById('auctionClosedTime').value = res.data.time || '';
     });
   }
 
   function saveAuctionClosedNotice(){
     const enabled = document.getElementById('auctionClosedEnabled').checked;
     const message = document.getElementById('auctionClosedMessage').value;
+    const date = document.getElementById('auctionClosedDate').value;
+    const time = document.getElementById('auctionClosedTime').value;
     const btn = document.getElementById('btnSaveAuctionClosedNotice');
     btn.disabled = true;
-    apiPost({ action:'adminSaveAuctionClosedNotice', password: STATE.adminPassword, enabled, message }).then(res=>{
+    apiPost({ action:'adminSaveAuctionClosedNotice', password: STATE.adminPassword, enabled, message, date, time }).then(res=>{
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast(enabled ? 'เปิดประกาศปิดประมูลแล้ว' : 'ปิดประกาศปิดประมูลแล้ว','ok');

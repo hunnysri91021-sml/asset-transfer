@@ -1223,21 +1223,29 @@ function adminSaveAuctionPublicSetting_(body) {
 // การอ่านค่านี้ (getAuctionClosedNotice) ไม่ต้องใช้รหัสผ่านโดยตั้งใจ เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน
 const AUCTION_CLOSED_ENABLED_PROP = 'AUCTION_CLOSED_ENABLED';
 const AUCTION_CLOSED_MESSAGE_PROP = 'AUCTION_CLOSED_MESSAGE';
+const AUCTION_CLOSED_DATE_PROP = 'AUCTION_CLOSED_DATE';
+const AUCTION_CLOSED_TIME_PROP = 'AUCTION_CLOSED_TIME';
 const DEFAULT_AUCTION_CLOSED_MESSAGE = 'ปิดรับการประมูลแล้ว ขอบคุณทุกท่านที่ร่วมประมูล';
 function getAuctionClosedNotice_() {
   const props = PropertiesService.getScriptProperties();
   return {
     enabled: props.getProperty(AUCTION_CLOSED_ENABLED_PROP) === '1',
-    message: props.getProperty(AUCTION_CLOSED_MESSAGE_PROP) || DEFAULT_AUCTION_CLOSED_MESSAGE
+    message: props.getProperty(AUCTION_CLOSED_MESSAGE_PROP) || DEFAULT_AUCTION_CLOSED_MESSAGE,
+    date: props.getProperty(AUCTION_CLOSED_DATE_PROP) || '',
+    time: props.getProperty(AUCTION_CLOSED_TIME_PROP) || ''
   };
 }
 function adminSaveAuctionClosedNotice_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const props = PropertiesService.getScriptProperties();
   const enabled = !!body.enabled;
+  const date = String(body.date || '').trim();
+  const time = String(body.time || '').trim();
   props.setProperty(AUCTION_CLOSED_ENABLED_PROP, enabled ? '1' : '0');
   props.setProperty(AUCTION_CLOSED_MESSAGE_PROP, String(body.message || '').trim() || DEFAULT_AUCTION_CLOSED_MESSAGE);
-  logActivity_('', 'ADMIN_SET_AUCTION_CLOSED_NOTICE', 'admin', (enabled ? 'ประกาศปิดประมูล: ' : 'ยกเลิกประกาศปิดประมูล — ข้อความไว้: ') + (props.getProperty(AUCTION_CLOSED_MESSAGE_PROP) || ''));
+  props.setProperty(AUCTION_CLOSED_DATE_PROP, date);
+  props.setProperty(AUCTION_CLOSED_TIME_PROP, time);
+  logActivity_('', 'ADMIN_SET_AUCTION_CLOSED_NOTICE', 'admin', (enabled ? 'ประกาศปิดประมูล: ' : 'ยกเลิกประกาศปิดประมูล — ข้อความไว้: ') + (props.getProperty(AUCTION_CLOSED_MESSAGE_PROP) || '') + (date ? (' วันที่ ' + date) : '') + (time ? (' เวลา ' + time) : ''));
   return { ok: true };
 }
 
