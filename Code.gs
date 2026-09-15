@@ -587,6 +587,9 @@ function adminClearAssetQueues_(body) {
 // แต่ค่านั้นไม่เคยถูกเขียนกลับไปที่ชีต Assets เอง ทำให้เปิดชีตดูตรงๆ หรือดูสรุปแยกตามแท็กสถานะในหน้า Dashboard
 // แล้วไม่เห็นความเปลี่ยนแปลง — ฟังก์ชันนี้เขียนคอลัมน์ Tag ในชีต Assets ให้ตรงกับผลจริงด้วย ทุกครั้งที่มีการ
 // อนุมัติขาย/ตัดชำรุด (หรือคืนสถานะใช้งาน) เพื่อให้ทั้งชีตดิบและ Dashboard สอดคล้องกัน
+// เขียนคอลัมน์ Tag กลับทีเดียวทั้งคอลัมน์ด้วย setValues (แทน setValue ทีละแถวในลูป) เพราะแต่ละ setValue
+// คือ 1 API call ไปยัง Sheets — ถ้ามี assetIds จำนวนมาก (เช่นตอนกด "ซิงค์แท็กสถานะย้อนหลัง" ที่ไล่ทั้งชีต)
+// จะช้ามากจนอาจชนลิมิตเวลาทำงานของ Apps Script ได้ รวมเป็น 1 คำสั่งเดียวเร็วกว่าหลายเท่า
 function setAssetsTag_(assetIds, tagValue) {
   if (!assetIds || !assetIds.length) return;
   const sh = getSS_().getSheetByName(SHEETS.ASSETS);
@@ -595,11 +598,13 @@ function setAssetsTag_(assetIds, tagValue) {
   if (idx.Tag === undefined || idx.AssetID === undefined) return;
   const idSet = {};
   assetIds.forEach(id => { idSet[String(id)] = true; });
+  let dirty = false;
+  const tagCol = [];
   for (let i = 1; i < values.length; i++) {
-    if (idSet[String(values[i][idx.AssetID])]) {
-      sh.getRange(i + 1, idx.Tag + 1).setValue(tagValue);
-    }
+    if (idSet[String(values[i][idx.AssetID])]) { tagCol.push([tagValue]); dirty = true; }
+    else tagCol.push([values[i][idx.Tag]]);
   }
+  if (dirty) sh.getRange(2, idx.Tag + 1, tagCol.length, 1).setValues(tagCol);
 }
 
 // ทรัพย์สินที่มีใบขายออก หรือใบตัดชำรุด ซึ่งอนุมัติแล้ว ถือว่าสิ้นสภาพการใช้งานจริง จึงซ่อนจากรายการหลัก
@@ -1523,15 +1528,21 @@ function adminSyncScrapPriceToBookValue_(body) {
   if (idx.ScrapPrice === undefined || idx.BookValue === undefined) {
     return { ok: false, error: 'ไม่พบคอลัมน์ ScrapPrice หรือ BookValue ในชีต Assets กรุณารัน setup() ใหม่' };
   }
+  // เขียนคอลัมน์ ScrapPrice กลับทีเดียวทั้งคอลัมน์ด้วย setValues แทน setValue ทีละแถวในลูป
+  // (แต่ละ setValue คือ 1 API call — ชีตที่มีทรัพย์สินหลักพันรายการจะช้ามากถ้าเขียนทีละเซลล์)
   let fixedCount = 0;
+  const scrapCol = [];
   for (let i = 1; i < values.length; i++) {
     const bookValue = values[i][idx.BookValue] || 0;
     const scrapPrice = values[i][idx.ScrapPrice] || 0;
     if (String(bookValue) !== String(scrapPrice) && parseFloat(bookValue) !== parseFloat(scrapPrice)) {
-      sh.getRange(i + 1, idx.ScrapPrice + 1).setValue(bookValue);
+      scrapCol.push([bookValue]);
       fixedCount++;
+    } else {
+      scrapCol.push([scrapPrice]);
     }
   }
+  if (fixedCount) sh.getRange(2, idx.ScrapPrice + 1, scrapCol.length, 1).setValues(scrapCol);
   logActivity_('', 'ADMIN_SYNC_SCRAPPRICE', 'admin', 'ซิงค์ราคาซาก = มูลค่าตามบัญชีย้อนหลัง ' + fixedCount + ' รายการ');
   return { ok: true, data: { fixedCount } };
 }
@@ -1713,7 +1724,10 @@ function adminSyncFromSource_(body) {
     localRowByAssetId[String(values[i][idx.AssetID])] = i + 1;
   }
 
+  const canFlag = idx.SyncFlag !== undefined && idx.SyncNote !== undefined;
+
   let mismatchCount = 0;
+  let flagsDirty = false;
   const newRows = [];
   srcValues.forEach(srcRow => {
     const assetId = String(srcRow[srcIdx.AssetID] || '').trim();
@@ -1744,21 +1758,31 @@ function adminSyncFromSource_(body) {
       }
     });
 
+    // เขียนป้ายเตือนได้ก็ต่อเมื่อชีตมีคอลัมน์ SyncFlag/SyncNote แล้ว (รัน setup() ใหม่แล้ว) — แก้ค่าใน values ที่โหลดไว้
+    // ในหน่วยความจำก่อน แล้วค่อยเขียนกลับทีเดียวทั้งคอลัมน์ด้านล่าง (setValue ทีละแถวในลูปแบบเดิมช้ามากเมื่อทรัพย์สิน
+    // มีหลักร้อย/พันรายการ เพราะแต่ละ setValue คือ 1 API call ไปยัง Sheets — นี่คือสาเหตุหลักที่การซิงค์ข้อมูลช้า)
     if (mismatches.length) {
       mismatchCount++;
-      // เขียนป้ายเตือนได้ก็ต่อเมื่อชีตมีคอลัมน์ SyncFlag/SyncNote แล้ว (รัน setup() ใหม่แล้ว)
-      if (idx.SyncFlag !== undefined && idx.SyncNote !== undefined) {
-        sh.getRange(rowNum, idx.SyncFlag + 1).setValue('Mismatch');
-        sh.getRange(rowNum, idx.SyncNote + 1).setValue(mismatches.join('; '));
+      if (canFlag) {
+        values[rowNum - 1][idx.SyncFlag] = 'Mismatch';
+        values[rowNum - 1][idx.SyncNote] = mismatches.join('; ');
+        flagsDirty = true;
       }
-    } else if (idx.SyncFlag !== undefined && String(values[rowNum - 1][idx.SyncFlag] || '') === 'Mismatch') {
-      sh.getRange(rowNum, idx.SyncFlag + 1).setValue('');
-      if (idx.SyncNote !== undefined) sh.getRange(rowNum, idx.SyncNote + 1).setValue('');
+    } else if (canFlag && String(values[rowNum - 1][idx.SyncFlag] || '') === 'Mismatch') {
+      values[rowNum - 1][idx.SyncFlag] = '';
+      values[rowNum - 1][idx.SyncNote] = '';
+      flagsDirty = true;
     }
   });
 
   if (newRows.length) {
     sh.getRange(sh.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+  }
+  if (flagsDirty) {
+    const flagCol = values.slice(1).map(r => [r[idx.SyncFlag]]);
+    const noteCol = values.slice(1).map(r => [r[idx.SyncNote]]);
+    sh.getRange(2, idx.SyncFlag + 1, flagCol.length, 1).setValues(flagCol);
+    sh.getRange(2, idx.SyncNote + 1, noteCol.length, 1).setValues(noteCol);
   }
 
   logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง (' + srcSheet.getName() + ') พบข้อมูลใหม่ ' + newRows.length + ' รายการ พบไม่ตรงกับบัญชี ' + mismatchCount + ' รายการ');
