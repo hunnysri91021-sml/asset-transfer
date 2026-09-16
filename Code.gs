@@ -661,6 +661,7 @@ function invalidateDisposedAssetStatusCache_() {
     cache.remove(DISPOSED_STATUS_CACHE_KEY);
     cache.remove(SALE_AUCTION_CHANNEL_CACHE_KEY);
     cache.remove(ASSET_LIFECYCLE_META_CACHE_KEY);
+    cache.remove(AUCTION_SOLD_IDS_CACHE_KEY);
   } catch (err) { /* ไม่มีผลถ้าแคชใช้ไม่ได้ */ }
 }
 
@@ -699,6 +700,29 @@ function getSaleAuctionChannelMap_() {
 
   try {
     if (cache) cache.put(SALE_AUCTION_CHANNEL_CACHE_KEY, JSON.stringify(map), DISPOSED_STATUS_CACHE_TTL_SEC);
+  } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
+
+  return map;
+}
+
+// คืนค่า map ของ AssetID -> true เฉพาะทรัพย์สินที่ Admin ทำเครื่องหมาย "ขายแล้ว" จากหน้าประมูล (คอลัมน์ AuctionSold
+// ในชีต Assets — เขียนจาก adminSetAuctionSold_/clearAuctionSelection_ เท่านั้น) แคชสั้นๆ เพราะ getWriteOffs_ เรียก
+// ทุกครั้งที่เปิดหน้า "รายการตัดชำรุด" (เพื่อโชว์ป้าย "ขายแล้ว") — ถ้าไม่แคชจะอ่านทั้งชีต Assets สดทุกครั้งที่เปิดหน้า
+// ซึ่งเป็นชีตที่ใหญ่ที่สุดในระบบ ทำให้หน้านี้ช้าลงมากโดยไม่จำเป็น
+const AUCTION_SOLD_IDS_CACHE_KEY = 'auctionSoldAssetIds_v1';
+function getAuctionSoldAssetIdMap_() {
+  let cache;
+  try {
+    cache = CacheService.getScriptCache();
+    const cached = cache.get(AUCTION_SOLD_IDS_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
+
+  const map = {};
+  getAssetsRaw_().forEach(a => { if (String(a.AuctionSold).toLowerCase() === 'true') map[String(a.AssetID)] = true; });
+
+  try {
+    if (cache) cache.put(AUCTION_SOLD_IDS_CACHE_KEY, JSON.stringify(map), DISPOSED_STATUS_CACHE_TTL_SEC);
   } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
 
   return map;
@@ -1358,6 +1382,7 @@ function adminSetAuctionSold_(body) {
       sh.getRange(i + 1, idx.AuctionBuyer + 1).setValue(sold ? buyer : '');
       sh.getRange(i + 1, idx.AuctionSoldPrice + 1).setValue(sold ? soldPrice : '');
       if (idx.AuctionSoldAt !== undefined) sh.getRange(i + 1, idx.AuctionSoldAt + 1).setValue(sold ? new Date() : '');
+      invalidateDisposedAssetStatusCache_(); // ล้างแคช getAuctionSoldAssetIdMap_ ที่ getWriteOffs_ ใช้โชว์ป้าย "ขายแล้ว"
       logActivity_('', 'ADMIN_SET_AUCTION_SOLD', 'admin', (sold ? ('ทำเครื่องหมายทรัพย์สิน ' + assetId + ' ขายแล้ว ผู้ประมูลได้ ' + buyer + ' ราคา ' + soldPrice) : ('ยกเลิกเครื่องหมายขายแล้วของทรัพย์สิน ' + assetId)));
       return { ok: true };
     }
@@ -2566,8 +2591,7 @@ function getWriteOffs_(params) {
     if (imgs.length) images[wid] = (images[wid] || []).concat(imgs);
     (assetIdsByWriteOff[wid] = assetIdsByWriteOff[wid] || []).push(String(r[itemIdx.AssetID]));
   });
-  const auctionSoldIds = {};
-  getAssetsRaw_().forEach(a => { if (String(a.AuctionSold).toLowerCase() === 'true') auctionSoldIds[String(a.AssetID)] = true; });
+  const auctionSoldIds = getAuctionSoldAssetIdMap_();
   rows.forEach(r => {
     r.ItemCount = counts[r.WriteOffID] || 0;
     r.AllImages = (images[r.WriteOffID] || []).join(', ');
