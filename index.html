@@ -1753,13 +1753,16 @@ function renderAuctionLive(root){
       if(!rows.length){ gridHost.innerHTML = '<div class="empty">ยังไม่มีรายการที่มีผู้ยื่นประมูล</div>'; return; }
       gridHost.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;">` +
         rows.map(a => `
-          <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;">
+          <div style="background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;position:relative;">
+            ${a.DisplayImage ? `<img src="${esc(a.DisplayImage)}" onerror="this.style.display='none'" onclick="openImageLightbox('${esc(a.DisplayImage)}')" style="width:100%;height:140px;object-fit:cover;cursor:zoom-in;display:block;">` : ''}
             <span style="position:absolute;right:12px;top:12px;background:#f8d7da;color:var(--red);border-radius:14px;padding:3px 9px;font-size:10px;font-weight:700;">LIVE</span>
-            <div style="font-size:12px;color:var(--muted);font-weight:600;">${esc(a.AssetID)}</div>
-            <div style="font-size:16px;font-weight:700;margin:6px 24px 12px 0;min-height:44px;">${esc(a.AssetName)}</div>
-            <div style="font-size:12px;color:var(--muted);">ราคาประมูลสูงสุด</div>
-            <div style="font-size:24px;font-weight:800;color:var(--navy);margin-top:2px;">${fmtMoney(a.MaxPrice)}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:10px;">● ${a.BidCount} ผู้เสนอราคา · ${esc(a.Department||'')}</div>
+            <div style="padding:16px;">
+              <div style="font-size:12px;color:var(--muted);font-weight:600;">${esc(a.AssetID)}</div>
+              <div style="font-size:16px;font-weight:700;margin:6px 0 12px;min-height:44px;">${esc(a.AssetName)}</div>
+              <div style="font-size:12px;color:var(--muted);">ราคาประมูลสูงสุด</div>
+              <div style="font-size:24px;font-weight:800;color:var(--navy);margin-top:2px;">${fmtMoney(a.MaxPrice)}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:10px;">● ${a.BidCount} ผู้เสนอราคา · ${esc(a.Department||'')}</div>
+            </div>
           </div>
         `).join('') + `</div>`;
     }
@@ -2041,6 +2044,16 @@ function renderAuctionLive(root){
           <label style="margin-top:12px;">ค้นหาสินค้าเพื่อเพิ่มรายการ</label>
           <input type="text" id="bidItemSearch" placeholder="พิมพ์รหัสหรือชื่อสินค้าที่เปิดประมูลอยู่..." autocomplete="off">
           <div id="bidItemSearchResults" style="margin-top:4px;"></div>
+          <div style="margin-top:8px;">
+            <a href="#" id="btnToggleManualItem" style="font-size:12px;color:var(--navy);">+ ไม่พบในฐานประมูล? เพิ่มรายการแบบระบุรหัสทรัพย์สินเอง</a>
+            <div id="manualItemHost" style="display:none;margin-top:8px;padding:10px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+              <div class="row">
+                <div><label>รหัสทรัพย์สิน *</label><input type="text" id="manualAssetId" placeholder="เช่น AS-9999"></div>
+                <div><label>ชื่อรายการ</label><input type="text" id="manualAssetName" placeholder="(ถ้ามี)"></div>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="btnAddManualItem" style="margin-top:8px;">+ เพิ่มรายการนี้</button>
+            </div>
+          </div>
           <label style="margin-top:14px;">รายการสินค้าที่เสนอราคา</label>
           <div id="bidItemsHost"></div>
           <div class="modal-actions">
@@ -2054,6 +2067,21 @@ function renderAuctionLive(root){
     document.getElementById('btnCancelBid').onclick = closeBidEntryModal;
     document.getElementById('bidItemSearch').oninput = renderBidItemSearchResults;
     document.getElementById('btnSaveBid').onclick = saveBid;
+    document.getElementById('btnToggleManualItem').onclick = (e)=>{
+      e.preventDefault();
+      const host = document.getElementById('manualItemHost');
+      host.style.display = host.style.display==='none' ? 'block' : 'none';
+    };
+    document.getElementById('btnAddManualItem').onclick = ()=>{
+      const assetId = document.getElementById('manualAssetId').value.trim();
+      const assetName = document.getElementById('manualAssetName').value.trim();
+      if(!assetId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
+      if(draftBidItems.some(it=>it.assetId===assetId)){ toast('เพิ่มรายการนี้ไว้แล้ว','err'); return; }
+      draftBidItems.push({ assetId, assetName, price:'' });
+      document.getElementById('manualAssetId').value = '';
+      document.getElementById('manualAssetName').value = '';
+      renderBidItemsHost();
+    };
     renderBidItemsHost();
   }
   function closeBidEntryModal(){
