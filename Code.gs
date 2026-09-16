@@ -42,6 +42,8 @@ const SHEETS = {
   SALE_ITEMS: 'SaleItems',
   WRITEOFFS: 'WriteOffs',
   WRITEOFF_ITEMS: 'WriteOffItems',
+  AUCTION_BIDS: 'AuctionBids',
+  AUCTION_BID_ITEMS: 'AuctionBidItems',
   LOG: 'ActivityLog'
 };
 
@@ -56,6 +58,8 @@ const HEADERS = {
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL', 'Voided'],
+  AUCTION_BIDS: ['BidID', 'RunningNo', 'CreatedAt', 'BidderName', 'BidderContact', 'Remark', 'CreatedBy'],
+  AUCTION_BID_ITEMS: ['BidID', 'LineNo', 'AssetID', 'AssetName', 'Price'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
 };
 
@@ -101,6 +105,8 @@ function setup() {
   ensureSheet_(ss, SHEETS.SALE_ITEMS, HEADERS.SALE_ITEMS);
   ensureSheet_(ss, SHEETS.WRITEOFFS, HEADERS.WRITEOFFS);
   ensureSheet_(ss, SHEETS.WRITEOFF_ITEMS, HEADERS.WRITEOFF_ITEMS);
+  ensureSheet_(ss, SHEETS.AUCTION_BIDS, HEADERS.AUCTION_BIDS);
+  ensureSheet_(ss, SHEETS.AUCTION_BID_ITEMS, HEADERS.AUCTION_BID_ITEMS);
   ensureSheet_(ss, SHEETS.LOG, HEADERS.LOG);
   Logger.log('Setup complete. Sheets ready: ' + Object.values(SHEETS).join(', '));
 }
@@ -162,6 +168,9 @@ function doGet(e) {
         break;
       case 'getAuctionListing':
         result = { ok: true, data: getAuctionListing_() };
+        break;
+      case 'getAuctionBidLiveSummary':
+        result = { ok: true, data: getAuctionBidLiveSummary_() };
         break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
@@ -306,6 +315,15 @@ function doPost(e) {
         break;
       case 'markAuctionInterest':
         result = markAuctionInterest_(body);
+        break;
+      case 'adminCreateAuctionBid':
+        result = adminCreateAuctionBid_(body);
+        break;
+      case 'adminDeleteAuctionBid':
+        result = adminDeleteAuctionBid_(body);
+        break;
+      case 'adminGetAuctionBidDocuments':
+        result = getAuctionBidDocuments_(body);
         break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
@@ -1393,6 +1411,166 @@ function markAuctionInterest_(body) {
     }
     return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
   });
+}
+
+// ============================================================
+// AUCTION BIDS — "Live ประมูล": Admin คีย์ใบประมูลที่ผู้ยื่นแต่ละคนส่งมา (เก็บทุกใบ/ทุกราคาที่เสนอ)
+// ส่วนพนักงานทุกคนดูสรุปแบบ Live ได้ที่หน้าเดียวกัน เห็นเฉพาะราคาสูงสุดต่อรหัสสินค้า ไม่เห็นชื่อผู้ยื่น
+// ราคาสูงสุดคำนวณสดจากทุกใบที่บันทึกไว้เสมอ (ดู getAuctionBidLiveSummary_) ไม่ได้เก็บแยกไว้ต่างหาก
+// ============================================================
+
+// Admin บันทึกใบประมูล 1 ใบจากผู้ยื่น 1 คน (มีได้หลายรายการสินค้าในใบเดียว) — ไม่บังคับว่ารหัสสินค้าต้องอยู่ใน
+// รายการที่เปิดประมูลอยู่ตอนนี้ (เผื่อกรณีคีย์ย้อนหลัง/สินค้าถูกถอนออกไปแล้ว) ฝั่งหน้าเว็บจะดึงรายการมาช่วยเลือกให้เอง
+function adminCreateAuctionBid_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const bidderName = String(body.bidderName || '').trim();
+  if (!bidderName) return { ok: false, error: 'กรุณาระบุชื่อผู้ยื่นประมูล' };
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!items.length) return { ok: false, error: 'ต้องมีรายการสินค้าอย่างน้อย 1 รายการ' };
+
+  const cleanItems = [];
+  for (const it of items) {
+    const assetId = String(it.assetId || '').trim();
+    const price = parseFloat(it.price);
+    if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสสินค้าให้ครบทุกรายการ' };
+    if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคาที่เสนอให้ถูกต้อง (รหัสสินค้า ' + assetId + ')' };
+    cleanItems.push({ assetId: assetId, assetName: String(it.assetName || ''), price: price });
+  }
+
+  return withLock_(() => {
+    const bidId = Utilities.getUuid();
+    const runningNo = getNextRunningNo_('PB', SHEETS.AUCTION_BIDS);
+
+    const sh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const idx = indexMap_(headers);
+    const newRow = headers.map(() => '');
+    newRow[idx.BidID] = bidId;
+    newRow[idx.RunningNo] = runningNo;
+    newRow[idx.CreatedAt] = new Date();
+    newRow[idx.BidderName] = bidderName;
+    if (idx.BidderContact !== undefined) newRow[idx.BidderContact] = String(body.bidderContact || '');
+    if (idx.Remark !== undefined) newRow[idx.Remark] = String(body.remark || '');
+    if (idx.CreatedBy !== undefined) newRow[idx.CreatedBy] = 'admin';
+    sh.appendRow(newRow);
+
+    const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+    const itemHeaders = itemSh.getRange(1, 1, 1, itemSh.getLastColumn()).getValues()[0];
+    const itemIdx = indexMap_(itemHeaders);
+    const itemRows = cleanItems.map((it, i) => {
+      const row = itemHeaders.map(() => '');
+      row[itemIdx.BidID] = bidId;
+      row[itemIdx.LineNo] = i + 1;
+      row[itemIdx.AssetID] = it.assetId;
+      row[itemIdx.AssetName] = it.assetName;
+      row[itemIdx.Price] = it.price;
+      return row;
+    });
+    itemSh.getRange(itemSh.getLastRow() + 1, 1, itemRows.length, itemHeaders.length).setValues(itemRows);
+
+    logActivity_('', 'ADMIN_CREATE_AUCTION_BID', 'admin', 'บันทึกใบประมูล ' + runningNo + ' จาก ' + bidderName + ' (' + cleanItems.length + ' รายการ)');
+    return { ok: true, data: { bidId: bidId, runningNo: runningNo } };
+  });
+}
+
+// Admin ลบใบประมูลทั้งใบ (แก้ไขรายการคีย์ผิด) — ลบทั้งแถวหลักและรายการสินค้าในใบนั้นทั้งหมด
+function adminDeleteAuctionBid_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const bidId = String(body.bidId || '').trim();
+  if (!bidId) return { ok: false, error: 'กรุณาระบุใบประมูลที่ต้องการลบ' };
+
+  const sh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let rowNum = -1, bidderName = '', runningNo = '';
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.BidID]) === bidId) {
+      rowNum = i + 1;
+      bidderName = values[i][idx.BidderName];
+      runningNo = values[i][idx.RunningNo];
+      break;
+    }
+  }
+  if (rowNum === -1) return { ok: false, error: 'ไม่พบใบประมูลนี้' };
+  sh.deleteRow(rowNum);
+
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues[0]);
+  for (let i = itemValues.length - 1; i >= 1; i--) {
+    if (String(itemValues[i][itemIdx.BidID]) === bidId) itemSh.deleteRow(i + 1);
+  }
+
+  logActivity_('', 'ADMIN_DELETE_AUCTION_BID', 'admin', 'ลบใบประมูล ' + runningNo + ' ของ ' + bidderName);
+  return { ok: true };
+}
+
+// Admin ดูรายการใบประมูลทั้งหมด (เรียงใหม่สุดก่อน) พร้อมรายการสินค้าในแต่ละใบ — ใช้ตรวจสอบย้อนหลัง
+function getAuctionBidDocuments_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const sh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  const rows = values.map(r => rowToObj_(r, idx));
+
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+  const itemsByBid = {};
+  itemValues.forEach(r => {
+    const bidId = String(r[itemIdx.BidID]);
+    (itemsByBid[bidId] = itemsByBid[bidId] || []).push({
+      AssetID: r[itemIdx.AssetID],
+      AssetName: r[itemIdx.AssetName],
+      Price: r[itemIdx.Price]
+    });
+  });
+  rows.forEach(r => { r.Items = itemsByBid[String(r.BidID)] || []; });
+  rows.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
+  return { ok: true, data: rows };
+}
+
+// สรุปแบบ Live สำหรับพนักงานทุกคนดูได้ (ไม่ต้องรหัสผ่านโดยตั้งใจ เหมือนหน้าประมูลขายสาธารณะ) — แสดงเฉพาะรหัสสินค้า
+// ที่ยังเปิดประมูลอยู่ตอนนี้ (ดู getAuctionListing_) "และ" มีคนยื่นประมูลแล้วเท่านั้น พร้อมราคาสูงสุด "ไม่แสดงชื่อผู้ยื่น"
+function getAuctionBidLiveSummary_() {
+  const listing = getAuctionListing_();
+  const listingByAsset = {};
+  listing.forEach(a => { listingByAsset[String(a.AssetID)] = a; });
+
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+  const byAsset = {};
+  itemValues.forEach(r => {
+    const assetId = String(r[itemIdx.AssetID]);
+    if (!listingByAsset[assetId]) return;
+    const price = parseFloat(r[itemIdx.Price]) || 0;
+    if (!byAsset[assetId]) byAsset[assetId] = { maxPrice: price, bidCount: 0 };
+    byAsset[assetId].bidCount++;
+    if (price > byAsset[assetId].maxPrice) byAsset[assetId].maxPrice = price;
+  });
+
+  const items = Object.keys(byAsset).map(assetId => {
+    const a = listingByAsset[assetId];
+    return {
+      AssetID: assetId,
+      AssetName: a.AssetName,
+      Department: a.Department,
+      DisplayImage: a.DisplayImage,
+      MaxPrice: byAsset[assetId].maxPrice,
+      BidCount: byAsset[assetId].bidCount
+    };
+  });
+
+  return {
+    totalCount: listing.length,
+    bidCount: items.length,
+    openCount: listing.length - items.length,
+    items: items
+  };
 }
 
 // Admin กรอกอีเมลผู้บริหาร + ข้อความ/หมายเหตุเอง แล้วกดส่ง — ระบบดึงรายการที่กำลังเปิดประมูลอยู่ (เหมือนหน้า
