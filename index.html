@@ -1888,14 +1888,12 @@ function renderAuctionLive(root){
   function renderBidItemsHost(){
     const host2 = document.getElementById('bidItemsHost');
     if(!host2) return;
-    if(!draftBidItems.length){ host2.innerHTML = '<div class="empty">ยังไม่มีรายการ กด "+ เพิ่มรายการ"</div>'; return; }
-    let html = '<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>ราคาที่เสนอ</th><th class="no-print">จัดการ</th></tr>';
+    if(!draftBidItems.length){ host2.innerHTML = '<div class="empty">ยังไม่มีรายการ ค้นหาสินค้าด้านบนเพื่อเพิ่ม</div>'; return; }
+    let html = '<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ราคาที่เสนอ</th><th class="no-print">จัดการ</th></tr>';
     draftBidItems.forEach((it, i)=>{
       html += `<tr>
-        <td><select class="bidItemAssetSelect" data-i="${i}" style="min-width:220px;">
-          <option value="">-- เลือกรหัสสินค้า --</option>
-          ${auctionCandidates.map(a=>`<option value="${esc(a.AssetID)}" ${it.assetId===a.AssetID?'selected':''}>${esc(a.AssetID)} - ${esc(a.AssetName)}</option>`).join('')}
-        </select></td>
+        <td><b>${esc(it.assetId)}</b></td>
+        <td>${esc(it.assetName||'-')}</td>
         <td><input type="text" inputmode="decimal" class="bidItemPriceInput" data-i="${i}" value="${esc(it.price||'')}" style="width:110px;" placeholder="ราคา"></td>
         <td class="no-print"><button class="btn btn-secondary btn-sm bidItemRemoveBtn" data-i="${i}">ลบ</button></td>
       </tr>`;
@@ -1903,14 +1901,6 @@ function renderAuctionLive(root){
     html += '</table></div>';
     host2.innerHTML = html;
 
-    host2.querySelectorAll('.bidItemAssetSelect').forEach(sel=>{
-      sel.onchange = ()=>{
-        const i = parseInt(sel.dataset.i, 10);
-        const a = auctionCandidates.find(x=>x.AssetID===sel.value);
-        draftBidItems[i].assetId = sel.value;
-        draftBidItems[i].assetName = a ? a.AssetName : '';
-      };
-    });
     host2.querySelectorAll('.bidItemPriceInput').forEach(inp=>{
       inp.oninput = ()=>{ draftBidItems[parseInt(inp.dataset.i, 10)].price = inp.value; };
     });
@@ -1919,8 +1909,38 @@ function renderAuctionLive(root){
     });
   }
 
+  // ค้นหาสินค้าจากรายการที่เปิดประมูลอยู่ตอนนี้ (auctionCandidates) เพื่อเพิ่มเข้ารายการเสนอราคา — คลิกผลลัพธ์เพื่อเพิ่ม
+  // แทนการเลือกจาก dropdown ยาวๆ ทีละแถว ให้ค้นด้วยรหัสหรือชื่อสินค้าได้เลย
+  function renderBidItemSearchResults(){
+    const resHost = document.getElementById('bidItemSearchResults');
+    const qq = (document.getElementById('bidItemSearch').value||'').trim().toLowerCase();
+    if(!qq){ resHost.innerHTML = ''; return; }
+    const already = new Set(draftBidItems.map(it=>it.assetId));
+    const matches = auctionCandidates.filter(a =>
+      String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1
+    ).slice(0, 8);
+    if(!matches.length){ resHost.innerHTML = '<div class="empty" style="padding:8px;">ไม่พบสินค้าที่ตรงกับคำค้นหาในรายการเปิดประมูล</div>'; return; }
+    resHost.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:220px;overflow-y:auto;">` +
+      matches.map(a => `
+        <div class="bidItemSearchRow" data-id="${esc(a.AssetID)}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);${already.has(a.AssetID)?'opacity:.5;':''}">
+          <b>${esc(a.AssetID)}</b> — ${esc(a.AssetName)}${already.has(a.AssetID)?' <span style="color:var(--muted);font-size:11px;">(เพิ่มแล้ว)</span>':''}
+        </div>
+      `).join('') + `</div>`;
+    resHost.querySelectorAll('.bidItemSearchRow').forEach(row=>{
+      row.onclick = ()=>{
+        const id = row.dataset.id;
+        if(draftBidItems.some(it=>it.assetId===id)){ toast('เพิ่มรายการนี้ไว้แล้ว','err'); return; }
+        const a = auctionCandidates.find(x=>x.AssetID===id);
+        draftBidItems.push({ assetId: id, assetName: a ? a.AssetName : '', price: '' });
+        document.getElementById('bidItemSearch').value = '';
+        resHost.innerHTML = '';
+        renderBidItemsHost();
+      };
+    });
+  }
+
   function openBidEntryModal(){
-    draftBidItems = [{ assetId:'', assetName:'', price:'' }];
+    draftBidItems = [];
     const mHost = document.getElementById('modalHost');
     mHost.innerHTML = `
       <div class="modal-overlay no-print" id="bidModalOverlay">
@@ -1933,9 +1953,11 @@ function renderAuctionLive(root){
             <div><label>เบอร์ติดต่อ</label><input type="text" id="bidderContact" placeholder="(ถ้ามี)"></div>
             <div><label>หมายเหตุ</label><input type="text" id="bidRemark" placeholder="(ถ้ามี)"></div>
           </div>
-          <label style="margin-top:12px;">รายการสินค้าที่เสนอราคา</label>
+          <label style="margin-top:12px;">ค้นหาสินค้าเพื่อเพิ่มรายการ</label>
+          <input type="text" id="bidItemSearch" placeholder="พิมพ์รหัสหรือชื่อสินค้าที่เปิดประมูลอยู่..." autocomplete="off">
+          <div id="bidItemSearchResults" style="margin-top:4px;"></div>
+          <label style="margin-top:14px;">รายการสินค้าที่เสนอราคา</label>
           <div id="bidItemsHost"></div>
-          <button class="btn btn-secondary btn-sm" id="btnAddBidItem" style="margin-top:8px;">+ เพิ่มรายการ</button>
           <div class="modal-actions">
             <button class="btn btn-secondary" id="btnCancelBid">ยกเลิก</button>
             <button class="btn btn-primary" id="btnSaveBid">บันทึกข้อมูล</button>
@@ -1945,7 +1967,7 @@ function renderAuctionLive(root){
     `;
     document.getElementById('bidModalOverlay').onclick = (e)=>{ if(e.target.id==='bidModalOverlay') closeBidEntryModal(); };
     document.getElementById('btnCancelBid').onclick = closeBidEntryModal;
-    document.getElementById('btnAddBidItem').onclick = ()=>{ draftBidItems.push({ assetId:'', assetName:'', price:'' }); renderBidItemsHost(); };
+    document.getElementById('bidItemSearch').oninput = renderBidItemSearchResults;
     document.getElementById('btnSaveBid').onclick = saveBid;
     renderBidItemsHost();
   }
