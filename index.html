@@ -1393,14 +1393,24 @@ function renderAuction(root){
           ${bracketsHtml}
           <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
           <div style="white-space:pre-wrap;line-height:1.7;font-size:14px;">${esc(content.note||'')}</div>
-          <div style="margin-top:20px;">
+          <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>
+            <button class="btn btn-secondary" id="btnAuctionGoLive">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>
           </div>
         </div>
       `;
       const viewBtn = document.getElementById('btnAuctionViewProducts');
       if(viewBtn) viewBtn.onclick = showListing;
+      document.getElementById('btnAuctionGoLive').onclick = goToAuctionLive;
     });
+  }
+
+  // สลับไปหน้า "Live ประมูล" จากในหน้าประมูลขายเดียวกัน (ลิงก์เดียวกัน ไม่ต้องแจกลิงก์ใหม่ให้พนักงาน) — ถ้าล็อกอินอยู่
+  // ใช้ระบบเมนูปกติ (STATE.view + render) ถ้าเป็นผู้เข้าชมสาธารณะที่ไม่ได้ล็อกอิน เรียก renderAuctionLive ตรงๆ
+  // เพื่อไม่ให้ render() ไปเรียก showAppChrome() ทำให้แถบเมนู/หัวเว็บที่ตั้งใจซ่อนไว้โผล่กลับมา
+  function goToAuctionLive(){
+    if(checkAuth()){ STATE.view = 'auctionLive'; render(); }
+    else renderAuctionLive(root);
   }
 
   function showListing(){
@@ -1408,6 +1418,7 @@ function renderAuction(root){
       <div class="card">
         <div class="toolbar no-print" style="margin-bottom:6px;">
           <button class="btn btn-secondary btn-sm" id="btnAuctionBackToIntro">← กลับไปหน้าหลักการประมูล</button>
+          <button class="btn btn-secondary btn-sm" id="btnAuctionGoLive2">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>
         </div>
         <div id="auctionClosedBanner"></div>
         <h2>ประมูลขาย</h2>
@@ -1435,6 +1446,7 @@ function renderAuction(root){
     `;
 
     document.getElementById('btnAuctionBackToIntro').onclick = showIntro;
+    document.getElementById('btnAuctionGoLive2').onclick = goToAuctionLive;
     apiGet({ action:'getAuctionClosedNotice' }).then(res=>{
       const banner = document.getElementById('auctionClosedBanner');
       if(banner && res.ok) banner.innerHTML = closedNoticeBannerHtml(res.data);
@@ -1652,6 +1664,9 @@ function renderAuctionLive(root){
 
   root.innerHTML = `
     <div class="card">
+      <div class="toolbar no-print" style="margin-bottom:6px;">
+        <button class="btn btn-secondary btn-sm" id="btnLiveBackToAuction">← กลับไปหน้าประมูลขาย</button>
+      </div>
       <h2>Live ประมูล</h2>
       <p style="color:var(--muted);font-size:13px;">แสดงเฉพาะรายการที่มีผู้ยื่นประมูลแล้ว พร้อมราคาสูงสุดของแต่ละรหัสสินค้า — ไม่แสดงชื่อผู้ยื่นประมูล กดรีเฟรชเพื่อดูราคาล่าสุด</p>
       <div class="row">
@@ -1729,6 +1744,12 @@ function renderAuctionLive(root){
     host.innerHTML = html;
   }
 
+  // กลับไปหน้าประมูลขาย — ถ้าล็อกอินอยู่ใช้ระบบเมนูปกติ ถ้าเป็นผู้เข้าชมสาธารณะ (ไม่ได้ล็อกอิน) เรียก renderAuction
+  // ตรงๆ เพื่อไม่ให้ render() เรียก showAppChrome() ทำให้แถบเมนู/หัวเว็บที่ตั้งใจซ่อนไว้ตอนเข้าชมแบบสาธารณะโผล่กลับมา
+  document.getElementById('btnLiveBackToAuction').onclick = ()=>{
+    if(checkAuth()){ STATE.view = 'auction'; render(); }
+    else renderAuction(root);
+  };
   document.getElementById('liveSearch').oninput = renderLiveTable;
   document.getElementById('liveSort').onchange = renderLiveTable;
   document.getElementById('btnLiveRefresh').onclick = loadLive;
