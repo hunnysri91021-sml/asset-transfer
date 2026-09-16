@@ -172,6 +172,12 @@ function doGet(e) {
       case 'getAuctionBidLiveSummary':
         result = { ok: true, data: getAuctionBidLiveSummary_() };
         break;
+      case 'getAuctionBidListPublicEnabled':
+        result = { ok: true, data: { enabled: getAuctionBidListPublicEnabled_() } };
+        break;
+      case 'getAuctionBidPublicList':
+        result = getAuctionBidPublicList_();
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -322,8 +328,17 @@ function doPost(e) {
       case 'adminDeleteAuctionBid':
         result = adminDeleteAuctionBid_(body);
         break;
+      case 'adminUpdateAuctionBidItem':
+        result = adminUpdateAuctionBidItem_(body);
+        break;
+      case 'adminDeleteAuctionBidItem':
+        result = adminDeleteAuctionBidItem_(body);
+        break;
       case 'adminGetAuctionBidDocuments':
         result = getAuctionBidDocuments_(body);
+        break;
+      case 'adminSaveAuctionBidListPublicSetting':
+        result = adminSaveAuctionBidListPublicSetting_(body);
         break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
@@ -1530,9 +1545,51 @@ function adminDeleteAuctionBid_(body) {
   return { ok: true };
 }
 
-// Admin ดูรายการใบประมูลทั้งหมด (เรียงใหม่สุดก่อน) พร้อมรายการสินค้าในแต่ละใบ — ใช้ตรวจสอบย้อนหลัง
-function getAuctionBidDocuments_(body) {
+// แก้ไขราคาที่เสนอของรายการสินค้า 1 รายการในใบประมูล (ระบุด้วย BidID+LineNo) — แก้คีย์ผิดได้โดยไม่ต้องลบทั้งใบ
+function adminUpdateAuctionBidItem_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const bidId = String(body.bidId || '').trim();
+  const lineNo = parseInt(body.lineNo, 10);
+  const price = parseFloat(body.price);
+  if (!bidId || isNaN(lineNo)) return { ok: false, error: 'ข้อมูลรายการไม่ถูกต้อง' };
+  if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคาที่เสนอให้ถูกต้อง' };
+
+  const sh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.BidID]) === bidId && Number(values[i][idx.LineNo]) === lineNo) {
+      sh.getRange(i + 1, idx.Price + 1).setValue(price);
+      logActivity_('', 'ADMIN_UPDATE_AUCTION_BID_ITEM', 'admin', 'แก้ไขราคาที่เสนอในใบประมูล ' + bidId + ' รายการที่ ' + lineNo + ' เป็น ' + price);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบรายการนี้' };
+}
+
+// ลบรายการสินค้า 1 รายการออกจากใบประมูล (ไม่ลบทั้งใบ) — ใช้แก้ไขตอนคีย์ผิดแค่บางรายการในใบที่มีหลายรายการ
+function adminDeleteAuctionBidItem_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const bidId = String(body.bidId || '').trim();
+  const lineNo = parseInt(body.lineNo, 10);
+  if (!bidId || isNaN(lineNo)) return { ok: false, error: 'ข้อมูลรายการไม่ถูกต้อง' };
+
+  const sh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.BidID]) === bidId && Number(values[i][idx.LineNo]) === lineNo) {
+      sh.deleteRow(i + 1);
+      logActivity_('', 'ADMIN_DELETE_AUCTION_BID_ITEM', 'admin', 'ลบรายการสินค้าในใบประมูล ' + bidId + ' รายการที่ ' + lineNo);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบรายการนี้' };
+}
+
+// ประกอบรายการใบประมูลทั้งหมดพร้อมรายการสินค้าในแต่ละใบ (เรียงใหม่สุดก่อน) — ใช้ร่วมกันทั้งฝั่ง Admin (ดูทุกฟิลด์)
+// และฝั่งสาธารณะ (ดูเฉพาะฟิลด์ที่เปิดเผยได้ ดู getAuctionBidPublicList_)
+function buildAuctionBidDocuments_() {
   const sh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
   const values = sh.getDataRange().getValues();
   const headers = values.shift();
@@ -1547,6 +1604,7 @@ function getAuctionBidDocuments_(body) {
   itemValues.forEach(r => {
     const bidId = String(r[itemIdx.BidID]);
     (itemsByBid[bidId] = itemsByBid[bidId] || []).push({
+      LineNo: r[itemIdx.LineNo],
       AssetID: r[itemIdx.AssetID],
       AssetName: r[itemIdx.AssetName],
       Price: r[itemIdx.Price]
@@ -1554,6 +1612,39 @@ function getAuctionBidDocuments_(body) {
   });
   rows.forEach(r => { r.Items = itemsByBid[String(r.BidID)] || []; });
   rows.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
+  return rows;
+}
+
+// Admin ดูรายการใบประมูลทั้งหมด (ทุกฟิลด์ รวมเบอร์ติดต่อผู้ยื่น) — ใช้ตรวจสอบย้อนหลัง
+function getAuctionBidDocuments_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  return { ok: true, data: buildAuctionBidDocuments_() };
+}
+
+// เปิด/ปิดเผยแพร่ "รายการใบประมูล" ให้สาธารณะดูได้ — Admin เปิดเองภายหลัง (เช่นหลังปิดประมูลแล้ว) เพื่อความโปร่งใส
+// ให้เห็นว่าใครเสนอราคาเท่าไหร่บ้าง คนละเรื่องกับ AUCTION_PUBLIC_ENABLED_PROP ที่คุมการเข้าดูหน้าประมูลขายทั้งหน้า
+const AUCTION_BID_LIST_PUBLIC_PROP = 'AUCTION_BID_LIST_PUBLIC';
+function getAuctionBidListPublicEnabled_() {
+  return PropertiesService.getScriptProperties().getProperty(AUCTION_BID_LIST_PUBLIC_PROP) === '1';
+}
+function adminSaveAuctionBidListPublicSetting_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const enabled = !!body.enabled;
+  PropertiesService.getScriptProperties().setProperty(AUCTION_BID_LIST_PUBLIC_PROP, enabled ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_AUCTION_BID_LIST_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การเผยแพร่รายการใบประมูลต่อสาธารณะ');
+  return { ok: true };
+}
+
+// เวอร์ชันสาธารณะของรายการใบประมูล — ใช้ได้เฉพาะเมื่อ Admin เปิดเผยแพร่ไว้เท่านั้น ไม่ต้องรหัสผ่านโดยตั้งใจ แต่ตัดฟิลด์
+// ที่ไม่ควรเปิดเผย (เบอร์ติดต่อผู้ยื่น/หมายเหตุ/BidID ภายใน) ออก เหลือแค่ชื่อผู้ยื่นและรายการที่เสนอราคา
+function getAuctionBidPublicList_() {
+  if (!getAuctionBidListPublicEnabled_()) return { ok: false, error: 'ยังไม่เปิดเผยแพร่รายการใบประมูลต่อสาธารณะ' };
+  const rows = buildAuctionBidDocuments_().map(r => ({
+    RunningNo: r.RunningNo,
+    CreatedAt: r.CreatedAt,
+    BidderName: r.BidderName,
+    Items: r.Items
+  }));
   return { ok: true, data: rows };
 }
 

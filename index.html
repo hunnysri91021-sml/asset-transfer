@@ -1658,7 +1658,8 @@ function renderAuction(root){
 /* ================= AUCTION LIVE VIEW — "Live ประมูล": พนักงานทุกคนดูราคาสูงสุดแบบสด + Admin คีย์ใบประมูล ================= */
 function renderAuctionLive(root){
   const isAdmin = STATE.role === 'admin';
-  if(!isAdmin && STATE.auctionLiveTab !== 'live') STATE.auctionLiveTab = 'live';
+  if(!isAdmin && STATE.auctionLiveTab === 'admin') STATE.auctionLiveTab = 'live';
+  let bidListPublicEnabled = isAdmin; // Admin เห็นแท็บนี้เสมออยู่แล้ว — ผู้ใช้อื่นรอผลเช็กจาก getAuctionBidListPublicEnabled ก่อนค่อยโชว์ปุ่มแท็บ
   let liveSummary = { totalCount: 0, bidCount: 0, openCount: 0, items: [] };
   let bidDocs = [];
   let auctionCandidates = []; // รายการที่เปิดประมูลอยู่ตอนนี้ (ดึงจาก getAuctionListing) ใช้เป็นตัวเลือกตอนคีย์ใบประมูล
@@ -1678,22 +1679,32 @@ function renderAuctionLive(root){
       </div>
       <h2>🔴 Live ประมูล</h2>
       <p style="color:var(--muted);font-size:13px;">หน้าที่พนักงานคลิกเข้ามาดูราคาประมูลแบบ Live กับส่วนที่ Admin บันทึกข้อมูลใบประมูล แยกกันคนละแท็บ</p>
-      <div class="toolbar no-print" style="margin-bottom:0;">
-        <button class="btn ${STATE.auctionLiveTab==='live'?'btn-primary':'btn-secondary'} btn-sm" id="tabLive">Employee Live</button>
-        ${isAdmin ? `
-        <button class="btn ${STATE.auctionLiveTab==='admin'?'btn-primary':'btn-secondary'} btn-sm" id="tabAdmin">Admin</button>
-        <button class="btn ${STATE.auctionLiveTab==='bids'?'btn-primary':'btn-secondary'} btn-sm" id="tabBids">รายการใบประมูล</button>
-        ` : ''}
-      </div>
+      <div class="toolbar no-print" id="liveTabNav" style="margin-bottom:0;"></div>
     </div>
     <div id="liveTabHost"></div>
   `;
 
   document.getElementById('btnLiveBackToAuction').onclick = backToAuction;
-  document.getElementById('tabLive').onclick = ()=>{ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); };
-  if(isAdmin){
-    document.getElementById('tabAdmin').onclick = ()=>{ STATE.auctionLiveTab = 'admin'; renderAuctionLive(root); };
-    document.getElementById('tabBids').onclick = ()=>{ STATE.auctionLiveTab = 'bids'; renderAuctionLive(root); };
+
+  function renderTabNav(){
+    document.getElementById('liveTabNav').innerHTML = `
+      <button class="btn ${STATE.auctionLiveTab==='live'?'btn-primary':'btn-secondary'} btn-sm" id="tabLive">Employee Live</button>
+      ${isAdmin ? `<button class="btn ${STATE.auctionLiveTab==='admin'?'btn-primary':'btn-secondary'} btn-sm" id="tabAdmin">Admin</button>` : ''}
+      ${(isAdmin || bidListPublicEnabled) ? `<button class="btn ${STATE.auctionLiveTab==='bids'?'btn-primary':'btn-secondary'} btn-sm" id="tabBids">รายการใบประมูล</button>` : ''}
+    `;
+    document.getElementById('tabLive').onclick = ()=>{ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); };
+    if(isAdmin) document.getElementById('tabAdmin').onclick = ()=>{ STATE.auctionLiveTab = 'admin'; renderAuctionLive(root); };
+    const tabBidsBtn = document.getElementById('tabBids');
+    if(tabBidsBtn) tabBidsBtn.onclick = ()=>{ STATE.auctionLiveTab = 'bids'; renderAuctionLive(root); };
+  }
+  renderTabNav();
+
+  if(!isAdmin){
+    apiGet({ action:'getAuctionBidListPublicEnabled' }).then(res=>{
+      bidListPublicEnabled = res.ok && !!res.data.enabled;
+      renderTabNav();
+      if(STATE.auctionLiveTab==='bids' && !bidListPublicEnabled){ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); }
+    });
   }
 
   const tabHost = document.getElementById('liveTabHost');
@@ -1764,7 +1775,7 @@ function renderAuctionLive(root){
     const rows = [];
     bidDocs.forEach(d=>{
       (d.Items||[]).forEach(it=>{
-        rows.push({ CreatedAt: d.CreatedAt, BidderName: d.BidderName, AssetID: it.AssetID, AssetName: it.AssetName, Price: it.Price });
+        rows.push({ BidID: d.BidID, LineNo: it.LineNo, CreatedAt: d.CreatedAt, BidderName: d.BidderName, AssetID: it.AssetID, AssetName: it.AssetName, Price: it.Price });
       });
     });
     return rows;
@@ -1779,10 +1790,12 @@ function renderAuctionLive(root){
   }
 
   function renderAdminTab(){
+    let editingKey = null; // 'BidID__LineNo' ของแถวที่กำลังแก้ไขราคาอยู่ (ถ้ามี) — reset ทุกครั้งที่เข้าแท็บนี้ใหม่
+
     tabHost.innerHTML = `
       <div class="card no-print">
         <h2>⚙️ Admin — คีย์ใบประมูล</h2>
-        <p style="color:var(--muted);font-size:13px;">กรอกข้อมูลจากใบประมูลที่ผู้ยื่นแต่ละคนส่งมา — เลือกรหัสสินค้าจากรายการที่เปิดประมูลอยู่ตอนนี้ได้เลย ถ้าสินค้าเดียวกันมีหลายคนเสนอ ระบบคำนวณราคาสูงสุดให้อัตโนมัติที่แท็บ Employee Live</p>
+        <p style="color:var(--muted);font-size:13px;">กรอกข้อมูลจากใบประมูลที่ผู้ยื่นแต่ละคนส่งมา — เลือกรหัสสินค้าจากรายการที่เปิดประมูลอยู่ตอนนี้ได้เลย แก้ไข/ลบรายการที่คีย์ผิดได้จากตารางด้านล่าง ถ้าสินค้าเดียวกันมีหลายคนเสนอ ระบบคำนวณราคาสูงสุดให้อัตโนมัติและแสดงผลที่แท็บ Employee Live ทันที</p>
         <div class="row">
           <div class="stat-tile"><div class="label">ผู้ยื่นทั้งหมด</div><div class="num" id="adminBidderCount">0</div></div>
           <div class="stat-tile"><div class="label">ใบประมูลที่บันทึก</div><div class="num" id="adminDocCount">0</div></div>
@@ -1810,19 +1823,60 @@ function renderAuctionLive(root){
 
       const tblHost = document.getElementById('adminBidTableHost');
       if(!rows.length){ tblHost.innerHTML = '<div class="empty">ยังไม่มีข้อมูลใบประมูล</div>'; return; }
-      let html = `<div style="overflow-x:auto;"><table><tr><th>เวลา</th><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ยื่น</th><th>ราคาที่เสนอ</th><th>สูงสุดปัจจุบัน</th></tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr><th>เวลา</th><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ยื่น</th><th>ราคาที่เสนอ</th><th>สูงสุดปัจจุบัน</th><th class="no-print">จัดการ</th></tr>`;
       rows.forEach(r=>{
+        const key = r.BidID+'__'+r.LineNo;
+        const isEditing = key === editingKey;
         html += `<tr>
           <td>${fmtDate(r.CreatedAt)}</td>
           <td><b>${esc(r.AssetID)}</b></td>
           <td>${esc(r.AssetName)}</td>
           <td>${esc(r.BidderName)}</td>
-          <td class="money">${fmtMoney(r.Price)}</td>
+          <td class="money">${isEditing
+            ? `<input type="text" inputmode="decimal" class="adminBidPriceEdit" data-key="${esc(key)}" value="${esc(r.Price)}" style="width:100px;">`
+            : fmtMoney(r.Price)}</td>
           <td class="money"><b>${fmtMoney(maxMap[r.AssetID])}</b></td>
+          <td class="no-print">${isEditing
+            ? `<button class="btn btn-primary btn-sm adminBidSaveBtn" data-bidid="${esc(r.BidID)}" data-lineno="${esc(r.LineNo)}">บันทึก</button>
+               <button class="btn btn-secondary btn-sm adminBidCancelBtn">ยกเลิก</button>`
+            : `<button class="btn btn-secondary btn-sm adminBidEditBtn" data-key="${esc(key)}">แก้ไข</button>
+               <button class="btn btn-secondary btn-sm adminBidDelBtn" data-bidid="${esc(r.BidID)}" data-lineno="${esc(r.LineNo)}">ลบ</button>`}</td>
         </tr>`;
       });
       html += '</table></div>';
       tblHost.innerHTML = html;
+
+      tblHost.querySelectorAll('.adminBidEditBtn').forEach(btn=>{
+        btn.onclick = ()=>{ editingKey = btn.dataset.key; renderAdminTable(); };
+      });
+      tblHost.querySelectorAll('.adminBidCancelBtn').forEach(btn=>{
+        btn.onclick = ()=>{ editingKey = null; renderAdminTable(); };
+      });
+      tblHost.querySelectorAll('.adminBidSaveBtn').forEach(btn=>{
+        btn.onclick = ()=>{
+          const bidId = btn.dataset.bidid, lineNo = btn.dataset.lineno;
+          const input = tblHost.querySelector('.adminBidPriceEdit[data-key="'+bidId+'__'+lineNo+'"]');
+          const price = input ? input.value.trim() : '';
+          if(!price){ toast('กรุณาระบุราคาที่เสนอ','err'); return; }
+          btn.disabled = true;
+          apiPost({ action:'adminUpdateAuctionBidItem', password: STATE.adminPassword, bidId, lineNo, price }).then(res=>{
+            if(!res.ok){ btn.disabled = false; toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+            toast('บันทึกราคาที่แก้ไขสำเร็จ — อัปเดตที่แท็บ Employee Live แล้ว','ok');
+            editingKey = null;
+            loadBidDocs().then(renderAdminTable);
+          });
+        };
+      });
+      tblHost.querySelectorAll('.adminBidDelBtn').forEach(btn=>{
+        btn.onclick = ()=>{
+          if(!confirm('ยืนยันลบรายการนี้? ราคาสูงสุดที่แท็บ Employee Live จะคำนวณใหม่ทันที')) return;
+          apiPost({ action:'adminDeleteAuctionBidItem', password: STATE.adminPassword, bidId: btn.dataset.bidid, lineNo: btn.dataset.lineno }).then(res=>{
+            if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
+            toast('ลบรายการสำเร็จ','ok');
+            loadBidDocs().then(renderAdminTable);
+          });
+        };
+      });
     }
 
     document.getElementById('btnOpenBidModal').onclick = openBidEntryModal;
@@ -1833,47 +1887,78 @@ function renderAuctionLive(root){
 
   /* ---------- Tab 3: รายการใบประมูล — ประวัติทุกใบที่เคยคีย์ ใช้ตรวจสอบย้อนหลัง ---------- */
   function renderBidHistoryTab(){
+    const canExport = checkAuth(); // export ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น (ทุก role) — ผู้เข้าชมสาธารณะที่ไม่ได้ล็อกอินดูได้อย่างเดียว
     tabHost.innerHTML = `
       <div class="card no-print">
         <h2>📄 รายการใบประมูล</h2>
-        <p style="color:var(--muted);font-size:13px;">เก็บข้อมูลแยกตามใบที่ผู้ยื่นส่งมา ใช้ตรวจสอบย้อนหลัง (เห็นชื่อผู้ยื่นและราคาที่เสนอทุกรายการ)</p>
-        <div id="bidDocsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 ใบ</div>
-        <div id="bidDocsHost"><div class="empty">กำลังโหลด...</div></div>
+        <p style="color:var(--muted);font-size:13px;">เก็บข้อมูลแยกตามใบที่ผู้ยื่นส่งมา ใช้ตรวจสอบย้อนหลัง${isAdmin ? ' (เห็นชื่อผู้ยื่นและราคาที่เสนอทุกรายการ)' : ' — เห็นชื่อผู้ยื่นและราคาที่เสนอ (Admin เปิดเผยแพร่ไว้)'}</p>
+        <div class="toolbar no-print" style="margin-bottom:0;">
+          <div id="bidDocsCount" style="font-size:13px;color:var(--muted);">รวม 0 ใบ</div>
+          ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnExportBidDocs" style="margin-left:auto;">⬇ Export Excel</button>` : ''}
+        </div>
+        <div id="bidDocsHost" style="margin-top:8px;"><div class="empty">กำลังโหลด...</div></div>
       </div>
     `;
+
+    function loadForThisTab(){
+      if(isAdmin) return loadBidDocs();
+      return apiGet({ action:'getAuctionBidPublicList' }).then(res=>{
+        if(res.ok) bidDocs = res.data || [];
+        return res;
+      });
+    }
 
     function renderBidDocsTable(){
       const host2 = document.getElementById('bidDocsHost');
       document.getElementById('bidDocsCount').textContent = 'รวม '+bidDocs.length+' ใบ';
       if(!bidDocs.length){ host2.innerHTML = '<div class="empty">ยังไม่มีใบประมูล</div>'; return; }
-      let html = `<div style="overflow-x:auto;"><table><tr><th>เลขที่</th><th>วันที่</th><th>ผู้ยื่นประมูล</th><th>เบอร์ติดต่อ</th><th>รายการที่เสนอ</th><th class="no-print">จัดการ</th></tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr><th>เลขที่</th><th>วันที่</th><th>ผู้ยื่นประมูล</th>${isAdmin?'<th>เบอร์ติดต่อ</th>':''}<th>รายการที่เสนอ</th>${isAdmin?'<th class="no-print">จัดการ</th>':''}</tr>`;
       bidDocs.forEach(d=>{
         const itemsHtml = (d.Items||[]).map(it=>esc(it.AssetID)+' ('+fmtMoney(it.Price)+')').join(', ');
         html += `<tr>
           <td><b>${esc(d.RunningNo)}</b></td>
           <td>${fmtDate(d.CreatedAt)}</td>
           <td>${esc(d.BidderName)}</td>
-          <td>${esc(d.BidderContact||'-')}</td>
+          ${isAdmin?`<td>${esc(d.BidderContact||'-')}</td>`:''}
           <td>${itemsHtml||'-'}</td>
-          <td class="no-print"><button class="btn btn-secondary btn-sm bidDocDeleteBtn" data-id="${esc(d.BidID)}">ลบ</button></td>
+          ${isAdmin?`<td class="no-print"><button class="btn btn-secondary btn-sm bidDocDeleteBtn" data-id="${esc(d.BidID)}">ลบ</button></td>`:''}
         </tr>`;
       });
       html += '</table></div>';
       host2.innerHTML = html;
 
-      host2.querySelectorAll('.bidDocDeleteBtn').forEach(btn=>{
-        btn.onclick = ()=>{
-          if(!confirm('ยืนยันลบใบประมูลนี้? ราคาสูงสุดที่แท็บ Employee Live จะคำนวณใหม่ทันที')) return;
-          apiPost({ action:'adminDeleteAuctionBid', password: STATE.adminPassword, bidId: btn.dataset.id }).then(res=>{
-            if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
-            toast('ลบใบประมูลสำเร็จ','ok');
-            loadBidDocs().then(renderBidDocsTable);
-          });
-        };
-      });
+      if(isAdmin){
+        host2.querySelectorAll('.bidDocDeleteBtn').forEach(btn=>{
+          btn.onclick = ()=>{
+            if(!confirm('ยืนยันลบใบประมูลนี้? ราคาสูงสุดที่แท็บ Employee Live จะคำนวณใหม่ทันที')) return;
+            apiPost({ action:'adminDeleteAuctionBid', password: STATE.adminPassword, bidId: btn.dataset.id }).then(res=>{
+              if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
+              toast('ลบใบประมูลสำเร็จ','ok');
+              loadForThisTab().then(res2=>{ if(res2.ok) renderBidDocsTable(); });
+            });
+          };
+        });
+      }
     }
 
-    loadBidDocs().then(renderBidDocsTable);
+    const exportBtn = document.getElementById('btnExportBidDocs');
+    if(exportBtn) exportBtn.onclick = ()=>{
+      if(!bidDocs.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+      const header = isAdmin ? ['เลขที่','วันที่','ผู้ยื่นประมูล','เบอร์ติดต่อ','รายการที่เสนอ'] : ['เลขที่','วันที่','ผู้ยื่นประมูล','รายการที่เสนอ'];
+      const dataRows = bidDocs.map(d=>{
+        const itemsText = (d.Items||[]).map(it=>it.AssetID+' ('+(Number(it.Price)||0)+')').join(', ');
+        return isAdmin ? [d.RunningNo, fmtDate(d.CreatedAt), d.BidderName, d.BidderContact||'', itemsText] : [d.RunningNo, fmtDate(d.CreatedAt), d.BidderName, itemsText];
+      });
+      exportExcel('รายการใบประมูล.xlsx', [{ name:'ใบประมูล', header, rows: dataRows }]);
+    };
+
+    loadForThisTab().then(res=>{
+      if(!res.ok){
+        document.getElementById('bidDocsHost').innerHTML = '<div class="empty">'+esc(res.error||'โหลดไม่สำเร็จ')+'</div>';
+        return;
+      }
+      renderBidDocsTable();
+    });
   }
 
   /* ---------- ใช้ร่วมกัน: โหลดใบประมูล + Modal กรอกใบประมูล (แยกกล่องต่างหาก ไม่ปนกับหน้าพนักงานดู) ---------- */
@@ -1994,7 +2079,7 @@ function renderAuctionLive(root){
   }
 
   if(STATE.auctionLiveTab === 'admin' && isAdmin) renderAdminTab();
-  else if(STATE.auctionLiveTab === 'bids' && isAdmin) renderBidHistoryTab();
+  else if(STATE.auctionLiveTab === 'bids') renderBidHistoryTab();
   else renderEmployeeLiveTab();
 
   if(isAdmin){
@@ -3921,6 +4006,15 @@ function renderSettings(root){
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionClosedNotice" style="margin-top:8px;">บันทึก</button>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>เผยแพร่รายการใบประมูลต่อสาธารณะ</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน แท็บ "รายการใบประมูล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นชื่อผู้ยื่นประมูลและราคาที่เสนอทุกรายการ (ไม่แสดงเบอร์ติดต่อ) — ใช้เปิดภายหลังปิดประมูลแล้วเพื่อความโปร่งใส ปุ่ม Export ยังใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="auctionBidListPublicEnabled" style="width:auto;">
+          <label for="auctionBidListPublicEnabled" style="margin:0;font-weight:400;">เปิดให้ทุกคนดูรายการใบประมูลได้</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionBidListPublic" style="margin-top:8px;">บันทึก</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
         <div id="auctionBracketsHost">กำลังโหลด...</div>
@@ -3977,11 +4071,13 @@ function renderSettings(root){
   loadAuctionBrackets();
   loadAuctionIntroNote();
   loadAuctionClosedNotice();
+  loadAuctionBidListPublic();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
+  document.getElementById('btnSaveAuctionBidListPublic').onclick = saveAuctionBidListPublic;
   document.getElementById('btnAddAuctionBracket').onclick = addAuctionBracketRow;
   document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
   document.getElementById('btnSaveAuctionIntroNote').onclick = saveAuctionIntroNote;
@@ -4221,6 +4317,24 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast(enabled ? 'เปิดประกาศปิดประมูลแล้ว' : 'ปิดประกาศปิดประมูลแล้ว','ok');
+    });
+  }
+
+  function loadAuctionBidListPublic(){
+    apiGet({ action:'getAuctionBidListPublicEnabled' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('auctionBidListPublicEnabled').checked = !!res.data.enabled;
+    });
+  }
+
+  function saveAuctionBidListPublic(){
+    const enabled = document.getElementById('auctionBidListPublicEnabled').checked;
+    const btn = document.getElementById('btnSaveAuctionBidListPublic');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionBidListPublicSetting', password: STATE.adminPassword, enabled }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast(enabled ? 'เปิดเผยแพร่รายการใบประมูลต่อสาธารณะแล้ว' : 'ปิดเผยแพร่รายการใบประมูลต่อสาธารณะแล้ว','ok');
     });
   }
 
