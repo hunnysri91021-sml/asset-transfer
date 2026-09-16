@@ -236,7 +236,8 @@ let STATE = {
   myDepartments: [],
   canViewPrices: false,
   canExportAuction: false,
-  assetListTab: 'all'
+  assetListTab: 'all',
+  auctionLiveTab: 'live'
 };
 
 /* ================= API HELPERS ================= */
@@ -1657,124 +1658,252 @@ function renderAuction(root){
 /* ================= AUCTION LIVE VIEW — "Live ประมูล": พนักงานทุกคนดูราคาสูงสุดแบบสด + Admin คีย์ใบประมูล ================= */
 function renderAuctionLive(root){
   const isAdmin = STATE.role === 'admin';
+  if(!isAdmin && STATE.auctionLiveTab !== 'live') STATE.auctionLiveTab = 'live';
   let liveSummary = { totalCount: 0, bidCount: 0, openCount: 0, items: [] };
   let bidDocs = [];
   let auctionCandidates = []; // รายการที่เปิดประมูลอยู่ตอนนี้ (ดึงจาก getAuctionListing) ใช้เป็นตัวเลือกตอนคีย์ใบประมูล
   let draftBidItems = [];
+
+  // กลับไปหน้าประมูลขาย — ถ้าล็อกอินอยู่ใช้ระบบเมนูปกติ ถ้าเป็นผู้เข้าชมสาธารณะ (ไม่ได้ล็อกอิน) เรียก renderAuction
+  // ตรงๆ เพื่อไม่ให้ render() เรียก showAppChrome() ทำให้แถบเมนู/หัวเว็บที่ตั้งใจซ่อนไว้ตอนเข้าชมแบบสาธารณะโผล่กลับมา
+  function backToAuction(){
+    if(checkAuth()){ STATE.view = 'auction'; render(); }
+    else renderAuction(root);
+  }
 
   root.innerHTML = `
     <div class="card">
       <div class="toolbar no-print" style="margin-bottom:6px;">
         <button class="btn btn-secondary btn-sm" id="btnLiveBackToAuction">← กลับไปหน้าประมูลขาย</button>
       </div>
-      <h2>Live ประมูล</h2>
-      <p style="color:var(--muted);font-size:13px;">แสดงเฉพาะรายการที่มีผู้ยื่นประมูลแล้ว พร้อมราคาสูงสุดของแต่ละรหัสสินค้า — ไม่แสดงชื่อผู้ยื่นประมูล กดรีเฟรชเพื่อดูราคาล่าสุด</p>
-      <div class="row">
-        <div class="stat-tile"><div class="label">รายการทั้งหมด</div><div class="num" id="liveTotalCount">0</div></div>
-        <div class="stat-tile"><div class="label">มีผู้ประมูลแล้ว</div><div class="num" id="liveBidCount">0</div></div>
-        <div class="stat-tile"><div class="label">ยังไม่มีผู้ประมูล</div><div class="num" id="liveOpenCount">0</div></div>
+      <h2>🔴 Live ประมูล</h2>
+      <p style="color:var(--muted);font-size:13px;">หน้าที่พนักงานคลิกเข้ามาดูราคาประมูลแบบ Live กับส่วนที่ Admin บันทึกข้อมูลใบประมูล แยกกันคนละแท็บ</p>
+      <div class="toolbar no-print" style="margin-bottom:0;">
+        <button class="btn ${STATE.auctionLiveTab==='live'?'btn-primary':'btn-secondary'} btn-sm" id="tabLive">Employee Live</button>
+        ${isAdmin ? `
+        <button class="btn ${STATE.auctionLiveTab==='admin'?'btn-primary':'btn-secondary'} btn-sm" id="tabAdmin">Admin</button>
+        <button class="btn ${STATE.auctionLiveTab==='bids'?'btn-primary':'btn-secondary'} btn-sm" id="tabBids">รายการใบประมูล</button>
+        ` : ''}
       </div>
-      <div class="toolbar no-print" style="margin-top:12px;">
-        <input type="text" id="liveSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
-        <select id="liveSort" style="max-width:180px;">
-          <option value="priceDesc">ราคาสูงสุด: มาก → น้อย</option>
-          <option value="priceAsc">ราคาสูงสุด: น้อย → มาก</option>
-        </select>
-        <button class="btn btn-secondary btn-sm" id="btnLiveRefresh">↻ รีเฟรช</button>
-      </div>
-      <div id="liveTableHost" style="margin-top:8px;"><div class="empty">กำลังโหลด...</div></div>
     </div>
-
-    ${isAdmin ? `
-    <div class="card no-print">
-      <h2>บันทึกใบประมูล</h2>
-      <p style="color:var(--muted);font-size:13px;">กรอกข้อมูลจากใบประมูลที่ผู้ยื่นแต่ละคนส่งมา — เลือกรหัสสินค้าจากรายการที่เปิดประมูลอยู่ตอนนี้ได้เลย ถ้าสินค้าเดียวกันมีหลายคนเสนอ ระบบคำนวณราคาสูงสุดให้อัตโนมัติที่หน้า Live ด้านบน</p>
-      <div class="row">
-        <div><label>ชื่อผู้ยื่นประมูล *</label><input type="text" id="bidderName" placeholder="ชื่อ-นามสกุล / บริษัท"></div>
-        <div><label>เบอร์ติดต่อ</label><input type="text" id="bidderContact" placeholder="เบอร์โทร (ถ้ามี)"></div>
-      </div>
-      <label style="margin-top:8px;">หมายเหตุ</label>
-      <input type="text" id="bidRemark" placeholder="(ถ้ามี)">
-      <label style="margin-top:12px;">รายการสินค้าที่เสนอราคา</label>
-      <div id="bidItemsHost"></div>
-      <button class="btn btn-secondary btn-sm" id="btnAddBidItem" style="margin-top:8px;">+ เพิ่มรายการ</button>
-      <div style="margin-top:12px;"><button class="btn btn-primary" id="btnSaveBid">บันทึกใบประมูล</button></div>
-    </div>
-
-    <div class="card no-print">
-      <h2>รายการใบประมูล</h2>
-      <p style="color:var(--muted);font-size:13px;">เก็บข้อมูลแยกตามใบที่ผู้ยื่นส่งมา ใช้ตรวจสอบย้อนหลัง (เห็นชื่อผู้ยื่นและราคาที่เสนอทุกรายการ)</p>
-      <div id="bidDocsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 ใบ</div>
-      <div id="bidDocsHost"><div class="empty">กำลังโหลด...</div></div>
-    </div>
-    ` : ''}
+    <div id="liveTabHost"></div>
   `;
 
-  function loadLive(){
-    document.getElementById('liveTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiGet({ action:'getAuctionBidLiveSummary' }).then(res=>{
-      if(!res.ok){ document.getElementById('liveTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
-      liveSummary = res.data;
-      document.getElementById('liveTotalCount').textContent = liveSummary.totalCount;
-      document.getElementById('liveBidCount').textContent = liveSummary.bidCount;
-      document.getElementById('liveOpenCount').textContent = liveSummary.openCount;
-      renderLiveTable();
-    });
+  document.getElementById('btnLiveBackToAuction').onclick = backToAuction;
+  document.getElementById('tabLive').onclick = ()=>{ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); };
+  if(isAdmin){
+    document.getElementById('tabAdmin').onclick = ()=>{ STATE.auctionLiveTab = 'admin'; renderAuctionLive(root); };
+    document.getElementById('tabBids').onclick = ()=>{ STATE.auctionLiveTab = 'bids'; renderAuctionLive(root); };
   }
 
-  function renderLiveTable(){
-    const host = document.getElementById('liveTableHost');
-    const qq = (document.getElementById('liveSearch').value||'').trim().toLowerCase();
-    const sort = document.getElementById('liveSort').value;
-    let rows = liveSummary.items.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
-    rows = rows.slice().sort((a,b)=> sort==='priceAsc' ? a.MaxPrice-b.MaxPrice : b.MaxPrice-a.MaxPrice);
-    if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่มีผู้ยื่นประมูล</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคาสูงสุด</th><th>จำนวนผู้เสนอ</th></tr>`;
-    rows.forEach(a=>{
-      html += `<tr>
-        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
-        <td><b>${esc(a.AssetID)}</b></td>
-        <td>${esc(a.AssetName)}</td>
-        <td>${esc(a.Department)}</td>
-        <td class="money"><b>${fmtMoney(a.MaxPrice)}</b></td>
-        <td style="text-align:center;">${a.BidCount}</td>
-      </tr>`;
-    });
-    html += '</table></div>';
-    host.innerHTML = html;
+  const tabHost = document.getElementById('liveTabHost');
+
+  /* ---------- Tab 1: Employee Live — ทุกคนดูได้ ไม่แสดงชื่อผู้ยื่นประมูล ---------- */
+  function renderEmployeeLiveTab(){
+    tabHost.innerHTML = `
+      <div class="card">
+        <h2>Employee Live</h2>
+        <p style="color:var(--muted);font-size:13px;">แสดงเฉพาะรายการที่มีผู้ยื่นประมูลแล้ว พร้อมราคาสูงสุดของแต่ละรหัสสินค้า — ไม่แสดงชื่อผู้ยื่นประมูล</p>
+        <div class="row">
+          <div class="stat-tile"><div class="label">รายการทั้งหมด</div><div class="num" id="liveTotalCount">0</div></div>
+          <div class="stat-tile"><div class="label">มีผู้ประมูลแล้ว</div><div class="num" id="liveBidCount">0</div></div>
+          <div class="stat-tile"><div class="label">ยังไม่มีผู้ประมูล</div><div class="num" id="liveOpenCount">0</div></div>
+        </div>
+        <div class="toolbar no-print" style="margin-top:12px;">
+          <input type="text" id="liveSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+          <select id="liveSort" style="max-width:180px;">
+            <option value="priceDesc">ราคาสูงสุด: มาก → น้อย</option>
+            <option value="priceAsc">ราคาสูงสุด: น้อย → มาก</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="btnLiveRefresh">↻ รีเฟรช</button>
+        </div>
+        <div id="liveGridHost" style="margin-top:12px;"><div class="empty">กำลังโหลด...</div></div>
+      </div>
+    `;
+
+    function loadLive(){
+      document.getElementById('liveGridHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+      apiGet({ action:'getAuctionBidLiveSummary' }).then(res=>{
+        if(!res.ok){ document.getElementById('liveGridHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+        liveSummary = res.data;
+        document.getElementById('liveTotalCount').textContent = liveSummary.totalCount;
+        document.getElementById('liveBidCount').textContent = liveSummary.bidCount;
+        document.getElementById('liveOpenCount').textContent = liveSummary.openCount;
+        renderLiveGrid();
+      });
+    }
+
+    function renderLiveGrid(){
+      const gridHost = document.getElementById('liveGridHost');
+      const qq = (document.getElementById('liveSearch').value||'').trim().toLowerCase();
+      const sort = document.getElementById('liveSort').value;
+      let rows = liveSummary.items.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
+      rows = rows.slice().sort((a,b)=> sort==='priceAsc' ? a.MaxPrice-b.MaxPrice : b.MaxPrice-a.MaxPrice);
+      if(!rows.length){ gridHost.innerHTML = '<div class="empty">ยังไม่มีรายการที่มีผู้ยื่นประมูล</div>'; return; }
+      gridHost.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;">` +
+        rows.map(a => `
+          <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;">
+            <span style="position:absolute;right:12px;top:12px;background:#f8d7da;color:var(--red);border-radius:14px;padding:3px 9px;font-size:10px;font-weight:700;">LIVE</span>
+            <div style="font-size:12px;color:var(--muted);font-weight:600;">${esc(a.AssetID)}</div>
+            <div style="font-size:16px;font-weight:700;margin:6px 24px 12px 0;min-height:44px;">${esc(a.AssetName)}</div>
+            <div style="font-size:12px;color:var(--muted);">ราคาประมูลสูงสุด</div>
+            <div style="font-size:24px;font-weight:800;color:var(--navy);margin-top:2px;">${fmtMoney(a.MaxPrice)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:10px;">● ${a.BidCount} ผู้เสนอราคา · ${esc(a.Department||'')}</div>
+          </div>
+        `).join('') + `</div>`;
+    }
+
+    document.getElementById('liveSearch').oninput = renderLiveGrid;
+    document.getElementById('liveSort').onchange = renderLiveGrid;
+    document.getElementById('btnLiveRefresh').onclick = loadLive;
+    loadLive();
   }
 
-  // กลับไปหน้าประมูลขาย — ถ้าล็อกอินอยู่ใช้ระบบเมนูปกติ ถ้าเป็นผู้เข้าชมสาธารณะ (ไม่ได้ล็อกอิน) เรียก renderAuction
-  // ตรงๆ เพื่อไม่ให้ render() เรียก showAppChrome() ทำให้แถบเมนู/หัวเว็บที่ตั้งใจซ่อนไว้ตอนเข้าชมแบบสาธารณะโผล่กลับมา
-  document.getElementById('btnLiveBackToAuction').onclick = ()=>{
-    if(checkAuth()){ STATE.view = 'auction'; render(); }
-    else renderAuction(root);
-  };
-  document.getElementById('liveSearch').oninput = renderLiveTable;
-  document.getElementById('liveSort').onchange = renderLiveTable;
-  document.getElementById('btnLiveRefresh').onclick = loadLive;
-  loadLive();
+  /* ---------- Tab 2: Admin — คีย์ใบประมูล (แยกจากหน้าที่พนักงานดู) ---------- */
+  function flattenBidRows(){
+    const rows = [];
+    bidDocs.forEach(d=>{
+      (d.Items||[]).forEach(it=>{
+        rows.push({ CreatedAt: d.CreatedAt, BidderName: d.BidderName, AssetID: it.AssetID, AssetName: it.AssetName, Price: it.Price });
+      });
+    });
+    return rows;
+  }
+  function maxPriceByAsset(rows){
+    const map = {};
+    rows.forEach(r=>{
+      const p = parseFloat(r.Price) || 0;
+      if(!(r.AssetID in map) || p > map[r.AssetID]) map[r.AssetID] = p;
+    });
+    return map;
+  }
 
-  if(!isAdmin) return;
+  function renderAdminTab(){
+    tabHost.innerHTML = `
+      <div class="card no-print">
+        <h2>⚙️ Admin — คีย์ใบประมูล</h2>
+        <p style="color:var(--muted);font-size:13px;">กรอกข้อมูลจากใบประมูลที่ผู้ยื่นแต่ละคนส่งมา — เลือกรหัสสินค้าจากรายการที่เปิดประมูลอยู่ตอนนี้ได้เลย ถ้าสินค้าเดียวกันมีหลายคนเสนอ ระบบคำนวณราคาสูงสุดให้อัตโนมัติที่แท็บ Employee Live</p>
+        <div class="row">
+          <div class="stat-tile"><div class="label">ผู้ยื่นทั้งหมด</div><div class="num" id="adminBidderCount">0</div></div>
+          <div class="stat-tile"><div class="label">ใบประมูลที่บันทึก</div><div class="num" id="adminDocCount">0</div></div>
+          <div class="stat-tile"><div class="label">รายการที่มีราคา</div><div class="num" id="adminAssetCount">0</div></div>
+        </div>
+        <div class="toolbar no-print" style="margin-top:12px;">
+          <button class="btn btn-primary btn-sm" id="btnOpenBidModal">＋ กรอกใบประมูล</button>
+          <input type="text" id="adminBidSearch" placeholder="ค้นหารหัสสินค้า / ผู้ยื่น..." style="max-width:220px;">
+          <button class="btn btn-secondary btn-sm" id="btnAdminBidRefresh">↻ รีเฟรช</button>
+        </div>
+        <div id="adminBidTableHost" style="margin-top:8px;"><div class="empty">กำลังโหลด...</div></div>
+      </div>
+    `;
+
+    function renderAdminTable(){
+      const rows0 = flattenBidRows();
+      const maxMap = maxPriceByAsset(rows0);
+      const qq = (document.getElementById('adminBidSearch').value||'').trim().toLowerCase();
+      const rows = rows0.filter(r => !qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.BidderName).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1)
+        .slice().sort((a,b)=> new Date(b.CreatedAt) - new Date(a.CreatedAt));
+
+      document.getElementById('adminBidderCount').textContent = new Set(bidDocs.map(d=>d.BidderName)).size;
+      document.getElementById('adminDocCount').textContent = bidDocs.length;
+      document.getElementById('adminAssetCount').textContent = Object.keys(maxMap).length;
+
+      const tblHost = document.getElementById('adminBidTableHost');
+      if(!rows.length){ tblHost.innerHTML = '<div class="empty">ยังไม่มีข้อมูลใบประมูล</div>'; return; }
+      let html = `<div style="overflow-x:auto;"><table><tr><th>เวลา</th><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ยื่น</th><th>ราคาที่เสนอ</th><th>สูงสุดปัจจุบัน</th></tr>`;
+      rows.forEach(r=>{
+        html += `<tr>
+          <td>${fmtDate(r.CreatedAt)}</td>
+          <td><b>${esc(r.AssetID)}</b></td>
+          <td>${esc(r.AssetName)}</td>
+          <td>${esc(r.BidderName)}</td>
+          <td class="money">${fmtMoney(r.Price)}</td>
+          <td class="money"><b>${fmtMoney(maxMap[r.AssetID])}</b></td>
+        </tr>`;
+      });
+      html += '</table></div>';
+      tblHost.innerHTML = html;
+    }
+
+    document.getElementById('btnOpenBidModal').onclick = openBidEntryModal;
+    document.getElementById('adminBidSearch').oninput = renderAdminTable;
+    document.getElementById('btnAdminBidRefresh').onclick = ()=> loadBidDocs().then(renderAdminTable);
+    loadBidDocs().then(renderAdminTable);
+  }
+
+  /* ---------- Tab 3: รายการใบประมูล — ประวัติทุกใบที่เคยคีย์ ใช้ตรวจสอบย้อนหลัง ---------- */
+  function renderBidHistoryTab(){
+    tabHost.innerHTML = `
+      <div class="card no-print">
+        <h2>📄 รายการใบประมูล</h2>
+        <p style="color:var(--muted);font-size:13px;">เก็บข้อมูลแยกตามใบที่ผู้ยื่นส่งมา ใช้ตรวจสอบย้อนหลัง (เห็นชื่อผู้ยื่นและราคาที่เสนอทุกรายการ)</p>
+        <div id="bidDocsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 ใบ</div>
+        <div id="bidDocsHost"><div class="empty">กำลังโหลด...</div></div>
+      </div>
+    `;
+
+    function renderBidDocsTable(){
+      const host2 = document.getElementById('bidDocsHost');
+      document.getElementById('bidDocsCount').textContent = 'รวม '+bidDocs.length+' ใบ';
+      if(!bidDocs.length){ host2.innerHTML = '<div class="empty">ยังไม่มีใบประมูล</div>'; return; }
+      let html = `<div style="overflow-x:auto;"><table><tr><th>เลขที่</th><th>วันที่</th><th>ผู้ยื่นประมูล</th><th>เบอร์ติดต่อ</th><th>รายการที่เสนอ</th><th class="no-print">จัดการ</th></tr>`;
+      bidDocs.forEach(d=>{
+        const itemsHtml = (d.Items||[]).map(it=>esc(it.AssetID)+' ('+fmtMoney(it.Price)+')').join(', ');
+        html += `<tr>
+          <td><b>${esc(d.RunningNo)}</b></td>
+          <td>${fmtDate(d.CreatedAt)}</td>
+          <td>${esc(d.BidderName)}</td>
+          <td>${esc(d.BidderContact||'-')}</td>
+          <td>${itemsHtml||'-'}</td>
+          <td class="no-print"><button class="btn btn-secondary btn-sm bidDocDeleteBtn" data-id="${esc(d.BidID)}">ลบ</button></td>
+        </tr>`;
+      });
+      html += '</table></div>';
+      host2.innerHTML = html;
+
+      host2.querySelectorAll('.bidDocDeleteBtn').forEach(btn=>{
+        btn.onclick = ()=>{
+          if(!confirm('ยืนยันลบใบประมูลนี้? ราคาสูงสุดที่แท็บ Employee Live จะคำนวณใหม่ทันที')) return;
+          apiPost({ action:'adminDeleteAuctionBid', password: STATE.adminPassword, bidId: btn.dataset.id }).then(res=>{
+            if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
+            toast('ลบใบประมูลสำเร็จ','ok');
+            loadBidDocs().then(renderBidDocsTable);
+          });
+        };
+      });
+    }
+
+    loadBidDocs().then(renderBidDocsTable);
+  }
+
+  /* ---------- ใช้ร่วมกัน: โหลดใบประมูล + Modal กรอกใบประมูล (แยกกล่องต่างหาก ไม่ปนกับหน้าพนักงานดู) ---------- */
+  function loadBidDocs(){
+    return apiPost({ action:'adminGetAuctionBidDocuments', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ toast(res.error||'โหลดรายการใบประมูลไม่สำเร็จ','err'); return res; }
+      bidDocs = res.data || [];
+      return res;
+    });
+  }
 
   function renderBidItemsHost(){
-    const host = document.getElementById('bidItemsHost');
-    if(!draftBidItems.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการ กด "+ เพิ่มรายการ"</div>'; return; }
+    const host2 = document.getElementById('bidItemsHost');
+    if(!host2) return;
+    if(!draftBidItems.length){ host2.innerHTML = '<div class="empty">ยังไม่มีรายการ กด "+ เพิ่มรายการ"</div>'; return; }
     let html = '<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>ราคาที่เสนอ</th><th class="no-print">จัดการ</th></tr>';
     draftBidItems.forEach((it, i)=>{
       html += `<tr>
-        <td><select class="bidItemAssetSelect" data-i="${i}" style="min-width:240px;">
+        <td><select class="bidItemAssetSelect" data-i="${i}" style="min-width:220px;">
           <option value="">-- เลือกรหัสสินค้า --</option>
           ${auctionCandidates.map(a=>`<option value="${esc(a.AssetID)}" ${it.assetId===a.AssetID?'selected':''}>${esc(a.AssetID)} - ${esc(a.AssetName)}</option>`).join('')}
         </select></td>
-        <td><input type="text" inputmode="decimal" class="bidItemPriceInput" data-i="${i}" value="${esc(it.price||'')}" style="width:120px;" placeholder="ราคา"></td>
+        <td><input type="text" inputmode="decimal" class="bidItemPriceInput" data-i="${i}" value="${esc(it.price||'')}" style="width:110px;" placeholder="ราคา"></td>
         <td class="no-print"><button class="btn btn-secondary btn-sm bidItemRemoveBtn" data-i="${i}">ลบ</button></td>
       </tr>`;
     });
     html += '</table></div>';
-    host.innerHTML = html;
+    host2.innerHTML = html;
 
-    host.querySelectorAll('.bidItemAssetSelect').forEach(sel=>{
+    host2.querySelectorAll('.bidItemAssetSelect').forEach(sel=>{
       sel.onchange = ()=>{
         const i = parseInt(sel.dataset.i, 10);
         const a = auctionCandidates.find(x=>x.AssetID===sel.value);
@@ -1782,12 +1911,46 @@ function renderAuctionLive(root){
         draftBidItems[i].assetName = a ? a.AssetName : '';
       };
     });
-    host.querySelectorAll('.bidItemPriceInput').forEach(inp=>{
+    host2.querySelectorAll('.bidItemPriceInput').forEach(inp=>{
       inp.oninput = ()=>{ draftBidItems[parseInt(inp.dataset.i, 10)].price = inp.value; };
     });
-    host.querySelectorAll('.bidItemRemoveBtn').forEach(btn=>{
+    host2.querySelectorAll('.bidItemRemoveBtn').forEach(btn=>{
       btn.onclick = ()=>{ draftBidItems.splice(parseInt(btn.dataset.i, 10), 1); renderBidItemsHost(); };
     });
+  }
+
+  function openBidEntryModal(){
+    draftBidItems = [{ assetId:'', assetName:'', price:'' }];
+    const mHost = document.getElementById('modalHost');
+    mHost.innerHTML = `
+      <div class="modal-overlay no-print" id="bidModalOverlay">
+        <div class="modal-box" style="max-width:640px;">
+          <h2>กรอกข้อมูลจากใบประมูล</h2>
+          <p style="color:var(--muted);font-size:13px;margin-top:-8px;">กรอกตามใบที่ผู้ยื่นแต่ละคนส่งให้ Admin</p>
+          <label>ชื่อผู้ยื่นประมูล *</label>
+          <input type="text" id="bidderName" placeholder="ชื่อ-นามสกุล / บริษัท">
+          <div class="row">
+            <div><label>เบอร์ติดต่อ</label><input type="text" id="bidderContact" placeholder="(ถ้ามี)"></div>
+            <div><label>หมายเหตุ</label><input type="text" id="bidRemark" placeholder="(ถ้ามี)"></div>
+          </div>
+          <label style="margin-top:12px;">รายการสินค้าที่เสนอราคา</label>
+          <div id="bidItemsHost"></div>
+          <button class="btn btn-secondary btn-sm" id="btnAddBidItem" style="margin-top:8px;">+ เพิ่มรายการ</button>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="btnCancelBid">ยกเลิก</button>
+            <button class="btn btn-primary" id="btnSaveBid">บันทึกข้อมูล</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('bidModalOverlay').onclick = (e)=>{ if(e.target.id==='bidModalOverlay') closeBidEntryModal(); };
+    document.getElementById('btnCancelBid').onclick = closeBidEntryModal;
+    document.getElementById('btnAddBidItem').onclick = ()=>{ draftBidItems.push({ assetId:'', assetName:'', price:'' }); renderBidItemsHost(); };
+    document.getElementById('btnSaveBid').onclick = saveBid;
+    renderBidItemsHost();
+  }
+  function closeBidEntryModal(){
+    document.getElementById('modalHost').innerHTML = '';
   }
 
   function saveBid(){
@@ -1800,69 +1963,23 @@ function renderAuctionLive(root){
     const btn = document.getElementById('btnSaveBid');
     btn.disabled = true;
     apiPost({ action:'adminCreateAuctionBid', password: STATE.adminPassword, bidderName, bidderContact, remark, items }).then(res=>{
-      btn.disabled = false;
+      if(btn) btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกใบประมูล '+res.data.runningNo+' สำเร็จ','ok');
-      document.getElementById('bidderName').value = '';
-      document.getElementById('bidderContact').value = '';
-      document.getElementById('bidRemark').value = '';
-      draftBidItems = [{ assetId:'', assetName:'', price:'' }];
-      renderBidItemsHost();
-      loadLive();
-      loadBidDocs();
+      closeBidEntryModal();
+      renderAdminTab();
     });
   }
 
-  function loadBidDocs(){
-    document.getElementById('bidDocsHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiPost({ action:'adminGetAuctionBidDocuments', password: STATE.adminPassword }).then(res=>{
-      if(!res.ok){ document.getElementById('bidDocsHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
-      bidDocs = res.data || [];
-      renderBidDocsTable();
+  if(STATE.auctionLiveTab === 'admin' && isAdmin) renderAdminTab();
+  else if(STATE.auctionLiveTab === 'bids' && isAdmin) renderBidHistoryTab();
+  else renderEmployeeLiveTab();
+
+  if(isAdmin){
+    apiGet({ action:'getAuctionListing' }).then(res=>{
+      auctionCandidates = res.ok ? (res.data||[]) : [];
     });
   }
-
-  function renderBidDocsTable(){
-    const host = document.getElementById('bidDocsHost');
-    document.getElementById('bidDocsCount').textContent = 'รวม '+bidDocs.length+' ใบ';
-    if(!bidDocs.length){ host.innerHTML = '<div class="empty">ยังไม่มีใบประมูล</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>เลขที่</th><th>วันที่</th><th>ผู้ยื่นประมูล</th><th>เบอร์ติดต่อ</th><th>รายการที่เสนอ</th><th class="no-print">จัดการ</th></tr>`;
-    bidDocs.forEach(d=>{
-      const itemsHtml = (d.Items||[]).map(it=>esc(it.AssetID)+' ('+fmtMoney(it.Price)+')').join(', ');
-      html += `<tr>
-        <td><b>${esc(d.RunningNo)}</b></td>
-        <td>${fmtDate(d.CreatedAt)}</td>
-        <td>${esc(d.BidderName)}</td>
-        <td>${esc(d.BidderContact||'-')}</td>
-        <td>${itemsHtml||'-'}</td>
-        <td class="no-print"><button class="btn btn-secondary btn-sm bidDocDeleteBtn" data-id="${esc(d.BidID)}">ลบ</button></td>
-      </tr>`;
-    });
-    html += '</table></div>';
-    host.innerHTML = html;
-
-    host.querySelectorAll('.bidDocDeleteBtn').forEach(btn=>{
-      btn.onclick = ()=>{
-        if(!confirm('ยืนยันลบใบประมูลนี้? ราคาสูงสุดที่หน้า Live จะคำนวณใหม่ทันที')) return;
-        apiPost({ action:'adminDeleteAuctionBid', password: STATE.adminPassword, bidId: btn.dataset.id }).then(res=>{
-          if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
-          toast('ลบใบประมูลสำเร็จ','ok');
-          loadBidDocs();
-          loadLive();
-        });
-      };
-    });
-  }
-
-  document.getElementById('btnAddBidItem').onclick = ()=>{ draftBidItems.push({ assetId:'', assetName:'', price:'' }); renderBidItemsHost(); };
-  document.getElementById('btnSaveBid').onclick = saveBid;
-
-  apiGet({ action:'getAuctionListing' }).then(res=>{
-    auctionCandidates = res.ok ? (res.data||[]) : [];
-    draftBidItems = [{ assetId:'', assetName:'', price:'' }];
-    renderBidItemsHost();
-  });
-  loadBidDocs();
 }
 
 /* ================= AUCTION SELECTION VIEW (Admin) — คัดเลือกทรัพย์สินขาย/ตัดชำรุดอนุมัติแล้ว ส่งขึ้นหน้าประมูลขายสาธารณะ ================= */
