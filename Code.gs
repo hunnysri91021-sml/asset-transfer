@@ -1705,19 +1705,30 @@ function buildAuctionWinnersList_() {
     byAsset[assetId].bids.push({ price, bidderName });
   });
 
-  const winners = Object.keys(byAsset).map(assetId => {
-    const { assetName, bids } = byAsset[assetId];
-    const maxPrice = Math.max.apply(null, bids.map(b => b.price));
-    const topBidderNames = [];
-    bids.forEach(b => {
-      if (b.price === maxPrice && topBidderNames.indexOf(b.bidderName) === -1) topBidderNames.push(b.bidderName);
+  // ถ้า Admin ถอดทรัพย์สินออกจากรายการประมูล (SendToAuction=false) และยังไม่ได้ขายผ่านประมูล (AuctionSold ไม่ใช่ true)
+  // ให้หายไปจากประกาศผลด้วย เหมือนที่หายจากหน้า Live ประมูล — แต่ถ้าขายผ่านประมูลไปแล้ว (AuctionSold=true) ยังต้องคงอยู่
+  // ในประกาศผลต่อไป เพราะเป็นผลลัพธ์ที่เกิดขึ้นจริงแล้ว แม้จะหลุดจากรายการที่ "กำลังเปิดประมูลอยู่" ก็ตาม
+  const winners = Object.keys(byAsset)
+    .filter(assetId => {
+      const asset = assetById[assetId];
+      // ไม่มีทรัพย์สินนี้ในชีต Assets เลย (เช่น รายการนอกฐาน/off-listing ที่ Admin คีย์บันทึกเอง) — ไม่เคยมี
+      // สถานะ SendToAuction ให้ถอดตั้งแต่แรก จึงยังคงแสดงในประกาศผลต่อไปเหมือนเดิม ไม่ถือว่าถูก "ถอดออกจากรายการ"
+      if (!asset) return true;
+      return String(asset.SendToAuction).toLowerCase() === 'true' || String(asset.AuctionSold).toLowerCase() === 'true';
+    })
+    .map(assetId => {
+      const { assetName, bids } = byAsset[assetId];
+      const maxPrice = Math.max.apply(null, bids.map(b => b.price));
+      const topBidderNames = [];
+      bids.forEach(b => {
+        if (b.price === maxPrice && topBidderNames.indexOf(b.bidderName) === -1) topBidderNames.push(b.bidderName);
+      });
+      const asset = assetById[assetId] || {};
+      return {
+        AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
+        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || ''
+      };
     });
-    const asset = assetById[assetId] || {};
-    return {
-      AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
-      PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || ''
-    };
-  });
   return winners.sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
 }
 
