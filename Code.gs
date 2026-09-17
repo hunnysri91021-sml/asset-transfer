@@ -1838,6 +1838,7 @@ function getAuctionBidLiveSummary_() {
       AssetName: a.AssetName,
       Department: a.Department,
       DisplayImage: a.DisplayImage,
+      ReferencePrice: a.ReferencePrice,
       MaxPrice: byAsset[assetId].maxPrice,
       BidCount: byAsset[assetId].bidCount
     };
