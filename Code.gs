@@ -1695,26 +1695,30 @@ function buildAuctionWinnersList_() {
   const assetById = {};
   getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
 
-  const winners = {};
+  // รวมทุกใบเสนอราคาต่อรหัสสินค้าก่อน แล้วค่อยหาราคาสูงสุด + รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
+  const byAsset = {};
   itemValues.forEach(r => {
     const assetId = String(r[itemIdx.AssetID]);
     const price = parseFloat(r[itemIdx.Price]) || 0;
     const bidderName = bidderById[String(r[itemIdx.BidID])] || '';
-    if (!winners[assetId]) {
-      const asset = assetById[assetId] || {};
-      winners[assetId] = {
-        AssetID: assetId, AssetName: r[itemIdx.AssetName], MaxPrice: price, BidderName: bidderName, BidCount: 1,
-        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || ''
-      };
-    } else {
-      winners[assetId].BidCount++;
-      if (price > winners[assetId].MaxPrice) {
-        winners[assetId].MaxPrice = price;
-        winners[assetId].BidderName = bidderName;
-      }
-    }
+    if (!byAsset[assetId]) byAsset[assetId] = { assetName: r[itemIdx.AssetName], bids: [] };
+    byAsset[assetId].bids.push({ price, bidderName });
   });
-  return Object.keys(winners).map(id => winners[id]).sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
+
+  const winners = Object.keys(byAsset).map(assetId => {
+    const { assetName, bids } = byAsset[assetId];
+    const maxPrice = Math.max.apply(null, bids.map(b => b.price));
+    const topBidderNames = [];
+    bids.forEach(b => {
+      if (b.price === maxPrice && topBidderNames.indexOf(b.bidderName) === -1) topBidderNames.push(b.bidderName);
+    });
+    const asset = assetById[assetId] || {};
+    return {
+      AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
+      PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || ''
+    };
+  });
+  return winners.sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
 }
 
 // Admin ดูผลประกาศทั้งหมด (เห็นชื่อผู้ประมูลได้เสมอ ไม่ขึ้นกับสวิตช์เปิดเผยแพร่สาธารณะ)
