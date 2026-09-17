@@ -1733,7 +1733,9 @@ function getAuctionWinnersPublicList_() {
 }
 
 // สร้างไฟล์ Excel (.xlsx) ชั่วคราวจากชุดข้อมูล [{name, headers, rows}] แล้วคืนเป็น Blob สำหรับแนบอีเมล
-// อาศัย SpreadsheetApp.create() สร้าง Google Sheet ชั่วคราว แปลงเป็น xlsx ด้วย DriveApp แล้วลบไฟล์ชั่วคราวทิ้งทันที
+// อาศัย SpreadsheetApp.create() สร้าง Google Sheet ชั่วคราว แล้วดึงออกมาเป็น xlsx ผ่าน export URL ของ Google Sheets
+// (DriveApp.getAs(MICROSOFT_EXCEL) แปลงจาก native Google Sheet ไม่ได้โดยตรง — ต้องใช้ export endpoint แทน)
+// จากนั้นลบไฟล์ Google Sheet ชั่วคราวทิ้งทันที
 function buildXlsxBlob_(fileName, sheets) {
   const ss = SpreadsheetApp.create(fileName);
   const fileId = ss.getId();
@@ -1745,7 +1747,16 @@ function buildXlsxBlob_(fileName, sheets) {
         sh.getRange(1, 1, data.length, data[0].length).setValues(data);
       }
     });
-    return DriveApp.getFileById(fileId).getAs(MimeType.MICROSOFT_EXCEL).setName(fileName + '.xlsx');
+    SpreadsheetApp.flush();
+    const exportUrl = 'https://docs.google.com/spreadsheets/d/' + fileId + '/export?format=xlsx';
+    const resp = UrlFetchApp.fetch(exportUrl, {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+    if (resp.getResponseCode() !== 200) {
+      throw new Error('ดาวน์โหลดไฟล์ Excel ไม่สำเร็จ (HTTP ' + resp.getResponseCode() + ')');
+    }
+    return resp.getBlob().setName(fileName + '.xlsx');
   } finally {
     DriveApp.getFileById(fileId).setTrashed(true); // ลบไฟล์ Google Sheet ชั่วคราวทิ้ง เหลือแค่ xlsx ที่แนบอีเมล
   }
