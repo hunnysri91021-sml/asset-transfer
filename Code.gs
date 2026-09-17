@@ -1680,13 +1680,21 @@ function buildAuctionWinnersList_() {
   const bidderById = {};
   bidValues.forEach(r => { bidderById[String(r[bidIdx.BidID])] = String(r[bidIdx.BidderName] || ''); });
 
+  // ราคาทรัพย์สิน (ราคากลางประมูล) และมูลค่าทางบัญชี ดึงจากชีต Assets ตามรหัสทรัพย์สิน เพื่อแนบไปกับผลประมูลได้
+  const assetById = {};
+  getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
+
   const winners = {};
   itemValues.forEach(r => {
     const assetId = String(r[itemIdx.AssetID]);
     const price = parseFloat(r[itemIdx.Price]) || 0;
     const bidderName = bidderById[String(r[itemIdx.BidID])] || '';
     if (!winners[assetId]) {
-      winners[assetId] = { AssetID: assetId, AssetName: r[itemIdx.AssetName], MaxPrice: price, BidderName: bidderName, BidCount: 1 };
+      const asset = assetById[assetId] || {};
+      winners[assetId] = {
+        AssetID: assetId, AssetName: r[itemIdx.AssetName], MaxPrice: price, BidderName: bidderName, BidCount: 1,
+        ReferencePrice: asset.AuctionReferencePrice || '', BookValue: asset.BookValue || ''
+      };
     } else {
       winners[assetId].BidCount++;
       if (price > winners[assetId].MaxPrice) {
@@ -1740,6 +1748,8 @@ function sendAuctionWinnersEmail_(body) {
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetID) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetName) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.BidderName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.ReferencePrice) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.BookValue) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.MaxPrice) + '</td>' +
     '</tr>'
   )).join('');
@@ -1750,7 +1760,7 @@ function sendAuctionWinnersEmail_(body) {
     '<h3>ประกาศผลผู้ประมูลได้ (' + winners.length + ' รายการ)</h3>' +
     (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
     '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
-    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคา</th></tr>' +
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th></tr>' +
     rowsHtml +
     '</table>' +
     '</div>';
