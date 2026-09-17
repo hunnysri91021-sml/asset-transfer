@@ -2033,14 +2033,17 @@ function renderAuctionLive(root){
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
       const host = document.getElementById('winnersTableHost');
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; return; }
-      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th></tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th></tr>`;
       rows.forEach(w=>{
+        const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
         html += `<tr>
           <td><b>${esc(w.AssetID)}</b></td>
           <td>${esc(w.AssetName)}</td>
           <td>${esc(w.BidderName||'-')}</td>
+          <td class="money">${fmtMoney(w.ReferencePrice)}</td>
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
+          <td>${belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : ''}</td>
         </tr>`;
       });
       html += '</table></div>';
@@ -2052,8 +2055,12 @@ function renderAuctionLive(root){
     const exportBtn = document.getElementById('btnExportWinners');
     if(exportBtn) exportBtn.onclick = ()=>{
       if(!winners.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-      const header = ['รหัสสินค้า','รายการ','ผู้ประมูลได้','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา'];
-      const dataRows = winners.map(w=>[w.AssetID, w.AssetName, w.BidderName||'', Number(w.MaxPrice)||0, w.BidCount]);
+      const header = ['รหัสสินค้า','รายการ','ผู้ประมูลได้','ราคากลาง','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
+      const dataRows = winners.map(w=>{
+        const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
+        return [w.AssetID, w.AssetName, w.BidderName||'', Number(w.ReferencePrice)||0, Number(w.MaxPrice)||0, w.BidCount,
+          belowReference ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : ''];
+      });
       exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
     };
 
