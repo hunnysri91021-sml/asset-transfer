@@ -1771,6 +1771,7 @@ function renderAuctionLive(root){
               <div style="font-size:16px;font-weight:700;margin:6px 0 12px;min-height:44px;">${esc(a.AssetName)}</div>
               <div style="font-size:12px;color:var(--muted);">ราคาประมูลสูงสุด</div>
               <div style="font-size:24px;font-weight:800;color:var(--navy);margin-top:2px;">${fmtMoney(a.MaxPrice)}</div>
+              ${a.ReferencePrice ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">ราคากลาง: ${fmtMoney(a.ReferencePrice)}</div>` : ''}
               <div style="font-size:11px;color:var(--muted);margin-top:10px;">● ${a.BidCount} ผู้เสนอราคา · ${esc(a.Department||'')}</div>
             </div>
           </div>
