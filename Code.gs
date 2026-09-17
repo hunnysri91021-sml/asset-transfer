@@ -1732,7 +1732,26 @@ function getAuctionWinnersPublicList_() {
   return { ok: true, data: buildAuctionWinnersList_() };
 }
 
-// Admin กรอกอีเมลผู้รับ + ข้อความเอง แล้วกดส่งประกาศผลผู้ประมูลได้ทั้งหมดเป็นตารางในอีเมล
+// สร้างไฟล์ Excel (.xlsx) ชั่วคราวจากชุดข้อมูล [{name, headers, rows}] แล้วคืนเป็น Blob สำหรับแนบอีเมล
+// อาศัย SpreadsheetApp.create() สร้าง Google Sheet ชั่วคราว แปลงเป็น xlsx ด้วย DriveApp แล้วลบไฟล์ชั่วคราวทิ้งทันที
+function buildXlsxBlob_(fileName, sheets) {
+  const ss = SpreadsheetApp.create(fileName);
+  const fileId = ss.getId();
+  try {
+    sheets.forEach((s, i) => {
+      const sh = i === 0 ? ss.getSheets()[0].setName(s.name) : ss.insertSheet(s.name);
+      const data = [s.headers].concat(s.rows);
+      if (data.length && data[0] && data[0].length) {
+        sh.getRange(1, 1, data.length, data[0].length).setValues(data);
+      }
+    });
+    return DriveApp.getFileById(fileId).getAs(MimeType.MICROSOFT_EXCEL).setName(fileName + '.xlsx');
+  } finally {
+    DriveApp.getFileById(fileId).setTrashed(true); // ลบไฟล์ Google Sheet ชั่วคราวทิ้ง เหลือแค่ xlsx ที่แนบอีเมล
+  }
+}
+
+// Admin กรอกอีเมลผู้รับ + ข้อความเอง แล้วกดส่งประกาศผลผู้ประมูลได้ทั้งหมดเป็นตารางในอีเมล พร้อมแนบไฟล์ Excel
 function sendAuctionWinnersEmail_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const recipients = String(body.recipients || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -1766,7 +1785,12 @@ function sendAuctionWinnersEmail_(body) {
     '</div>';
 
   try {
-    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ — ' + CONFIG.COMPANY_NAME, htmlBody: html });
+    const xlsxBlob = buildXlsxBlob_('ประกาศผลผู้ประมูลได้', [{
+      name: 'ประกาศผล',
+      headers: ['รหัส', 'รายการ', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'มูลค่าทางบัญชี', 'ราคาประมูลได้'],
+      rows: winners.map(w => [w.AssetID, w.AssetName, w.BidderName || '', Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0])
+    }]);
+    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: [xlsxBlob] });
     logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
     return { ok: true, data: { count: winners.length, recipients: recipients } };
   } catch (err) {
@@ -1849,10 +1873,16 @@ function sendAuctionSummaryEmail_(body) {
     '</div>';
 
   try {
+    const xlsxBlob = buildXlsxBlob_('สรุปรายการประมูลขาย', [{
+      name: 'ประมูลขาย',
+      headers: ['รหัส', 'รายการ', 'หน่วยงาน', 'ราคากลาง', 'มูลค่าตามบัญชี'],
+      rows: listing.map(a => [a.AssetID, a.AssetName, a.Department, Number(a.ReferencePrice) || 0, Number(a.BookValue) || 0])
+    }]);
     MailApp.sendEmail({
       to: recipients.join(','),
       subject: 'สรุปรายการประมูลขาย — ' + CONFIG.COMPANY_NAME,
-      htmlBody: html
+      htmlBody: html,
+      attachments: [xlsxBlob]
     });
     logActivity_('', 'ADMIN_SEND_AUCTION_SUMMARY', 'admin', 'ส่งอีเมลสรุปรายการประมูลขาย ' + listing.length + ' รายการ ให้ ' + recipients.join(', '));
     return { ok: true, data: { count: listing.length, recipients } };
