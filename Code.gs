@@ -178,6 +178,12 @@ function doGet(e) {
       case 'getAuctionBidPublicList':
         result = getAuctionBidPublicList_();
         break;
+      case 'getAuctionWinnersPublicEnabled':
+        result = { ok: true, data: { enabled: getAuctionWinnersPublicEnabled_() } };
+        break;
+      case 'getAuctionWinnersPublicList':
+        result = getAuctionWinnersPublicList_();
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -339,6 +345,15 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionBidListPublicSetting':
         result = adminSaveAuctionBidListPublicSetting_(body);
+        break;
+      case 'adminGetAuctionWinners':
+        result = getAuctionWinnersAdmin_(body);
+        break;
+      case 'adminSaveAuctionWinnersPublicSetting':
+        result = adminSaveAuctionWinnersPublicSetting_(body);
+        break;
+      case 'sendAuctionWinnersEmail':
+        result = sendAuctionWinnersEmail_(body);
         break;
       case 'adminSaveAuctionPriceBrackets':
         result = adminSaveAuctionPriceBrackets_(body);
@@ -1646,6 +1661,107 @@ function getAuctionBidPublicList_() {
     Items: r.Items
   }));
   return { ok: true, data: rows };
+}
+
+// ============================================================
+// AUCTION WINNERS — "ประกาศผล": สรุปผู้ประมูลได้ (ราคาสูงสุด) ต่อรหัสสินค้า 1 รายการ จากทุกใบประมูลที่เคยบันทึกไว้
+// (ไม่จำกัดเฉพาะรายการที่ยังเปิดประมูลอยู่ตอนนี้ ต่างจาก getAuctionBidLiveSummary_ เพราะใช้ตอนปิดประมูลแล้วก็ยังดูผลได้)
+// ============================================================
+function buildAuctionWinnersList_() {
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+
+  const bidSh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+  const bidValues = bidSh.getDataRange().getValues();
+  const bidHeaders = bidValues.shift();
+  const bidIdx = indexMap_(bidHeaders);
+  const bidderById = {};
+  bidValues.forEach(r => { bidderById[String(r[bidIdx.BidID])] = String(r[bidIdx.BidderName] || ''); });
+
+  const winners = {};
+  itemValues.forEach(r => {
+    const assetId = String(r[itemIdx.AssetID]);
+    const price = parseFloat(r[itemIdx.Price]) || 0;
+    const bidderName = bidderById[String(r[itemIdx.BidID])] || '';
+    if (!winners[assetId]) {
+      winners[assetId] = { AssetID: assetId, AssetName: r[itemIdx.AssetName], MaxPrice: price, BidderName: bidderName, BidCount: 1 };
+    } else {
+      winners[assetId].BidCount++;
+      if (price > winners[assetId].MaxPrice) {
+        winners[assetId].MaxPrice = price;
+        winners[assetId].BidderName = bidderName;
+      }
+    }
+  });
+  return Object.keys(winners).map(id => winners[id]).sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
+}
+
+// Admin ดูผลประกาศทั้งหมด (เห็นชื่อผู้ประมูลได้เสมอ ไม่ขึ้นกับสวิตช์เปิดเผยแพร่สาธารณะ)
+function getAuctionWinnersAdmin_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  return { ok: true, data: buildAuctionWinnersList_() };
+}
+
+// เปิด/ปิดประกาศผลผู้ประมูลได้ต่อสาธารณะ — Admin เปิดเองเมื่อพร้อมประกาศผล คนละสวิตช์กับการเผยแพร่รายการใบประมูล
+// (AUCTION_BID_LIST_PUBLIC_PROP ด้านบน ซึ่งโชว์ทุกใบที่เคยยื่น ไม่ใช่แค่ผู้ชนะ)
+const AUCTION_WINNERS_PUBLIC_PROP = 'AUCTION_WINNERS_PUBLIC';
+function getAuctionWinnersPublicEnabled_() {
+  return PropertiesService.getScriptProperties().getProperty(AUCTION_WINNERS_PUBLIC_PROP) === '1';
+}
+function adminSaveAuctionWinnersPublicSetting_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const enabled = !!body.enabled;
+  PropertiesService.getScriptProperties().setProperty(AUCTION_WINNERS_PUBLIC_PROP, enabled ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_AUCTION_WINNERS_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การประกาศผลผู้ประมูลได้ต่อสาธารณะ');
+  return { ok: true };
+}
+
+// เวอร์ชันสาธารณะของประกาศผล — ใช้ได้เฉพาะเมื่อ Admin เปิดไว้เท่านั้น ไม่ต้องรหัสผ่านโดยตั้งใจ
+function getAuctionWinnersPublicList_() {
+  if (!getAuctionWinnersPublicEnabled_()) return { ok: false, error: 'ยังไม่เปิดประกาศผลต่อสาธารณะ' };
+  return { ok: true, data: buildAuctionWinnersList_() };
+}
+
+// Admin กรอกอีเมลผู้รับ + ข้อความเอง แล้วกดส่งประกาศผลผู้ประมูลได้ทั้งหมดเป็นตารางในอีเมล
+function sendAuctionWinnersEmail_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const recipients = String(body.recipients || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!recipients.length) return { ok: false, error: 'กรุณาระบุอีเมลผู้รับอย่างน้อย 1 รายการ' };
+
+  const winners = buildAuctionWinnersList_();
+  if (!winners.length) return { ok: false, error: 'ยังไม่มีข้อมูลผลการประมูล' };
+
+  const message = String(body.message || '').trim();
+  const rowsHtml = winners.map((w, i) => (
+    '<tr>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetID) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.BidderName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.MaxPrice) + '</td>' +
+    '</tr>'
+  )).join('');
+
+  const html =
+    '<div style="font-family:Sarabun,Arial,sans-serif;max-width:680px;margin:auto;">' +
+    '<h2 style="color:#1a3c6e;">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</h2>' +
+    '<h3>ประกาศผลผู้ประมูลได้ (' + winners.length + ' รายการ)</h3>' +
+    (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
+    '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคา</th></tr>' +
+    rowsHtml +
+    '</table>' +
+    '</div>';
+
+  try {
+    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ — ' + CONFIG.COMPANY_NAME, htmlBody: html });
+    logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
+    return { ok: true, data: { count: winners.length, recipients: recipients } };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 }
 
 // สรุปแบบ Live สำหรับพนักงานทุกคนดูได้ (ไม่ต้องรหัสผ่านโดยตั้งใจ เหมือนหน้าประมูลขายสาธารณะ) — แสดงเฉพาะรหัสสินค้า

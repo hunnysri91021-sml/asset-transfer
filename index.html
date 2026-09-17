@@ -1660,8 +1660,10 @@ function renderAuctionLive(root){
   const isAdmin = STATE.role === 'admin';
   if(!isAdmin && STATE.auctionLiveTab === 'admin') STATE.auctionLiveTab = 'live';
   let bidListPublicEnabled = isAdmin; // Admin เห็นแท็บนี้เสมออยู่แล้ว — ผู้ใช้อื่นรอผลเช็กจาก getAuctionBidListPublicEnabled ก่อนค่อยโชว์ปุ่มแท็บ
+  let winnersPublicEnabled = isAdmin; // เหมือนกัน แต่คนละสวิตช์ ใช้กับแท็บ "ประกาศผล"
   let liveSummary = { totalCount: 0, bidCount: 0, openCount: 0, items: [] };
   let bidDocs = [];
+  let winners = [];
   let auctionCandidates = []; // รายการที่เปิดประมูลอยู่ตอนนี้ (ดึงจาก getAuctionListing) ใช้เป็นตัวเลือกตอนคีย์ใบประมูล
   let draftBidItems = [];
 
@@ -1691,11 +1693,14 @@ function renderAuctionLive(root){
       <button class="btn ${STATE.auctionLiveTab==='live'?'btn-primary':'btn-secondary'} btn-sm" id="tabLive">Employee Live</button>
       ${isAdmin ? `<button class="btn ${STATE.auctionLiveTab==='admin'?'btn-primary':'btn-secondary'} btn-sm" id="tabAdmin">Admin</button>` : ''}
       ${(isAdmin || bidListPublicEnabled) ? `<button class="btn ${STATE.auctionLiveTab==='bids'?'btn-primary':'btn-secondary'} btn-sm" id="tabBids">รายการใบประมูล</button>` : ''}
+      ${(isAdmin || winnersPublicEnabled) ? `<button class="btn ${STATE.auctionLiveTab==='winners'?'btn-primary':'btn-secondary'} btn-sm" id="tabWinners">ประกาศผล</button>` : ''}
     `;
     document.getElementById('tabLive').onclick = ()=>{ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); };
     if(isAdmin) document.getElementById('tabAdmin').onclick = ()=>{ STATE.auctionLiveTab = 'admin'; renderAuctionLive(root); };
     const tabBidsBtn = document.getElementById('tabBids');
     if(tabBidsBtn) tabBidsBtn.onclick = ()=>{ STATE.auctionLiveTab = 'bids'; renderAuctionLive(root); };
+    const tabWinnersBtn = document.getElementById('tabWinners');
+    if(tabWinnersBtn) tabWinnersBtn.onclick = ()=>{ STATE.auctionLiveTab = 'winners'; renderAuctionLive(root); };
   }
   renderTabNav();
 
@@ -1704,6 +1709,11 @@ function renderAuctionLive(root){
       bidListPublicEnabled = res.ok && !!res.data.enabled;
       renderTabNav();
       if(STATE.auctionLiveTab==='bids' && !bidListPublicEnabled){ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); }
+    });
+    apiGet({ action:'getAuctionWinnersPublicEnabled' }).then(res=>{
+      winnersPublicEnabled = res.ok && !!res.data.enabled;
+      renderTabNav();
+      if(STATE.auctionLiveTab==='winners' && !winnersPublicEnabled){ STATE.auctionLiveTab = 'live'; renderAuctionLive(root); }
     });
   }
 
@@ -1964,6 +1974,107 @@ function renderAuctionLive(root){
     });
   }
 
+  /* ---------- Tab 4: ประกาศผล — สรุปผู้ประมูลได้ (ราคาสูงสุด) ต่อรายการ เปิด/ปิดต่อสาธารณะแยกจากแท็บอื่น ---------- */
+  function renderWinnersTab(){
+    const canManage = checkAuth(); // export/พิมพ์/ส่งอีเมล ใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น
+    tabHost.innerHTML = `
+      <div class="card">
+        <h2>🏆 ประกาศผลผู้ประมูลได้</h2>
+        <p style="color:var(--muted);font-size:13px;">สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ จากทุกใบประมูลที่บันทึกไว้</p>
+        <div class="toolbar no-print">
+          <input type="text" id="winnersSearch" placeholder="ค้นหารหัส / ชื่อสินค้า / ผู้ประมูลได้..." style="max-width:240px;">
+          ${canManage ? `
+          <button class="btn btn-secondary btn-sm" id="btnExportWinners">⬇ Export Excel</button>
+          <button class="btn btn-secondary btn-sm" id="btnPrintWinners">🖨 พิมพ์</button>
+          ` : ''}
+        </div>
+        <div id="winnersCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+        <div id="winnersTableHost"><div class="empty">กำลังโหลด...</div></div>
+      </div>
+
+      ${canManage ? `
+      <div class="card no-print">
+        <h2>📧 ส่งประกาศผลทางอีเมล</h2>
+        <p style="color:var(--muted);font-size:13px;">กรอกอีเมลผู้รับ (คั่นด้วยจุลภาคถ้ามีหลายคน) และข้อความเพิ่มเติมได้ แล้วกดส่ง — ระบบดึงผลผู้ประมูลได้ปัจจุบันมาแนบเป็นตารางให้อัตโนมัติ</p>
+        <label>อีเมลผู้รับ *</label>
+        <input type="text" id="winnersEmailRecipients" placeholder="person1@company.com, person2@company.com">
+        <label style="margin-top:8px;">ข้อความเพิ่มเติม</label>
+        <textarea id="winnersEmailMessage" rows="3" placeholder="(ถ้ามี)"></textarea>
+        <button class="btn btn-primary btn-sm" id="btnSendWinnersEmail" style="margin-top:8px;">📧 ส่งอีเมล</button>
+      </div>
+      ` : ''}
+    `;
+
+    function loadWinners(){
+      document.getElementById('winnersTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+      const req = isAdmin
+        ? apiPost({ action:'adminGetAuctionWinners', password: STATE.adminPassword })
+        : apiGet({ action:'getAuctionWinnersPublicList' });
+      return req.then(res=>{
+        if(!res.ok){
+          document.getElementById('winnersTableHost').innerHTML = '<div class="empty">'+esc(res.error||'โหลดไม่สำเร็จ')+'</div>';
+          winners = [];
+          return res;
+        }
+        winners = res.data || [];
+        renderWinnersTable();
+        return res;
+      });
+    }
+
+    function renderWinnersTable(){
+      const qq = (document.getElementById('winnersSearch').value||'').trim().toLowerCase();
+      const rows = winners.filter(w => !qq ||
+        String(w.AssetID).toLowerCase().indexOf(qq)!==-1 ||
+        String(w.AssetName).toLowerCase().indexOf(qq)!==-1 ||
+        String(w.BidderName).toLowerCase().indexOf(qq)!==-1
+      );
+      document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
+      const host = document.getElementById('winnersTableHost');
+      if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; return; }
+      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th></tr>`;
+      rows.forEach(w=>{
+        html += `<tr>
+          <td><b>${esc(w.AssetID)}</b></td>
+          <td>${esc(w.AssetName)}</td>
+          <td>${esc(w.BidderName||'-')}</td>
+          <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
+          <td style="text-align:center;">${w.BidCount}</td>
+        </tr>`;
+      });
+      html += '</table></div>';
+      host.innerHTML = html;
+    }
+
+    document.getElementById('winnersSearch').oninput = renderWinnersTable;
+
+    const exportBtn = document.getElementById('btnExportWinners');
+    if(exportBtn) exportBtn.onclick = ()=>{
+      if(!winners.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+      const header = ['รหัสสินค้า','รายการ','ผู้ประมูลได้','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา'];
+      const dataRows = winners.map(w=>[w.AssetID, w.AssetName, w.BidderName||'', Number(w.MaxPrice)||0, w.BidCount]);
+      exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
+    };
+
+    const printBtn = document.getElementById('btnPrintWinners');
+    if(printBtn) printBtn.onclick = ()=> window.print();
+
+    const sendBtn = document.getElementById('btnSendWinnersEmail');
+    if(sendBtn) sendBtn.onclick = ()=>{
+      const recipients = document.getElementById('winnersEmailRecipients').value.trim();
+      const message = document.getElementById('winnersEmailMessage').value.trim();
+      if(!recipients){ toast('กรุณาระบุอีเมลผู้รับ','err'); return; }
+      sendBtn.disabled = true;
+      apiPost({ action:'sendAuctionWinnersEmail', password: STATE.adminPassword, recipients, message }).then(res=>{
+        sendBtn.disabled = false;
+        if(!res.ok){ toast(res.error||'ส่งอีเมลไม่สำเร็จ','err'); return; }
+        toast('ส่งอีเมลประกาศผล '+res.data.count+' รายการสำเร็จ','ok');
+      });
+    };
+
+    loadWinners();
+  }
+
   /* ---------- ใช้ร่วมกัน: โหลดใบประมูล + Modal กรอกใบประมูล (แยกกล่องต่างหาก ไม่ปนกับหน้าพนักงานดู) ---------- */
   function loadBidDocs(){
     return apiPost({ action:'adminGetAuctionBidDocuments', password: STATE.adminPassword }).then(res=>{
@@ -2108,6 +2219,7 @@ function renderAuctionLive(root){
 
   if(STATE.auctionLiveTab === 'admin' && isAdmin) renderAdminTab();
   else if(STATE.auctionLiveTab === 'bids') renderBidHistoryTab();
+  else if(STATE.auctionLiveTab === 'winners') renderWinnersTab();
   else renderEmployeeLiveTab();
 
   if(isAdmin){
@@ -4043,6 +4155,15 @@ function renderSettings(root){
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionBidListPublic" style="margin-top:8px;">บันทึก</button>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ประกาศผลผู้ประมูลได้ต่อสาธารณะ</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน แท็บ "ประกาศผล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นสรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ — คนละสวิตช์กับ "เผยแพร่รายการใบประมูล" ด้านบน ใช้เปิดเมื่อพร้อมประกาศผลแล้ว ปุ่ม Export/พิมพ์/ส่งอีเมล ใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="auctionWinnersPublicEnabled" style="width:auto;">
+          <label for="auctionWinnersPublicEnabled" style="margin:0;font-weight:400;">เปิดให้ทุกคนดูประกาศผลได้</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionWinnersPublic" style="margin-top:8px;">บันทึก</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
         <div id="auctionBracketsHost">กำลังโหลด...</div>
@@ -4100,12 +4221,14 @@ function renderSettings(root){
   loadAuctionIntroNote();
   loadAuctionClosedNotice();
   loadAuctionBidListPublic();
+  loadAuctionWinnersPublic();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
   document.getElementById('btnSaveAuctionBidListPublic').onclick = saveAuctionBidListPublic;
+  document.getElementById('btnSaveAuctionWinnersPublic').onclick = saveAuctionWinnersPublic;
   document.getElementById('btnAddAuctionBracket').onclick = addAuctionBracketRow;
   document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
   document.getElementById('btnSaveAuctionIntroNote').onclick = saveAuctionIntroNote;
@@ -4363,6 +4486,24 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast(enabled ? 'เปิดเผยแพร่รายการใบประมูลต่อสาธารณะแล้ว' : 'ปิดเผยแพร่รายการใบประมูลต่อสาธารณะแล้ว','ok');
+    });
+  }
+
+  function loadAuctionWinnersPublic(){
+    apiGet({ action:'getAuctionWinnersPublicEnabled' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('auctionWinnersPublicEnabled').checked = !!res.data.enabled;
+    });
+  }
+
+  function saveAuctionWinnersPublic(){
+    const enabled = document.getElementById('auctionWinnersPublicEnabled').checked;
+    const btn = document.getElementById('btnSaveAuctionWinnersPublic');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionWinnersPublicSetting', password: STATE.adminPassword, enabled }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast(enabled ? 'เปิดประกาศผลผู้ประมูลได้ต่อสาธารณะแล้ว' : 'ปิดประกาศผลผู้ประมูลได้ต่อสาธารณะแล้ว','ok');
     });
   }
 
