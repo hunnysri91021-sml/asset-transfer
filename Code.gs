@@ -1439,9 +1439,20 @@ function getAuctionListing_() {
       DisplayImage: r.DisplayImage,
       BookValue: r.BookValue || 0,
       AssetStatus: disposed[String(r.AssetID)],
-      ReferencePrice: r.AuctionReferencePrice || '',
+      ReferencePrice: computeEffectiveReferencePrice_(r.AuctionReferencePrice, r.BookValue),
       InterestCount: parseInt(r.AuctionInterestCount, 10) || 0
     }));
+}
+
+// ราคากลาง: ใช้ค่าที่ Admin ระบุไว้ตรงๆ ถ้ามี ถ้ายังไม่ได้ระบุ ให้ดึงตามช่วงราคากลาง (getAuctionPriceBrackets_)
+// จากมูลค่าตามบัญชีของทรัพย์สินแทน — ตรรกะเดียวกับ effectiveReferencePrice()/suggestedReferencePrice() ฝั่งหน้าเว็บ
+// (หน้าประมูลขายคำนวณเองอยู่แล้วที่ฝั่ง client แต่จุดอื่น เช่น Employee Live และอีเมลต่างๆ ต้องได้ค่าที่คำนวณแล้วจาก server)
+function computeEffectiveReferencePrice_(explicitPrice, bookValue) {
+  const explicit = parseFloat(explicitPrice);
+  if (!isNaN(explicit) && explicit !== 0) return explicit;
+  const bv = parseFloat(bookValue) || 0;
+  const bracket = getAuctionPriceBrackets_().find(b => bv > b.min && (b.max == null || bv <= b.max));
+  return (bracket && bracket.defaultPrice != null) ? bracket.defaultPrice : 0;
 }
 
 // ผู้เข้าชมหน้าประมูลขาย (ไม่ต้องล็อกอิน) กด "สนใจ" ทรัพย์สินรายการหนึ่ง — เพิ่มตัวนับ AuctionInterestCount ทีละ 1
@@ -1693,7 +1704,7 @@ function buildAuctionWinnersList_() {
       const asset = assetById[assetId] || {};
       winners[assetId] = {
         AssetID: assetId, AssetName: r[itemIdx.AssetName], MaxPrice: price, BidderName: bidderName, BidCount: 1,
-        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: asset.AuctionReferencePrice || '', BookValue: asset.BookValue || ''
+        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || ''
       };
     } else {
       winners[assetId].BidCount++;
