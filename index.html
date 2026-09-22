@@ -351,6 +351,7 @@ function assetStatusBadge(s){
     AwaitingWriteOff: ['pending','รอตัดชำรุด'],
     AwaitingAuction: ['pending','รอประมูล'],
     InAuction: ['pending','กำลังประมูล'],
+    NeedsReAuction: ['rejected','ประมูลใหม่'],
     Sold: ['rejected','ขายแล้ว'],
     WrittenOff: ['draft','ตัดชำรุดแล้ว']
   };
@@ -363,24 +364,30 @@ const LIFECYCLE_BUCKET_LABELS = {
   AwaitingWriteOff: 'รอตัดชำรุด',
   AwaitingAuction: 'รอประมูล',
   InAuction: 'กำลังประมูล',
+  NeedsReAuction: 'ประมูลใหม่',
   Sold: 'ขายแล้ว',
   WrittenOff: 'ตัดชำรุดแล้ว'
 };
-const LIFECYCLE_BUCKET_ORDER = ['Active','AwaitingSale','AwaitingWriteOff','AwaitingAuction','InAuction','Sold','WrittenOff'];
+const LIFECYCLE_BUCKET_ORDER = ['Active','AwaitingSale','AwaitingWriteOff','AwaitingAuction','InAuction','NeedsReAuction','Sold','WrittenOff'];
 // สถานะละเอียดของทรัพย์สินตลอดวงจร (ครอบคลุมทั้งคิว/ใบรออนุมัติ/อนุมัติแล้ว/ประมูล) ใช้กับ Dashboard (คลิกกรอง)
 // และหน้ารายการทรัพย์สิน — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น (สิทธิ์แก้ไข/คิว ฯลฯ) เป็นแค่การจัดกลุ่มแสดงผล
 // queuedPurpose: purpose ('transfer'/'sale'/'writeoff') ของคิวที่ทรัพย์สินนี้ถูกมาร์คไว้ (ถ้ามี) — ใช้เฉพาะตอน AssetStatus ยัง Active
 function assetLifecycleBucket(a, queuedPurpose){
   const sendToAuction = String(a.SendToAuction).toLowerCase()==='true';
   const auctionSold = String(a.AuctionSold).toLowerCase()==='true';
+  // Admin กด "CC" ที่หน้าประกาศผล (ยกเลิกผลผู้ประมูลได้เดิม) จะตั้งเวลาไว้ที่ AuctionCancelledAt — ทรัพย์สินยังอยู่ในรอบ
+  // ประมูลต่อไป (sendToAuction=true, auctionSold=false เหมือนเดิม) แต่ต้องรอผู้เสนอราคาใหม่ จึงแยกเป็นสถานะ "ประมูลใหม่"
+  const needsReAuction = sendToAuction && !auctionSold && !!a.AuctionCancelledAt;
 
   if(a.AssetStatus==='WrittenOff'){
+    if(needsReAuction) return 'NeedsReAuction';
     if(sendToAuction && !auctionSold) return 'InAuction';
     if(auctionSold) return 'Sold';
     return 'WrittenOff';
   }
   if(a.AssetStatus==='Sold'){
     if(a.SaleChannel==='ประมูล'){
+      if(needsReAuction) return 'NeedsReAuction';
       if(sendToAuction && !auctionSold) return 'InAuction';
       if(auctionSold) return 'Sold';
       return 'AwaitingAuction';
@@ -829,6 +836,7 @@ function renderAssetList(root){
           <option value="AwaitingWriteOff">รอตัดชำรุด</option>
           <option value="AwaitingAuction">รอประมูล</option>
           <option value="InAuction">กำลังประมูล</option>
+          <option value="NeedsReAuction">ประมูลใหม่</option>
           <option value="Sold">ขายแล้ว</option>
           <option value="WrittenOff">ตัดชำรุดแล้ว</option>
         </select>
@@ -1228,13 +1236,14 @@ function renderDashboard(root){
     const byDept = {};
     assets.forEach(a=>{
       const d = a.Department || '-';
-      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, auction:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
+      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, auction:0, reauction:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
       byDept[d].count++;
       byDept[d].purchase += parseFloat(a.PurchasePrice)||0;
       byDept[d].book += parseFloat(a.BookValue)||0;
       const st = assetLifecycleBucket(a, queuedPurposeByAsset[a.AssetID]);
       if(st==='Sold') byDept[d].sold++;
       else if(st==='WrittenOff') byDept[d].writtenOff++;
+      else if(st==='NeedsReAuction') byDept[d].reauction++;
       else if(st==='InAuction' || st==='AwaitingAuction') byDept[d].auction++;
       else byDept[d].active++; // Active/AwaitingSale/AwaitingWriteOff — ยังไม่ถูกจำหน่ายจริง นับเป็นใช้งานอยู่
       const purpose = queuedPurposeByAsset[a.AssetID];
@@ -1245,7 +1254,7 @@ function renderDashboard(root){
     });
     const deptRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
-      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td style="text-align:center;">${v.auction}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td style="text-align:center;">${v.auction}</td><td style="text-align:center;">${v.reauction}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
     }).join('');
     const deptTotalRow = Object.keys(byDept).length ? `<tr style="font-weight:600;background:#f7f9fc;">
       <td>รวมทั้งหมด</td>
@@ -1254,6 +1263,7 @@ function renderDashboard(root){
       <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.sold,0)}</td>
       <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.writtenOff,0)}</td>
       <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.auction,0)}</td>
+      <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.reauction,0)}</td>
       <td class="money">${fmtMoney(Object.values(byDept).reduce((s,v)=>s+v.purchase,0))}</td>
       <td class="money">${fmtMoneyOrHidden(Object.values(byDept).reduce((s,v)=>s+v.book,0))}</td>
     </tr>` : '';
@@ -1287,8 +1297,8 @@ function renderDashboard(root){
         <div style="flex:2;min-width:280px;">
           <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
           <div style="overflow-x:auto;">
-            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ประมูลขาย</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
-            ${deptRows || '<tr><td colspan="8" class="empty">ไม่มีข้อมูล</td></tr>'}
+            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ประมูลขาย</th><th>ประมูลใหม่</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
+            ${deptRows || '<tr><td colspan="9" class="empty">ไม่มีข้อมูล</td></tr>'}
             ${deptTotalRow}
             </table>
           </div>
@@ -1329,10 +1339,10 @@ function renderDashboard(root){
       };
       const deptSheet = {
         name: 'สรุปตามหน่วยงาน',
-        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ประมูลขาย','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
+        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ประมูลขาย','ประมูลใหม่','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
         rows: Object.keys(byDept).sort().map(d=>{
           const v = byDept[d];
-          return [d, v.count, v.active, v.sold, v.writtenOff, v.auction, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
+          return [d, v.count, v.active, v.sold, v.writtenOff, v.auction, v.reauction, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
         })
       };
       const deptQueueSheet = {
