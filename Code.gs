@@ -48,7 +48,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
@@ -327,6 +327,12 @@ function doPost(e) {
         break;
       case 'adminSetAuctionSold':
         result = adminSetAuctionSold_(body);
+        break;
+      case 'adminConfirmAuctionWinner':
+        result = adminConfirmAuctionWinner_(body);
+        break;
+      case 'adminCancelAuctionWinner':
+        result = adminCancelAuctionWinner_(body);
         break;
       case 'markAuctionInterest':
         result = markAuctionInterest_(body);
@@ -1423,6 +1429,47 @@ function adminSetAuctionSold_(body) {
   return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
 }
 
+// Admin กด "Confirm" ที่หน้าประกาศผล — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (เท่ากับ adminSetAuctionSold_
+// แต่ auto-fill ชื่อ/ราคาจากผู้ชนะรอบล่าสุดให้อัตโนมัติ ไม่ต้องพิมพ์เอง) ถ้ามีคนเสนอราคาสูงสุดเท่ากันหลายคน (เสมอ) ต้องให้ Admin
+// ไปแก้ไขราคาในใบประมูลให้ต่างกันก่อน ยืนยันตรงนี้ไม่ได้ เพราะไม่รู้ว่าจะระบุชื่อผู้ซื้อเป็นใครในบันทึกขายแล้ว
+function adminConfirmAuctionWinner_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const winner = buildAuctionWinnersList_().find(w => w.AssetID === assetId);
+  if (!winner || !winner.BidderName) return { ok: false, error: 'ยังไม่มีผู้ประมูลในรอบนี้ ไม่สามารถยืนยันได้' };
+  if (winner.BidderName.indexOf(',') !== -1) {
+    return { ok: false, error: 'มีผู้เสนอราคาสูงสุดเท่ากันหลายคน (' + winner.BidderName + ') กรุณาแก้ไขราคาในใบประมูลให้ต่างกันก่อนยืนยัน' };
+  }
+
+  return adminSetAuctionSold_({ password: body.password, assetId: assetId, sold: true, buyer: winner.BidderName, soldPrice: winner.MaxPrice });
+}
+
+// Admin กด "CC" ที่หน้าประกาศผล — ยกเลิก/ไม่ยอมรับราคาผู้ประมูลได้ปัจจุบันของรายการนี้ เข้าสถานะ "ประมูลใหม่": ใบประมูลเดิมที่เคย
+// ยื่นมาแล้วยังเก็บไว้เป็นประวัติในชีต AuctionBidItems/AuctionBids ตามเดิม (ไม่ลบ) แต่จะไม่ถูกนับเป็นผู้ประมูลได้/ราคาปัจจุบันอีก
+// ต่อไป (ทั้งที่หน้าประกาศผลและ Employee Live — ดู getValidAuctionBidItems_) จนกว่าจะมีผู้เสนอราคาใหม่เข้ามาหลังจากนี้
+function adminCancelAuctionWinner_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.AuctionCancelledAt === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ AuctionCancelledAt ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  }
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.getRange(i + 1, idx.AuctionCancelledAt + 1).setValue(new Date());
+      logActivity_('', 'ADMIN_CANCEL_AUCTION_WINNER', 'admin', 'ยกเลิกผลผู้ประมูลได้เดิมของทรัพย์สิน ' + assetId + ' เข้าสถานะประมูลใหม่ (CC)');
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
+}
+
 // รายการที่แสดงจริงในหน้า "ประมูลขาย" สาธารณะ — เฉพาะทรัพย์สินที่ Admin ติ๊กส่งประมูลไว้ และยังไม่มีคนประมูลได้ (AuctionSold)
 // อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะหน้านี้เปิดดูได้โดยไม่ต้องล็อกอิน เหมือนการตั้งค่าหน้าประมูลขายอื่นๆ
 function getAuctionListing_() {
@@ -1477,15 +1524,12 @@ function getAuctionSoldListing_() {
     .sort((a, b) => new Date(b.AuctionSoldAt) - new Date(a.AuctionSoldAt));
 }
 
-// รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลแล้วอย่างน้อย 1 ราย (จากทุกใบประมูลที่เคยบันทึกไว้) — ใช้ติดแท็ก
-// "มีผู้ประมูลแล้ว" ในหน้าประมูลขายหลัก โดยไม่ต้องเปิดดูราคา/ชื่อผู้ยื่น (ต่างจากแท็บ Employee Live ที่เห็นราคาสูงสุดได้)
+// รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลที่ "ยังมีผล" อยู่อย่างน้อย 1 ราย (ดู getValidAuctionBidItems_ — ไม่นับรอบที่ถูก
+// CC/ยกเลิกไปแล้ว) ใช้ติดแท็ก "มีผู้ประมูลแล้ว" ในหน้าประมูลขายหลัก โดยไม่ต้องเปิดดูราคา/ชื่อผู้ยื่น
+// (ต่างจากแท็บ Employee Live ที่เห็นราคาสูงสุดได้)
 function getBiddedAssetIdSet_() {
-  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemHeaders = itemValues.shift();
-  const itemIdx = indexMap_(itemHeaders);
   const set = new Set();
-  itemValues.forEach(r => set.add(String(r[itemIdx.AssetID])));
+  getValidAuctionBidItems_().forEach(it => set.add(it.assetId));
   return set;
 }
 
@@ -1724,30 +1768,16 @@ function getAuctionBidPublicList_() {
 // (ไม่จำกัดเฉพาะรายการที่ยังเปิดประมูลอยู่ตอนนี้ ต่างจาก getAuctionBidLiveSummary_ เพราะใช้ตอนปิดประมูลแล้วก็ยังดูผลได้)
 // ============================================================
 function buildAuctionWinnersList_() {
-  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemHeaders = itemValues.shift();
-  const itemIdx = indexMap_(itemHeaders);
-
-  const bidSh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
-  const bidValues = bidSh.getDataRange().getValues();
-  const bidHeaders = bidValues.shift();
-  const bidIdx = indexMap_(bidHeaders);
-  const bidderById = {};
-  bidValues.forEach(r => { bidderById[String(r[bidIdx.BidID])] = String(r[bidIdx.BidderName] || ''); });
-
   // ราคาทรัพย์สิน (ราคาซื้อ), ราคากลางประมูล และมูลค่าทางบัญชี ดึงจากชีต Assets ตามรหัสทรัพย์สิน เพื่อแนบไปกับผลประมูลได้
   const assetById = {};
   getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
 
-  // รวมทุกใบเสนอราคาต่อรหัสสินค้าก่อน แล้วค่อยหาราคาสูงสุด + รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
+  // รวมทุกใบเสนอราคาที่ "ยังมีผล" (ไม่รวมรอบที่ถูก CC/ยกเลิกไปแล้ว — ดู getValidAuctionBidItems_) ต่อรหัสสินค้าก่อน
+  // แล้วค่อยหาราคาสูงสุด + รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
   const byAsset = {};
-  itemValues.forEach(r => {
-    const assetId = String(r[itemIdx.AssetID]);
-    const price = parseFloat(r[itemIdx.Price]) || 0;
-    const bidderName = bidderById[String(r[itemIdx.BidID])] || '';
-    if (!byAsset[assetId]) byAsset[assetId] = { assetName: r[itemIdx.AssetName], bids: [] };
-    byAsset[assetId].bids.push({ price, bidderName });
+  getValidAuctionBidItems_().forEach(it => {
+    if (!byAsset[it.assetId]) byAsset[it.assetId] = { assetName: it.assetName, bids: [] };
+    byAsset[it.assetId].bids.push({ price: it.price, bidderName: it.bidderName });
   });
 
   // ถ้า Admin ถอดทรัพย์สินออกจากรายการประมูล (SendToAuction=false) และยังไม่ได้ขายผ่านประมูล (AuctionSold ไม่ใช่ true)
@@ -1771,10 +1801,57 @@ function buildAuctionWinnersList_() {
       const asset = assetById[assetId] || {};
       return {
         AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
-        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || ''
+        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || '',
+        Sold: String(asset.AuctionSold).toLowerCase() === 'true'
       };
     });
   return winners.sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
+}
+
+// รวมใบเสนอราคาทุกใบที่ "ยังมีผล" อยู่ (BidID + AssetID + ราคา + ชื่อผู้เสนอ + เวลาที่ยื่น) — ไม่รวมรายการที่ถูก Admin
+// กด "CC" (ยกเลิกผลผู้ประมูลได้เดิม เข้าสถานะประมูลใหม่) ไปแล้ว: ใบเสนอราคาที่ยื่นก่อนหรือเท่ากับเวลาที่ถูกยกเลิก (AuctionCancelledAt
+// ของทรัพย์สินนั้น) จะไม่ถูกนับอีกต่อไป — แต่แถวข้อมูลจริงในชีต AuctionBidItems/AuctionBids ยังคงอยู่ครบ (เก็บประวัติไว้)
+// ใช้ร่วมกันทั้ง buildAuctionWinnersList_, getAuctionBidLiveSummary_ และ getBiddedAssetIdSet_ เพื่อให้ทุกหน้าที่เกี่ยวข้องตรงกัน
+function getValidAuctionBidItems_() {
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+
+  const bidSh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+  const bidValues = bidSh.getDataRange().getValues();
+  const bidHeaders = bidValues.shift();
+  const bidIdx = indexMap_(bidHeaders);
+  const bidderById = {};
+  const bidCreatedAtById = {};
+  bidValues.forEach(r => {
+    const bidId = String(r[bidIdx.BidID]);
+    bidderById[bidId] = String(r[bidIdx.BidderName] || '');
+    bidCreatedAtById[bidId] = r[bidIdx.CreatedAt];
+  });
+
+  const cancelledAtByAsset = {};
+  getAssetsRaw_().forEach(a => {
+    if (a.AuctionCancelledAt) cancelledAtByAsset[String(a.AssetID)] = new Date(a.AuctionCancelledAt).getTime();
+  });
+
+  return itemValues
+    .map(r => {
+      const bidId = String(r[itemIdx.BidID]);
+      return {
+        assetId: String(r[itemIdx.AssetID]),
+        assetName: r[itemIdx.AssetName],
+        price: parseFloat(r[itemIdx.Price]) || 0,
+        bidderName: bidderById[bidId] || '',
+        createdAt: bidCreatedAtById[bidId]
+      };
+    })
+    .filter(it => {
+      const cutoff = cancelledAtByAsset[it.assetId];
+      if (!cutoff) return true;
+      const createdAt = it.createdAt ? new Date(it.createdAt).getTime() : null;
+      return !!createdAt && createdAt > cutoff;
+    });
 }
 
 // Admin ดูผลประกาศทั้งหมด (เห็นชื่อผู้ประมูลได้เสมอ ไม่ขึ้นกับสวิตช์เปิดเผยแพร่สาธารณะ)
@@ -1891,18 +1968,12 @@ function getAuctionBidLiveSummary_() {
   const listingByAsset = {};
   listing.forEach(a => { listingByAsset[String(a.AssetID)] = a; });
 
-  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemHeaders = itemValues.shift();
-  const itemIdx = indexMap_(itemHeaders);
   const byAsset = {};
-  itemValues.forEach(r => {
-    const assetId = String(r[itemIdx.AssetID]);
-    if (!listingByAsset[assetId]) return;
-    const price = parseFloat(r[itemIdx.Price]) || 0;
-    if (!byAsset[assetId]) byAsset[assetId] = { maxPrice: price, bidCount: 0 };
-    byAsset[assetId].bidCount++;
-    if (price > byAsset[assetId].maxPrice) byAsset[assetId].maxPrice = price;
+  getValidAuctionBidItems_().forEach(it => {
+    if (!listingByAsset[it.assetId]) return;
+    if (!byAsset[it.assetId]) byAsset[it.assetId] = { maxPrice: it.price, bidCount: 0 };
+    byAsset[it.assetId].bidCount++;
+    if (it.price > byAsset[it.assetId].maxPrice) byAsset[it.assetId].maxPrice = it.price;
   });
 
   const items = Object.keys(byAsset).map(assetId => {

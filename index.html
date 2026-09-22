@@ -2139,7 +2139,7 @@ function renderAuctionLive(root){
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
       const host = document.getElementById('winnersTableHost');
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; return; }
-      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th></tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
         html += `<tr>
@@ -2149,11 +2149,48 @@ function renderAuctionLive(root){
           <td class="money">${fmtMoney(w.ReferencePrice)}</td>
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
-          <td>${belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : ''}</td>
+          <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
+          ${isAdmin ? `<td class="no-print">${w.Sold ? '' : (w.BidderName ? `
+            <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
+            <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
+          ` : '-')}</td>` : ''}
         </tr>`;
       });
       html += '</table></div>';
       host.innerHTML = html;
+
+      if(isAdmin){
+        host.querySelectorAll('.winnerConfirmBtn').forEach(btn=>{
+          btn.onclick = ()=> confirmWinner(btn.dataset.id, btn);
+        });
+        host.querySelectorAll('.winnerCcBtn').forEach(btn=>{
+          btn.onclick = ()=> ccWinner(btn.dataset.id, btn);
+        });
+      }
+    }
+
+    // ปุ่ม Confirm — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (ระบบเติมชื่อ/ราคาผู้ชนะให้อัตโนมัติ)
+    function confirmWinner(assetId, btn){
+      if(!confirm('ยืนยันว่าผู้เสนอราคาสูงสุดของรายการ '+assetId+' เป็นผู้ประมูลได้ และทำเครื่องหมายว่าขายแล้ว?')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
+        toast('ยืนยันผู้ประมูลได้ '+assetId+' สำเร็จ — ทำเครื่องหมายขายแล้ว','ok');
+        loadWinners();
+      });
+    }
+
+    // ปุ่ม CC — ยกเลิก/ไม่ยอมรับราคาผู้ประมูลได้ปัจจุบัน เข้าสถานะ "ประมูลใหม่" (ใบประมูลเดิมยังเก็บไว้เป็นประวัติ แค่ไม่นับอีกต่อไป)
+    function ccWinner(assetId, btn){
+      if(!confirm('ยืนยันยกเลิก/ไม่ยอมรับราคาผู้ประมูลได้ปัจจุบันของรายการ '+assetId+'?\nรายการนี้จะเข้าสถานะ "ประมูลใหม่" ต้องรอผู้เสนอราคาใหม่ — ใบประมูลเดิมยังเก็บไว้เป็นประวัติ')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminCancelAuctionWinner', password: STATE.adminPassword, assetId }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+        toast('ยกเลิกผลผู้ประมูลได้เดิมของ '+assetId+' แล้ว — เข้าสถานะประมูลใหม่','ok');
+        loadWinners();
+      });
     }
 
     document.getElementById('winnersSearch').oninput = renderWinnersTable;
