@@ -1099,10 +1099,53 @@ function renderAssetList(root){
     updateSelCount();
   }
 
+  // เปลี่ยน "แท็กสถานะ" เป็น "ขาย"/"ชำรุด"/"ใช้งาน" ที่นี่ ไม่ใช่แค่เปลี่ยนป้ายอย่างเดียว — ให้ "สถานะ" จริง
+  // (คอลัมน์ สถานะ ที่คำนวณจาก AssetStatus) เปลี่ยนตามไปด้วย โดยสร้างใบขาย/ใบตัดชำรุดอนุมัติอัตโนมัติทันที
+  // (หรือคืนสถานะใช้งานถ้าเลือก "ใช้งาน") ส่วนแท็กอื่นที่ไม่ใช่ 3 ค่านี้ (ขายแล้ว/เก็บไว้ใช้/รอเปลี่ยนอะไหล่) ยังเป็นแค่ป้ายเฉยๆ เหมือนเดิม
   function updateTag(assetId, newTag){
+    const a = STATE.assetsFull.find(x=>x.AssetID===assetId);
+    const curStatus = (a && a.AssetStatus) || 'Active';
+
+    if(newTag === 'ขาย' && curStatus !== 'Sold'){
+      if(curStatus === 'WrittenOff'){ toast('ทรัพย์สินนี้ตัดชำรุดไปแล้ว กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน','err'); renderTable(); return; }
+      const buyer = prompt('ระบุชื่อผู้ซื้อ (ถ้ามี) — การเปลี่ยนแท็กเป็น "ขาย" จะสร้างใบขายออกและอนุมัติทันที', '');
+      if(buyer === null){ renderTable(); return; }
+      const priceStr = prompt('ระบุราคาขาย (บาท)', a && a.BookValue ? String(a.BookValue) : '0');
+      if(priceStr === null){ renderTable(); return; }
+      apiPost({ action:'adminQuickDisposeAsset', password: STATE.adminPassword, assetId, kind:'sale', buyer: buyer||'', salePrice: Number(priceStr)||0 }).then(res=>{
+        if(!res.ok){ toast(res.error||'สร้างใบขายไม่สำเร็จ','err'); load(); return; }
+        toast('บันทึกขายทรัพย์สินสำเร็จ (เลขที่ '+res.data.runningNo+')','ok');
+        load();
+      });
+      return;
+    }
+
+    if(newTag === 'ชำรุด' && curStatus !== 'WrittenOff'){
+      if(curStatus === 'Sold'){ toast('ทรัพย์สินนี้ขายไปแล้ว กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน','err'); renderTable(); return; }
+      const reason = prompt('ระบุสาเหตุตัดชำรุด — การเปลี่ยนแท็กเป็น "ชำรุด" จะสร้างใบตัดชำรุดและอนุมัติทันที', 'ชำรุด');
+      if(reason === null){ renderTable(); return; }
+      const priceStr = prompt('ระบุราคาซาก (บาท)', a && a.BookValue ? String(a.BookValue) : '0');
+      if(priceStr === null){ renderTable(); return; }
+      apiPost({ action:'adminQuickDisposeAsset', password: STATE.adminPassword, assetId, kind:'writeoff', reason: reason||'ชำรุด', scrapPrice: Number(priceStr)||0 }).then(res=>{
+        if(!res.ok){ toast(res.error||'สร้างใบตัดชำรุดไม่สำเร็จ','err'); load(); return; }
+        toast('บันทึกตัดชำรุดทรัพย์สินสำเร็จ (เลขที่ '+res.data.runningNo+')','ok');
+        load();
+      });
+      return;
+    }
+
+    if(newTag === 'ใช้งาน' && curStatus !== 'Active'){
+      if(!confirm('เปลี่ยนแท็กเป็น "ใช้งาน" จะคืนสถานะทรัพย์สิน '+assetId+' กลับเป็นใช้งาน (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติไว้) ยืนยันหรือไม่?')){ renderTable(); return; }
+      apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId }).then(res=>{
+        if(!res.ok){ toast(res.error||'คืนสถานะไม่สำเร็จ','err'); load(); return; }
+        toast('คืนสถานะใช้งานสำเร็จ','ok');
+        load();
+      });
+      return;
+    }
+
     apiPost({ action:'adminSaveAsset', password: STATE.adminPassword, asset:{ AssetID: assetId, Tag: newTag } }).then(res=>{
       if(!res.ok){ toast(res.error||'บันทึกแท็กสถานะไม่สำเร็จ','err'); load(); return; }
-      const a = STATE.assetsFull.find(x=>x.AssetID===assetId);
       if(a) a.Tag = newTag;
       toast('บันทึกแท็กสถานะสำเร็จ','ok');
     });
