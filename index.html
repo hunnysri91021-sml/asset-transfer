@@ -2204,6 +2204,7 @@ function renderAuctionLive(root){
   /* ---------- Tab 4: ประกาศผล — สรุปผู้ประมูลได้ (ราคาสูงสุด) ต่อรายการ เปิด/ปิดต่อสาธารณะแยกจากแท็บอื่น ---------- */
   function renderWinnersTab(){
     const canManage = checkAuth(); // export/พิมพ์/ส่งอีเมล ใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น
+    let selectedWinnerAssetIds = []; // เลือกได้หลายรายการเพื่อ Confirm/CC พร้อมกัน — รีเซ็ตทุกครั้งที่เข้าแท็บนี้ใหม่
     tabHost.innerHTML = `
       <div class="card">
         <h2>🏆 ประกาศผลผู้ประมูลได้</h2>
@@ -2215,6 +2216,13 @@ function renderAuctionLive(root){
           <button class="btn btn-secondary btn-sm" id="btnPrintWinners">🖨 พิมพ์</button>
           ` : ''}
         </div>
+        ${isAdmin ? `
+        <div class="toolbar no-print" style="border-top:1px solid var(--border);padding-top:10px;">
+          <span id="winnersSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+          <button class="btn btn-primary btn-sm" id="btnWinnersBulkConfirm">✅ Confirm ที่เลือก</button>
+          <button class="btn btn-secondary btn-sm" id="btnWinnersBulkCc">❌ CC ที่เลือก</button>
+        </div>
+        ` : ''}
         <div id="winnersCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
         <div id="winnersTableHost"><div class="empty">กำลังโหลด...</div></div>
       </div>
@@ -2249,6 +2257,11 @@ function renderAuctionLive(root){
       });
     }
 
+    function updateWinnersSelCount(){
+      const el = document.getElementById('winnersSelCount');
+      if(el) el.textContent = 'เลือกไว้ '+selectedWinnerAssetIds.length+' รายการ';
+    }
+
     function renderWinnersTable(){
       const qq = (document.getElementById('winnersSearch').value||'').trim().toLowerCase();
       const rows = winners.filter(w => !qq ||
@@ -2258,11 +2271,17 @@ function renderAuctionLive(root){
       );
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
       const host = document.getElementById('winnersTableHost');
-      if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; return; }
-      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
+      if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
+      // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว และมีผู้ประมูลได้)
+      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName).map(w=>w.AssetID);
+      const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
+      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
+        const actionable = !w.Sold && w.BidderName;
+        const checked = selectedWinnerAssetIds.indexOf(w.AssetID)!==-1 ? 'checked' : '';
         html += `<tr>
+          ${isAdmin ? `<td class="no-print">${actionable ? `<input type="checkbox" class="winnerRowChk" data-id="${esc(w.AssetID)}" ${checked}>` : ''}</td>` : ''}
           <td><b>${esc(w.AssetID)}</b></td>
           <td>${esc(w.AssetName)}</td>
           <td>${esc(w.BidderName||'-')}</td>
@@ -2286,6 +2305,24 @@ function renderAuctionLive(root){
         host.querySelectorAll('.winnerCcBtn').forEach(btn=>{
           btn.onclick = ()=> ccWinner(btn.dataset.id, btn);
         });
+        const selectAllEl = document.getElementById('winnersSelectAll');
+        if(selectAllEl) selectAllEl.onchange = (e)=>{
+          if(e.target.checked){
+            actionableIds.forEach(id=>{ if(selectedWinnerAssetIds.indexOf(id)===-1) selectedWinnerAssetIds.push(id); });
+          } else {
+            selectedWinnerAssetIds = selectedWinnerAssetIds.filter(id=>actionableIds.indexOf(id)===-1);
+          }
+          renderWinnersTable();
+        };
+        host.querySelectorAll('.winnerRowChk').forEach(chk=>{
+          chk.onchange = ()=>{
+            const id = chk.dataset.id;
+            if(chk.checked){ if(selectedWinnerAssetIds.indexOf(id)===-1) selectedWinnerAssetIds.push(id); }
+            else selectedWinnerAssetIds = selectedWinnerAssetIds.filter(x=>x!==id);
+            updateWinnersSelCount();
+          };
+        });
+        updateWinnersSelCount();
       }
     }
 
@@ -2312,6 +2349,53 @@ function renderAuctionLive(root){
         loadWinners();
       });
     }
+
+    // ปุ่ม "Confirm ที่เลือก" — ทำ Confirm ให้ทุกรายการที่ติ๊กไว้ทีละรายการต่อเนื่องกัน (กันชนกับ backend ที่ล็อกทีละคำขอ)
+    function bulkConfirmWinners(){
+      if(!selectedWinnerAssetIds.length){ toast('กรุณาเลือกรายการก่อน','err'); return; }
+      if(!confirm('ยืนยัน Confirm ผู้ประมูลได้ของ '+selectedWinnerAssetIds.length+' รายการที่เลือก?')) return;
+      const ids = selectedWinnerAssetIds.slice();
+      let done = 0, failed = 0;
+      const next = ()=>{
+        if(done+failed >= ids.length){
+          toast('Confirm สำเร็จ '+done+' รายการ'+(failed?(' ผิดพลาด '+failed+' รายการ'):''), failed? 'err':'ok');
+          selectedWinnerAssetIds = [];
+          loadWinners();
+          return;
+        }
+        apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId: ids[done+failed] }).then(res=>{
+          if(res.ok) done++; else failed++;
+          next();
+        });
+      };
+      next();
+    }
+
+    // ปุ่ม "CC ที่เลือก" — ยกเลิก/ไม่ยอมรับราคาให้ทุกรายการที่ติ๊กไว้ทีละรายการต่อเนื่องกัน
+    function bulkCcWinners(){
+      if(!selectedWinnerAssetIds.length){ toast('กรุณาเลือกรายการก่อน','err'); return; }
+      if(!confirm('ยืนยันยกเลิก/ไม่ยอมรับราคาของ '+selectedWinnerAssetIds.length+' รายการที่เลือก?\nรายการเหล่านี้จะเข้าสถานะ "ประมูลใหม่" — ใบประมูลเดิมยังเก็บไว้เป็นประวัติ')) return;
+      const ids = selectedWinnerAssetIds.slice();
+      let done = 0, failed = 0;
+      const next = ()=>{
+        if(done+failed >= ids.length){
+          toast('CC สำเร็จ '+done+' รายการ'+(failed?(' ผิดพลาด '+failed+' รายการ'):''), failed? 'err':'ok');
+          selectedWinnerAssetIds = [];
+          loadWinners();
+          return;
+        }
+        apiPost({ action:'adminCancelAuctionWinner', password: STATE.adminPassword, assetId: ids[done+failed] }).then(res=>{
+          if(res.ok) done++; else failed++;
+          next();
+        });
+      };
+      next();
+    }
+
+    const bulkConfirmBtn = document.getElementById('btnWinnersBulkConfirm');
+    if(bulkConfirmBtn) bulkConfirmBtn.onclick = bulkConfirmWinners;
+    const bulkCcBtn = document.getElementById('btnWinnersBulkCc');
+    if(bulkCcBtn) bulkCcBtn.onclick = bulkCcWinners;
 
     document.getElementById('winnersSearch').oninput = renderWinnersTable;
 
