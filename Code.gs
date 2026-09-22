@@ -391,6 +391,9 @@ function doPost(e) {
       case 'adminRestoreAsset':
         result = adminRestoreAsset_(body);
         break;
+      case 'adminQuickDisposeAsset':
+        result = adminQuickDisposeAsset_(body);
+        break;
       case 'adminSaveDept':
         result = adminSaveDept_(body);
         break;
@@ -1219,6 +1222,114 @@ function clearAuctionSelection_(assetId) {
       return;
     }
   }
+}
+
+// Admin เปลี่ยน "แท็กสถานะ" เป็น "ขาย"/"ชำรุด" ที่หน้ารายการทรัพย์สิน (ทางลัด) — ไม่ใช่แค่เปลี่ยนป้ายเฉยๆ
+// แต่สร้างใบขาย/ใบตัดชำรุดอนุมัติอัตโนมัติทันที (ไม่ผ่านคิวรอ/อีเมลขออนุมัติ) เพื่อให้ "สถานะ" จริง (AssetStatus
+// ที่คำนวณจาก getDisposedAssetStatus_) เปลี่ยนตามแท็กไปด้วย แยกจาก setAssetsTag_ ซึ่งแค่เปลี่ยนป้ายอย่างเดียว
+function adminQuickDisposeAsset_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const kind = body.kind === 'writeoff' ? 'writeoff' : 'sale';
+
+  const disposed = getDisposedAssetStatus_();
+  if (disposed[assetId]) {
+    return { ok: false, error: 'ทรัพย์สินนี้มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อน (สถานะปัจจุบัน: ' + disposed[assetId] + ') กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน ถ้าต้องการทำรายการใหม่' };
+  }
+
+  const asset = getAssetsRaw_().find(a => String(a.AssetID) === assetId);
+  if (!asset) return { ok: false, error: 'ไม่พบทรัพย์สิน: ' + assetId };
+
+  const fromDeptCode = getCodeForDept_(asset.Department) || 'GEN';
+  const dept = getDeptByName_(asset.Department);
+  const now = new Date();
+
+  if (kind === 'sale') {
+    const salePrice = Number(body.salePrice) || 0;
+    const saleId = Utilities.getUuid();
+    const runningNo = withLock_(() => {
+      const rn = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
+      const sSheet = getSS_().getSheetByName(SHEETS.SALES);
+      const sHeaders = sSheet.getRange(1, 1, 1, sSheet.getLastColumn()).getValues()[0];
+      const sIdx = indexMap_(sHeaders);
+      const newRow = sHeaders.map(() => '');
+      newRow[sIdx.SaleID] = saleId;
+      newRow[sIdx.RunningNo] = rn;
+      newRow[sIdx.CreatedAt] = now;
+      newRow[sIdx.FromDept] = asset.Department || '';
+      newRow[sIdx.FromDeptCode] = fromDeptCode;
+      newRow[sIdx.Buyer] = body.buyer || '';
+      newRow[sIdx.Remark] = body.remark || 'สร้างจากหน้ารายการทรัพย์สิน (เปลี่ยนแท็กสถานะเป็นขาย)';
+      newRow[sIdx.Status] = STATUS.APPROVED;
+      newRow[sIdx.ApprovedAt] = now;
+      newRow[sIdx.ApproverComment] = 'อนุมัติอัตโนมัติ (Admin เปลี่ยนแท็กสถานะเป็นขายที่หน้ารายการทรัพย์สิน)';
+      newRow[sIdx.CreatedBy] = 'admin';
+      if (sIdx.Channel !== undefined) newRow[sIdx.Channel] = 'ขาย';
+      if (sIdx.SaleConfirmedAt !== undefined) newRow[sIdx.SaleConfirmedAt] = now;
+      sSheet.appendRow(newRow);
+      return rn;
+    });
+
+    const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+    const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+    const iIdx = indexMap_(iHeaders);
+    const row = iHeaders.map(() => '');
+    row[iIdx.SaleID] = saleId;
+    row[iIdx.LineNo] = 1;
+    row[iIdx.AssetID] = assetId;
+    row[iIdx.AssetName] = asset.AssetName || '';
+    row[iIdx.SalePrice] = salePrice;
+    iSheet.appendRow(row);
+
+    purgeAssetFromAllQueues_([assetId]);
+    setAssetsTag_([assetId], 'ขาย');
+    invalidateDisposedAssetStatusCache_();
+    exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
+    logActivity_(saleId, 'CREATE_SALE', 'admin', 'สร้างใบขายออกทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติจากหน้ารายการทรัพย์สิน)');
+    return { ok: true, data: { saleId, runningNo } };
+  }
+
+  const scrapPrice = (body.scrapPrice !== undefined && body.scrapPrice !== '') ? Number(body.scrapPrice) : (Number(asset.BookValue) || 0);
+  const writeOffId = Utilities.getUuid();
+  const runningNo = withLock_(() => {
+    const rn = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS, dept && dept.StartSeqWriteOff);
+    const wSheet = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+    const wHeaders = wSheet.getRange(1, 1, 1, wSheet.getLastColumn()).getValues()[0];
+    const wIdx = indexMap_(wHeaders);
+    const newRow = wHeaders.map(() => '');
+    newRow[wIdx.WriteOffID] = writeOffId;
+    newRow[wIdx.RunningNo] = rn;
+    newRow[wIdx.CreatedAt] = now;
+    newRow[wIdx.FromDept] = asset.Department || '';
+    newRow[wIdx.FromDeptCode] = fromDeptCode;
+    newRow[wIdx.Reason] = body.reason || 'ชำรุด';
+    newRow[wIdx.Remark] = body.remark || 'สร้างจากหน้ารายการทรัพย์สิน (เปลี่ยนแท็กสถานะเป็นชำรุด)';
+    newRow[wIdx.Status] = STATUS.APPROVED;
+    newRow[wIdx.ApprovedAt] = now;
+    newRow[wIdx.ApproverComment] = 'อนุมัติอัตโนมัติ (Admin เปลี่ยนแท็กสถานะเป็นชำรุดที่หน้ารายการทรัพย์สิน)';
+    newRow[wIdx.CreatedBy] = 'admin';
+    wSheet.appendRow(newRow);
+    return rn;
+  });
+
+  const iSheet = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const row = iHeaders.map(() => '');
+  row[iIdx.WriteOffID] = writeOffId;
+  row[iIdx.LineNo] = 1;
+  row[iIdx.AssetID] = assetId;
+  row[iIdx.AssetName] = asset.AssetName || '';
+  row[iIdx.ScrapPrice] = scrapPrice;
+  iSheet.appendRow(row);
+
+  purgeAssetFromAllQueues_([assetId]);
+  setAssetsTag_([assetId], 'ชำรุด');
+  invalidateDisposedAssetStatusCache_();
+  exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
+  logActivity_(writeOffId, 'CREATE_WRITEOFF', 'admin', 'สร้างใบตัดชำรุดทรัพย์สิน ' + runningNo + ' (อนุมัติอัตโนมัติจากหน้ารายการทรัพย์สิน)');
+  return { ok: true, data: { writeOffId, runningNo } };
 }
 
 // คืนสถานะทรัพย์สิน "รายชิ้น" เดียว ไม่ใช่ทั้งเอกสาร — เอกสารขาย/ตัดชำรุด 1 ใบมักมีทรัพย์สินหลายรายการรวมกัน
