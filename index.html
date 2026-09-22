@@ -1355,6 +1355,8 @@ function renderDashboard(root){
 function renderAuction(root){
   let showBookValue = false;
   let auctionRows = [];
+  let auctionSoldRows = [];
+  let auctionMainTab = 'open'; // 'open' = รายการเปิดประมูล, 'sold' = ทรัพย์สินที่ขายแล้ว
   let priceBrackets = [];
   const typeLabel = { WrittenOff:'ตัดชำรุดแล้ว', Sold:'ขายออก (ประมูล)' };
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
@@ -1424,6 +1426,10 @@ function renderAuction(root){
         <div id="auctionClosedBanner"></div>
         <h2>ประมูลขาย</h2>
         <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และทรัพย์สินขายออกที่เลือกช่องทางประมูล — Admin คัดเลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
+        <div class="toolbar no-print" style="margin-bottom:6px;">
+          <button class="btn ${auctionMainTab==='open'?'btn-primary':'btn-secondary'} btn-sm" id="btnAuctionTabOpen">รายการเปิดประมูล</button>
+          <button class="btn ${auctionMainTab==='sold'?'btn-primary':'btn-secondary'} btn-sm" id="btnAuctionTabSold">ทรัพย์สินที่ขายแล้ว</button>
+        </div>
         <div class="toolbar no-print">
           <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
           <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
@@ -1448,12 +1454,14 @@ function renderAuction(root){
 
     document.getElementById('btnAuctionBackToIntro').onclick = showIntro;
     document.getElementById('btnAuctionGoLive2').onclick = goToAuctionLive;
+    document.getElementById('btnAuctionTabOpen').onclick = ()=>{ if(auctionMainTab!=='open'){ auctionMainTab='open'; showListing(); } };
+    document.getElementById('btnAuctionTabSold').onclick = ()=>{ if(auctionMainTab!=='sold'){ auctionMainTab='sold'; showListing(); } };
     apiGet({ action:'getAuctionClosedNotice' }).then(res=>{
       const banner = document.getElementById('auctionClosedBanner');
       if(banner && res.ok) banner.innerHTML = closedNoticeBannerHtml(res.data);
     });
-    document.getElementById('auctionSearch').oninput = renderAuctionTable;
-    document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
+    document.getElementById('auctionSearch').oninput = renderCurrentTab;
+    document.getElementById('auctionDeptFilter').onchange = renderCurrentTab;
     const exportBtn = document.getElementById('btnAuctionExport');
     if(exportBtn) exportBtn.onclick = exportAuction;
     const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
@@ -1461,7 +1469,7 @@ function renderAuction(root){
       toggleBtn.onclick = ()=>{
         showBookValue = !showBookValue;
         toggleBtn.textContent = showBookValue ? '🙈 ซ่อนมูลค่าตามบัญชี' : '👁 แสดงมูลค่าตามบัญชี';
-        renderAuctionTable();
+        renderCurrentTab();
       };
     }
     const sendSummaryBtn = document.getElementById('btnSendAuctionSummary');
@@ -1485,6 +1493,7 @@ function renderAuction(root){
 
   function load(){
     document.getElementById('auctionTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    if(auctionMainTab === 'sold'){ loadSold(); return; }
     Promise.all([
       apiGet({ action:'getAuctionListing' }),
       apiGet({ action:'getAuctionPriceBrackets' })
@@ -1497,6 +1506,22 @@ function renderAuction(root){
       deptSel.innerHTML = '<option value="">ทุกหน่วยงาน</option>' + depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
       renderAuctionTable();
     });
+  }
+
+  function loadSold(){
+    apiGet({ action:'getAuctionSoldListing' }).then(res=>{
+      if(!res.ok){ document.getElementById('auctionTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      auctionSoldRows = res.data || [];
+      const deptSel = document.getElementById('auctionDeptFilter');
+      const depts = [...new Set(auctionSoldRows.map(a=>a.Department).filter(Boolean))].sort();
+      deptSel.innerHTML = '<option value="">ทุกหน่วยงาน</option>' + depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
+      renderSoldTable();
+    });
+  }
+
+  function renderCurrentTab(){
+    if(auctionMainTab === 'sold') renderSoldTable();
+    else renderAuctionTable();
   }
 
   // ราคากลางเริ่มต้นที่แนะนำให้ตามช่วงมูลค่าตามบัญชี (Admin แก้ไขเป็นค่าอื่นได้เสมอ) — ใช้แค่เป็นค่าเริ่มต้นตอนยังไม่เคยตั้งราคากลาง
@@ -1515,7 +1540,8 @@ function renderAuction(root){
   function baseFilteredRows(){
     const qq = (document.getElementById('auctionSearch').value||'').trim().toLowerCase();
     const deptFilter = document.getElementById('auctionDeptFilter').value;
-    return auctionRows.filter(r =>
+    const source = auctionMainTab === 'sold' ? auctionSoldRows : auctionRows;
+    return source.filter(r =>
       (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
       (!deptFilter || r.Department===deptFilter)
     );
@@ -1551,6 +1577,31 @@ function renderAuction(root){
     });
     html += '</table></div>';
     return html;
+  }
+
+  // แท็บ "ทรัพย์สินที่ขายแล้ว" — ทรัพย์สินที่ขายผ่านประมูลสำเร็จแล้ว (AuctionSold=true) แยกออกมาจากรายการเปิดประมูล
+  function renderSoldTable(){
+    const host = document.getElementById('auctionTableHost');
+    const rows = baseFilteredRows();
+    document.getElementById('auctionCount').textContent = `รวม ${rows.length} รายการ`;
+    if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีทรัพย์สินที่ขายผ่านประมูล</div>'; return; }
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th><th>ผู้ประมูลได้</th><th>ราคาที่ขายได้</th><th>วันที่ขาย</th><th>สถานะ</th></tr>`;
+    rows.forEach(a=>{
+      html += `<tr>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td class="money">${a.ReferencePrice ? fmtMoney(a.ReferencePrice) : '-'}</td>
+        <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
+        <td>${esc(a.AuctionBuyer||'-')}</td>
+        <td class="money"><b>${fmtMoney(a.AuctionSoldPrice)}</b></td>
+        <td>${a.AuctionSoldAt ? esc(fmtDate(a.AuctionSoldAt)) : '-'}</td>
+        <td><span class="badge badge-approved">✅ ขายแล้ว</span></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
   }
 
   // จำนวนคนสนใจ — ทุกคนที่เข้าดูหน้านี้ (ไม่ต้องล็อกอิน) กด "สนใจ" ได้ ระบบนับรวมไว้ที่ AuctionInterestCount
@@ -1642,6 +1693,19 @@ function renderAuction(root){
     if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
     const rows = baseFilteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    if(auctionMainTab === 'sold'){
+      const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ราคากลาง','มูลค่าตามบัญชี','ผู้ประมูลได้','ราคาที่ขายได้','วันที่ขาย'];
+      const dataRows = rows.map(a => [
+        a.AssetID, a.AssetName, a.Department,
+        Number(a.ReferencePrice)||0,
+        showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
+        a.AuctionBuyer||'',
+        Number(a.AuctionSoldPrice)||0,
+        a.AuctionSoldAt ? fmtDate(a.AuctionSoldAt) : ''
+      ]);
+      exportExcel('ทรัพย์สินที่ขายแล้ว.xlsx', [{ name:'ขายแล้ว', header, rows: dataRows }]);
+      return;
+    }
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','จำนวนคนสนใจ','ลิงก์รูปภาพ'];
     const dataRows = rows.map(a => [
       a.AssetID, a.AssetName, a.Department, typeLabel[a.AssetStatus]||a.AssetStatus,

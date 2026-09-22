@@ -169,6 +169,9 @@ function doGet(e) {
       case 'getAuctionListing':
         result = { ok: true, data: getAuctionListing_() };
         break;
+      case 'getAuctionSoldListing':
+        result = { ok: true, data: getAuctionSoldListing_() };
+        break;
       case 'getAuctionBidLiveSummary':
         result = { ok: true, data: getAuctionBidLiveSummary_() };
         break;
@@ -1444,6 +1447,34 @@ function getAuctionListing_() {
       InterestCount: parseInt(r.AuctionInterestCount, 10) || 0,
       HasBids: biddedAssetIds.has(String(r.AssetID))
     }));
+}
+
+// รายการทรัพย์สินที่ขายผ่านประมูลสำเร็จแล้ว (AuctionSold=true) — แยกแท็บต่างหากจาก "รายการเปิดประมูล" ในหน้าประมูลขาย
+// เพื่อให้ยังดูประวัติราคาที่ขายได้/ผู้ประมูลได้ย้อนหลังได้ แม้จะหลุดจากรายการที่เปิดประมูลอยู่แล้วก็ตาม
+// อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เปิดดูได้โดยไม่ต้องล็อกอินเหมือนรายการเปิดประมูล
+function getAuctionSoldListing_() {
+  const disposed = getDisposedAssetStatus_();
+  const saleAuctionChannel = getSaleAuctionChannelMap_();
+  const rows = getAssetsRaw_();
+  return rows
+    .filter(r => {
+      const status = disposed[String(r.AssetID)];
+      const eligible = status === 'WrittenOff' || (status === 'Sold' && saleAuctionChannel[String(r.AssetID)]);
+      return eligible && String(r.AuctionSold).toLowerCase() === 'true';
+    })
+    .map(r => ({
+      AssetID: r.AssetID,
+      AssetName: r.AssetName,
+      Department: r.Department,
+      DisplayImage: r.DisplayImage,
+      BookValue: r.BookValue || 0,
+      AssetStatus: disposed[String(r.AssetID)],
+      ReferencePrice: computeEffectiveReferencePrice_(r.AuctionReferencePrice, r.BookValue),
+      AuctionBuyer: r.AuctionBuyer || '',
+      AuctionSoldPrice: r.AuctionSoldPrice || 0,
+      AuctionSoldAt: r.AuctionSoldAt || ''
+    }))
+    .sort((a, b) => new Date(b.AuctionSoldAt) - new Date(a.AuctionSoldAt));
 }
 
 // รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลแล้วอย่างน้อย 1 ราย (จากทุกใบประมูลที่เคยบันทึกไว้) — ใช้ติดแท็ก
