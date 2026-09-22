@@ -1538,6 +1538,7 @@ function renderAuction(root){
         <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
         <td class="no-print">
           <div style="display:flex;flex-direction:column;gap:3px;min-width:110px;">
+            ${a.HasBids ? '<span class="badge badge-approved">✅ มีผู้ประมูลแล้ว</span>' : ''}
             ${interestButtonHtml(a)}
             ${isAdmin ? `
             <input type="text" class="auctionSoldBuyerInput" data-id="${esc(a.AssetID)}" placeholder="ผู้ประมูลได้" style="width:100px;">

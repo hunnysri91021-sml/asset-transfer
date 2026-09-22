@@ -1426,6 +1426,7 @@ function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
   const saleAuctionChannel = getSaleAuctionChannelMap_();
   const rows = getAssetsRaw_();
+  const biddedAssetIds = getBiddedAssetIdSet_();
   return rows
     .filter(r => {
       const status = disposed[String(r.AssetID)];
@@ -1440,8 +1441,21 @@ function getAuctionListing_() {
       BookValue: r.BookValue || 0,
       AssetStatus: disposed[String(r.AssetID)],
       ReferencePrice: computeEffectiveReferencePrice_(r.AuctionReferencePrice, r.BookValue),
-      InterestCount: parseInt(r.AuctionInterestCount, 10) || 0
+      InterestCount: parseInt(r.AuctionInterestCount, 10) || 0,
+      HasBids: biddedAssetIds.has(String(r.AssetID))
     }));
+}
+
+// รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลแล้วอย่างน้อย 1 ราย (จากทุกใบประมูลที่เคยบันทึกไว้) — ใช้ติดแท็ก
+// "มีผู้ประมูลแล้ว" ในหน้าประมูลขายหลัก โดยไม่ต้องเปิดดูราคา/ชื่อผู้ยื่น (ต่างจากแท็บ Employee Live ที่เห็นราคาสูงสุดได้)
+function getBiddedAssetIdSet_() {
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemHeaders = itemValues.shift();
+  const itemIdx = indexMap_(itemHeaders);
+  const set = new Set();
+  itemValues.forEach(r => set.add(String(r[itemIdx.AssetID])));
+  return set;
 }
 
 // ราคากลาง: ใช้ค่าที่ Admin ระบุไว้ตรงๆ ถ้ามี ถ้ายังไม่ได้ระบุ ให้ดึงตามช่วงราคากลาง (getAuctionPriceBrackets_)
