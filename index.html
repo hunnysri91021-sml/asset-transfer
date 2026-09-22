@@ -351,6 +351,7 @@ function assetStatusBadge(s){
     AwaitingWriteOff: ['pending','รอตัดชำรุด'],
     AwaitingAuction: ['pending','รอประมูล'],
     InAuction: ['pending','กำลังประมูล'],
+    NeedsReAuction: ['rejected','ประมูลใหม่'],
     Sold: ['rejected','ขายแล้ว'],
     WrittenOff: ['draft','ตัดชำรุดแล้ว']
   };
@@ -363,24 +364,30 @@ const LIFECYCLE_BUCKET_LABELS = {
   AwaitingWriteOff: 'รอตัดชำรุด',
   AwaitingAuction: 'รอประมูล',
   InAuction: 'กำลังประมูล',
+  NeedsReAuction: 'ประมูลใหม่',
   Sold: 'ขายแล้ว',
   WrittenOff: 'ตัดชำรุดแล้ว'
 };
-const LIFECYCLE_BUCKET_ORDER = ['Active','AwaitingSale','AwaitingWriteOff','AwaitingAuction','InAuction','Sold','WrittenOff'];
+const LIFECYCLE_BUCKET_ORDER = ['Active','AwaitingSale','AwaitingWriteOff','AwaitingAuction','InAuction','NeedsReAuction','Sold','WrittenOff'];
 // สถานะละเอียดของทรัพย์สินตลอดวงจร (ครอบคลุมทั้งคิว/ใบรออนุมัติ/อนุมัติแล้ว/ประมูล) ใช้กับ Dashboard (คลิกกรอง)
 // และหน้ารายการทรัพย์สิน — ไม่กระทบ AssetStatus จริงที่ใช้ในตรรกะอื่น (สิทธิ์แก้ไข/คิว ฯลฯ) เป็นแค่การจัดกลุ่มแสดงผล
 // queuedPurpose: purpose ('transfer'/'sale'/'writeoff') ของคิวที่ทรัพย์สินนี้ถูกมาร์คไว้ (ถ้ามี) — ใช้เฉพาะตอน AssetStatus ยัง Active
 function assetLifecycleBucket(a, queuedPurpose){
   const sendToAuction = String(a.SendToAuction).toLowerCase()==='true';
   const auctionSold = String(a.AuctionSold).toLowerCase()==='true';
+  // Admin กด "CC" ที่หน้าประกาศผล (ยกเลิกผลผู้ประมูลได้เดิม) จะตั้งเวลาไว้ที่ AuctionCancelledAt — ทรัพย์สินยังอยู่ในรอบ
+  // ประมูลต่อไป (sendToAuction=true, auctionSold=false เหมือนเดิม) แต่ต้องรอผู้เสนอราคาใหม่ จึงแยกเป็นสถานะ "ประมูลใหม่"
+  const needsReAuction = sendToAuction && !auctionSold && !!a.AuctionCancelledAt;
 
   if(a.AssetStatus==='WrittenOff'){
+    if(needsReAuction) return 'NeedsReAuction';
     if(sendToAuction && !auctionSold) return 'InAuction';
     if(auctionSold) return 'Sold';
     return 'WrittenOff';
   }
   if(a.AssetStatus==='Sold'){
     if(a.SaleChannel==='ประมูล'){
+      if(needsReAuction) return 'NeedsReAuction';
       if(sendToAuction && !auctionSold) return 'InAuction';
       if(auctionSold) return 'Sold';
       return 'AwaitingAuction';
@@ -829,6 +836,7 @@ function renderAssetList(root){
           <option value="AwaitingWriteOff">รอตัดชำรุด</option>
           <option value="AwaitingAuction">รอประมูล</option>
           <option value="InAuction">กำลังประมูล</option>
+          <option value="NeedsReAuction">ประมูลใหม่</option>
           <option value="Sold">ขายแล้ว</option>
           <option value="WrittenOff">ตัดชำรุดแล้ว</option>
         </select>
@@ -1228,13 +1236,14 @@ function renderDashboard(root){
     const byDept = {};
     assets.forEach(a=>{
       const d = a.Department || '-';
-      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, auction:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
+      if(!byDept[d]) byDept[d] = { count:0, purchase:0, book:0, active:0, sold:0, writtenOff:0, auction:0, reauction:0, transfer:0, sale:0, writeoff:0, noQueue:0 };
       byDept[d].count++;
       byDept[d].purchase += parseFloat(a.PurchasePrice)||0;
       byDept[d].book += parseFloat(a.BookValue)||0;
       const st = assetLifecycleBucket(a, queuedPurposeByAsset[a.AssetID]);
       if(st==='Sold') byDept[d].sold++;
       else if(st==='WrittenOff') byDept[d].writtenOff++;
+      else if(st==='NeedsReAuction') byDept[d].reauction++;
       else if(st==='InAuction' || st==='AwaitingAuction') byDept[d].auction++;
       else byDept[d].active++; // Active/AwaitingSale/AwaitingWriteOff — ยังไม่ถูกจำหน่ายจริง นับเป็นใช้งานอยู่
       const purpose = queuedPurposeByAsset[a.AssetID];
@@ -1245,7 +1254,7 @@ function renderDashboard(root){
     });
     const deptRows = Object.keys(byDept).sort().map(d=>{
       const v = byDept[d];
-      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td style="text-align:center;">${v.auction}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
+      return `<tr><td>${esc(d)}</td><td style="text-align:center;">${v.count}</td><td style="text-align:center;">${v.active}</td><td style="text-align:center;">${v.sold}</td><td style="text-align:center;">${v.writtenOff}</td><td style="text-align:center;">${v.auction}</td><td style="text-align:center;">${v.reauction}</td><td class="money">${fmtMoney(v.purchase)}</td><td class="money">${fmtMoneyOrHidden(v.book)}</td></tr>`;
     }).join('');
     const deptTotalRow = Object.keys(byDept).length ? `<tr style="font-weight:600;background:#f7f9fc;">
       <td>รวมทั้งหมด</td>
@@ -1254,6 +1263,7 @@ function renderDashboard(root){
       <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.sold,0)}</td>
       <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.writtenOff,0)}</td>
       <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.auction,0)}</td>
+      <td style="text-align:center;">${Object.values(byDept).reduce((s,v)=>s+v.reauction,0)}</td>
       <td class="money">${fmtMoney(Object.values(byDept).reduce((s,v)=>s+v.purchase,0))}</td>
       <td class="money">${fmtMoneyOrHidden(Object.values(byDept).reduce((s,v)=>s+v.book,0))}</td>
     </tr>` : '';
@@ -1287,8 +1297,8 @@ function renderDashboard(root){
         <div style="flex:2;min-width:280px;">
           <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
           <div style="overflow-x:auto;">
-            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ประมูลขาย</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
-            ${deptRows || '<tr><td colspan="8" class="empty">ไม่มีข้อมูล</td></tr>'}
+            <table><tr><th>หน่วยงาน</th><th>จำนวนทั้งหมด</th><th>ใช้งาน</th><th>ขายแล้ว</th><th>ตัดชำรุด</th><th>ประมูลขาย</th><th>ประมูลใหม่</th><th>ราคาซื้อรวม</th><th>มูลค่าตามบัญชีรวม</th></tr>
+            ${deptRows || '<tr><td colspan="9" class="empty">ไม่มีข้อมูล</td></tr>'}
             ${deptTotalRow}
             </table>
           </div>
@@ -1329,10 +1339,10 @@ function renderDashboard(root){
       };
       const deptSheet = {
         name: 'สรุปตามหน่วยงาน',
-        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ประมูลขาย','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
+        header: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ประมูลขาย','ประมูลใหม่','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'],
         rows: Object.keys(byDept).sort().map(d=>{
           const v = byDept[d];
-          return [d, v.count, v.active, v.sold, v.writtenOff, v.auction, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
+          return [d, v.count, v.active, v.sold, v.writtenOff, v.auction, v.reauction, v.purchase, canSeePrice() ? v.book : 'ไม่มีสิทธิ์ดู'];
         })
       };
       const deptQueueSheet = {
@@ -1661,23 +1671,47 @@ function renderAuction(root){
 
 /* ================= ทรัพย์สินที่ขายแล้ว — หน้าแยกต่างหากในหมวด "ขายออก" (ต้องล็อกอิน) แสดงผลประมูลที่ปิดจบแล้ว ================= */
 function renderAuctionSoldAssets(root){
-  let rows = [];
+  let directRows = [];
+  let auctionRows = [];
   let showBookValue = false;
   const canExport = STATE.role==='admin' || STATE.canExportAuction;
 
-  function baseFilteredRows(){
+  function filterRows(list){
     const qq = (document.getElementById('soldSearch').value||'').trim().toLowerCase();
     const deptFilter = document.getElementById('soldDeptFilter').value;
-    return rows.filter(r =>
+    return list.filter(r =>
       (!qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1) &&
       (!deptFilter || r.Department===deptFilter)
     );
   }
 
-  function renderTable(){
-    const filtered = baseFilteredRows();
-    document.getElementById('soldCount').textContent = `รวม ${filtered.length} รายการ`;
-    const host = document.getElementById('soldTableHost');
+  function renderDirectTable(){
+    const filtered = filterRows(directRows);
+    document.getElementById('directSoldCount').textContent = `รวม ${filtered.length} รายการ`;
+    const host = document.getElementById('directSoldTableHost');
+    if(!filtered.length){ host.innerHTML = '<div class="empty">ยังไม่มีทรัพย์สินที่ขายออกโดยตรง</div>'; return; }
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>มูลค่าตามบัญชี</th><th>ผู้ซื้อ</th><th>ราคาที่ขายได้</th><th>วันที่ขาย</th><th>สถานะ</th></tr>`;
+    filtered.forEach(a=>{
+      html += `<tr>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td class="money">${showBookValue ? fmtMoney(a.BookValue) : '••••••'}</td>
+        <td>${esc(a.Buyer||'-')}</td>
+        <td class="money"><b>${fmtMoney(a.SalePrice)}</b></td>
+        <td>${a.SoldAt ? esc(fmtDate(a.SoldAt)) : '-'}</td>
+        <td><span class="badge badge-approved">✅ ขายแล้ว</span></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+  }
+
+  function renderAuctionSoldTable(){
+    const filtered = filterRows(auctionRows);
+    document.getElementById('auctionSoldCount').textContent = `รวม ${filtered.length} รายการ`;
+    const host = document.getElementById('auctionSoldTableHost');
     if(!filtered.length){ host.innerHTML = '<div class="empty">ยังไม่มีทรัพย์สินที่ขายผ่านประมูล</div>'; return; }
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th><th>ผู้ประมูลได้</th><th>ราคาที่ขายได้</th><th>วันที่ขาย</th><th>สถานะ</th></tr>`;
     filtered.forEach(a=>{
@@ -1698,51 +1732,94 @@ function renderAuctionSoldAssets(root){
     host.innerHTML = html;
   }
 
+  function renderAllTables(){
+    renderDirectTable();
+    renderAuctionSoldTable();
+  }
+
   function load(){
-    document.getElementById('soldTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiGet({ action:'getAuctionSoldListing' }).then(res=>{
-      if(!res.ok){ document.getElementById('soldTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
-      rows = res.data || [];
+    document.getElementById('directSoldTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    document.getElementById('auctionSoldTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    Promise.all([
+      apiGet({ action:'getDirectSoldListing' }),
+      apiGet({ action:'getAuctionSoldListing' })
+    ]).then(([directRes, auctionRes])=>{
+      if(!directRes.ok){ document.getElementById('directSoldTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(directRes.error||''); }
+      else directRows = directRes.data || [];
+      if(!auctionRes.ok){ document.getElementById('auctionSoldTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(auctionRes.error||''); }
+      else auctionRows = auctionRes.data || [];
+
+      const depts = [...new Set(directRows.concat(auctionRows).map(a=>a.Department).filter(Boolean))].sort();
       const deptSel = document.getElementById('soldDeptFilter');
-      const depts = [...new Set(rows.map(a=>a.Department).filter(Boolean))].sort();
       deptSel.innerHTML = '<option value="">ทุกหน่วยงาน</option>' + depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
-      renderTable();
+
+      renderAllTables();
     });
   }
 
   function exportSold(){
     if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
-    const filtered = baseFilteredRows();
-    if(!filtered.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ราคากลาง','มูลค่าตามบัญชี','ผู้ประมูลได้','ราคาที่ขายได้','วันที่ขาย'];
-    const dataRows = filtered.map(a => [
-      a.AssetID, a.AssetName, a.Department,
-      Number(a.ReferencePrice)||0,
-      showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
-      a.AuctionBuyer||'',
-      Number(a.AuctionSoldPrice)||0,
-      a.AuctionSoldAt ? fmtDate(a.AuctionSoldAt) : ''
-    ]);
-    exportExcel('ทรัพย์สินที่ขายแล้ว.xlsx', [{ name:'ขายแล้ว', header, rows: dataRows }]);
+    const filteredDirect = filterRows(directRows);
+    const filteredAuction = filterRows(auctionRows);
+    if(!filteredDirect.length && !filteredAuction.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const sheets = [];
+    if(filteredDirect.length){
+      sheets.push({
+        name: 'ขาย',
+        header: ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','มูลค่าตามบัญชี','ผู้ซื้อ','ราคาที่ขายได้','วันที่ขาย'],
+        rows: filteredDirect.map(a => [
+          a.AssetID, a.AssetName, a.Department,
+          showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
+          a.Buyer||'',
+          Number(a.SalePrice)||0,
+          a.SoldAt ? fmtDate(a.SoldAt) : ''
+        ])
+      });
+    }
+    if(filteredAuction.length){
+      sheets.push({
+        name: 'ขายจากการประมูล',
+        header: ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ราคากลาง','มูลค่าตามบัญชี','ผู้ประมูลได้','ราคาที่ขายได้','วันที่ขาย'],
+        rows: filteredAuction.map(a => [
+          a.AssetID, a.AssetName, a.Department,
+          Number(a.ReferencePrice)||0,
+          showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
+          a.AuctionBuyer||'',
+          Number(a.AuctionSoldPrice)||0,
+          a.AuctionSoldAt ? fmtDate(a.AuctionSoldAt) : ''
+        ])
+      });
+    }
+    exportExcel('ทรัพย์สินที่ขายแล้ว.xlsx', sheets);
   }
 
   root.innerHTML = `
     <div class="card">
       <h2>ทรัพย์สินที่ขายแล้ว</h2>
-      <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่ขายผ่านประมูลสำเร็จแล้ว (ทำเครื่องหมาย "ขายแล้ว" ที่หน้าประมูลขาย) — แสดงผู้ประมูลได้ ราคาที่ขายได้ และวันที่ขาย</p>
+      <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินที่ขายเรียบร้อยแล้วทั้งหมด แยกเป็นกลุ่ม "ขาย" (ขายออกโดยตรง) และ "ขายจากการประมูล"</p>
       <div class="toolbar no-print">
         <input type="text" id="soldSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <select id="soldDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
         ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnSoldToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
         ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnSoldExport">⬇ Export Excel</button>` : ''}
       </div>
-      <div id="soldCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
-      <div id="soldTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>💰 ขาย</h2>
+      <div id="directSoldCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div id="directSoldTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>🔨 ขายจากการประมูล</h2>
+      <div id="auctionSoldCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div id="auctionSoldTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
 
-  document.getElementById('soldSearch').oninput = renderTable;
-  document.getElementById('soldDeptFilter').onchange = renderTable;
+  document.getElementById('soldSearch').oninput = renderAllTables;
+  document.getElementById('soldDeptFilter').onchange = renderAllTables;
   const exportBtn = document.getElementById('btnSoldExport');
   if(exportBtn) exportBtn.onclick = exportSold;
   const toggleBtn = document.getElementById('btnSoldToggleBookValue');
@@ -1750,7 +1827,7 @@ function renderAuctionSoldAssets(root){
     toggleBtn.onclick = ()=>{
       showBookValue = !showBookValue;
       toggleBtn.textContent = showBookValue ? '🙈 ซ่อนมูลค่าตามบัญชี' : '👁 แสดงมูลค่าตามบัญชี';
-      renderTable();
+      renderAllTables();
     };
   }
 
@@ -2139,7 +2216,7 @@ function renderAuctionLive(root){
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
       const host = document.getElementById('winnersTableHost');
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; return; }
-      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th></tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
         html += `<tr>
@@ -2149,11 +2226,48 @@ function renderAuctionLive(root){
           <td class="money">${fmtMoney(w.ReferencePrice)}</td>
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
-          <td>${belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : ''}</td>
+          <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
+          ${isAdmin ? `<td class="no-print">${w.Sold ? '' : (w.BidderName ? `
+            <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
+            <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
+          ` : '-')}</td>` : ''}
         </tr>`;
       });
       html += '</table></div>';
       host.innerHTML = html;
+
+      if(isAdmin){
+        host.querySelectorAll('.winnerConfirmBtn').forEach(btn=>{
+          btn.onclick = ()=> confirmWinner(btn.dataset.id, btn);
+        });
+        host.querySelectorAll('.winnerCcBtn').forEach(btn=>{
+          btn.onclick = ()=> ccWinner(btn.dataset.id, btn);
+        });
+      }
+    }
+
+    // ปุ่ม Confirm — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (ระบบเติมชื่อ/ราคาผู้ชนะให้อัตโนมัติ)
+    function confirmWinner(assetId, btn){
+      if(!confirm('ยืนยันว่าผู้เสนอราคาสูงสุดของรายการ '+assetId+' เป็นผู้ประมูลได้ และทำเครื่องหมายว่าขายแล้ว?')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
+        toast('ยืนยันผู้ประมูลได้ '+assetId+' สำเร็จ — ทำเครื่องหมายขายแล้ว','ok');
+        loadWinners();
+      });
+    }
+
+    // ปุ่ม CC — ยกเลิก/ไม่ยอมรับราคาผู้ประมูลได้ปัจจุบัน เข้าสถานะ "ประมูลใหม่" (ใบประมูลเดิมยังเก็บไว้เป็นประวัติ แค่ไม่นับอีกต่อไป)
+    function ccWinner(assetId, btn){
+      if(!confirm('ยืนยันยกเลิก/ไม่ยอมรับราคาผู้ประมูลได้ปัจจุบันของรายการ '+assetId+'?\nรายการนี้จะเข้าสถานะ "ประมูลใหม่" ต้องรอผู้เสนอราคาใหม่ — ใบประมูลเดิมยังเก็บไว้เป็นประวัติ')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminCancelAuctionWinner', password: STATE.adminPassword, assetId }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+        toast('ยกเลิกผลผู้ประมูลได้เดิมของ '+assetId+' แล้ว — เข้าสถานะประมูลใหม่','ok');
+        loadWinners();
+      });
     }
 
     document.getElementById('winnersSearch').oninput = renderWinnersTable;
