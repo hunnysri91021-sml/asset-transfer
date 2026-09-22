@@ -172,6 +172,9 @@ function doGet(e) {
       case 'getAuctionSoldListing':
         result = { ok: true, data: getAuctionSoldListing_() };
         break;
+      case 'getDirectSoldListing':
+        result = { ok: true, data: getDirectSoldListing_() };
+        break;
       case 'getAuctionBidLiveSummary':
         result = { ok: true, data: getAuctionBidLiveSummary_() };
         break;
@@ -1522,6 +1525,60 @@ function getAuctionSoldListing_() {
       AuctionSoldAt: r.AuctionSoldAt || ''
     }))
     .sort((a, b) => new Date(b.AuctionSoldAt) - new Date(a.AuctionSoldAt));
+}
+
+// รายการทรัพย์สินที่ขายออกโดยตรง (ช่องทาง "ขาย" ปกติ ไม่ใช่ประมูล) และ Admin กดยืนยัน "ขายแล้ว" แล้ว (SaleConfirmedAt
+// — ดู adminConfirmSale_) แสดงคู่กับ getAuctionSoldListing_ ในหน้า "ทรัพย์สินที่ขายแล้ว" แยกเป็นกลุ่ม "ขาย"
+// ต่างหากจากกลุ่ม "ขายจากการประมูล" — อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เปิดดูได้เหมือนรายการขายผ่านประมูล
+function getDirectSoldListing_() {
+  const saleDocSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleDocValues = saleDocSh.getDataRange().getValues();
+  const saleDocIdx = indexMap_(saleDocValues.shift());
+  const confirmedSaleDocs = {};
+  saleDocValues.forEach(r => {
+    if (r[saleDocIdx.Status] === STATUS.APPROVED && String(r[saleDocIdx.Channel]) !== 'ประมูล' && r[saleDocIdx.SaleConfirmedAt]) {
+      confirmedSaleDocs[String(r[saleDocIdx.SaleID])] = {
+        buyer: String(r[saleDocIdx.Buyer] || ''),
+        confirmedAt: r[saleDocIdx.SaleConfirmedAt]
+      };
+    }
+  });
+
+  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const saleItemValues = saleItemSh.getDataRange().getValues();
+  const saleItemIdx = indexMap_(saleItemValues.shift());
+  const infoByAsset = {};
+  saleItemValues.forEach(r => {
+    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    const doc = confirmedSaleDocs[String(r[saleItemIdx.SaleID])];
+    if (!doc) return;
+    infoByAsset[String(r[saleItemIdx.AssetID])] = {
+      buyer: doc.buyer,
+      soldAt: doc.confirmedAt,
+      salePrice: parseFloat(r[saleItemIdx.SalePrice]) || 0
+    };
+  });
+
+  const assetById = {};
+  getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
+
+  return Object.keys(infoByAsset)
+    .map(assetId => {
+      const asset = assetById[assetId] || {};
+      const info = infoByAsset[assetId];
+      return {
+        AssetID: assetId,
+        AssetName: asset.AssetName || '',
+        Department: asset.Department || '',
+        DisplayImage: asset.DisplayImage || '',
+        BookValue: asset.BookValue || 0,
+        Buyer: info.buyer,
+        SalePrice: info.salePrice,
+        SoldAt: info.soldAt
+      };
+    })
+    .sort((a, b) => new Date(b.SoldAt) - new Date(a.SoldAt));
 }
 
 // รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลที่ "ยังมีผล" อยู่อย่างน้อย 1 ราย (ดู getValidAuctionBidItems_ — ไม่นับรอบที่ถูก
