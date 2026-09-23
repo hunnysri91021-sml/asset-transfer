@@ -358,6 +358,15 @@ function assetStatusBadge(s){
   const v = map[s] || ['approved', 'ใช้งานอยู่'];
   return '<span class="badge badge-'+v[0]+'">'+v[1]+'</span>';
 }
+// ป้ายบอก "สภาพ/ใช้งานได้หรือไม่" ของทรัพย์สินที่เปิดประมูล ให้คนประมูลเห็นชัดเจนตั้งแต่หน้ารายการ ต่างจาก assetStatusBadge
+// ซึ่งบอกสถานะเชิงเอกสารสำหรับ Admin — WrittenOff (ผ่านใบตัดชำรุด) = ชำรุด ใช้งานไม่ได้แล้ว, Sold (ผ่านใบขายออกช่องทาง
+// ประมูล) = ทรัพย์สินยังใช้งานได้ปกติ เพียงแต่หน่วยงานต้องการขายออก
+function assetConditionBadge(assetStatus){
+  if(assetStatus === 'WrittenOff'){
+    return '<span class="badge badge-rejected" style="font-weight:700;">⚠ ชำรุด — ใช้งานไม่ได้</span>';
+  }
+  return '<span class="badge badge-approved" style="font-weight:700;">✅ ยังใช้งานได้</span>';
+}
 const LIFECYCLE_BUCKET_LABELS = {
   Active: 'ใช้งานอยู่',
   AwaitingSale: 'รอขาย',
@@ -1612,7 +1621,7 @@ function renderAuction(root){
 
   function renderRowsTable(rows){
     const isAdmin = STATE.role==='admin';
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ประเภท</th><th>ราคากลาง</th><th>มูลค่าตามบัญชี</th><th>สถานะ</th></tr>`;
     rows.forEach(a=>{
       const refValue = a.ReferencePrice ? a.ReferencePrice : (suggestedReferencePrice(a.BookValue) || '');
       html += `<tr>
@@ -1620,7 +1629,9 @@ function renderAuction(root){
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
         <td>${esc(a.Department)}</td>
-        <td><span class="badge badge-pending">${typeLabel[a.AssetStatus]||esc(a.AssetStatus)}</span></td>
+        <td>${esc(a.Custodian||'-')}</td>
+        <td>${esc(a.Location||'-')}</td>
+        <td>${assetConditionBadge(a.AssetStatus)}</td>
         <td class="money">${isAdmin
           ? `<input type="text" inputmode="decimal" class="auctionPriceInput" data-id="${esc(a.AssetID)}" value="${esc(refValue||'')}" style="width:90px;" placeholder="ราคากลาง">`
           : (refValue ? fmtMoney(refValue) : '-')}</td>
@@ -1731,9 +1742,10 @@ function renderAuction(root){
     if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
     const rows = baseFilteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ประเภท','ราคากลาง','มูลค่าตามบัญชี','จำนวนคนสนใจ','ลิงก์รูปภาพ'];
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ผู้ดูแล','สถานที่','ประเภท','สภาพการใช้งาน','ราคากลาง','มูลค่าตามบัญชี','จำนวนคนสนใจ','ลิงก์รูปภาพ'];
     const dataRows = rows.map(a => [
-      a.AssetID, a.AssetName, a.Department, typeLabel[a.AssetStatus]||a.AssetStatus,
+      a.AssetID, a.AssetName, a.Department, a.Custodian||'', a.Location||'', typeLabel[a.AssetStatus]||a.AssetStatus,
+      a.AssetStatus==='WrittenOff' ? 'ชำรุด — ใช้งานไม่ได้' : 'ยังใช้งานได้',
       effectiveReferencePrice(a) || 'ยังไม่ระบุ',
       showBookValue ? (Number(a.BookValue)||0) : 'ไม่แสดง',
       a.InterestCount||0,
