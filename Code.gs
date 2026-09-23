@@ -1824,13 +1824,19 @@ function markAuctionInterest_(body) {
 // ที่หน้าประกาศผล (มีตัวกรองรอบ) และกันไม่ให้ราคาจากรอบเก่ามานับรวมเป็นผู้ประมูลได้/มีผู้ประมูลแล้วของรอบใหม่
 // ============================================================
 const AUCTION_CURRENT_ROUND_PROP = 'AUCTION_CURRENT_ROUND';
+const AUCTION_ROUND_STARTED_AT_PROP = 'AUCTION_ROUND_STARTED_AT';
 function getAuctionCurrentRound_() {
   const v = parseInt(PropertiesService.getScriptProperties().getProperty(AUCTION_CURRENT_ROUND_PROP), 10);
   return (v && v > 0) ? v : 1;
 }
 
+// currentRound + roundStartedAt (เวลาที่ Admin กด "ปิดรอบและเริ่มรอบใหม่" ล่าสุด, ว่าง = ยังไม่เคยปิดรอบเลยตั้งแต่ใช้
+// ฟีเจอร์นี้ ยังเป็นรอบ 1 มาตั้งแต่ต้น) — หน้าประมูลขายใช้แสดงแถบประกาศ "เริ่มรอบใหม่แล้ว" ให้คนเห็นชัดเจน
 function getAuctionRoundInfo_() {
-  return { currentRound: getAuctionCurrentRound_() };
+  return {
+    currentRound: getAuctionCurrentRound_(),
+    roundStartedAt: PropertiesService.getScriptProperties().getProperty(AUCTION_ROUND_STARTED_AT_PROP) || ''
+  };
 }
 
 // แปลงค่า round ที่ frontend ส่งมาเป็นตัวกรองที่ใช้จริงใน buildAuctionWinnersList_/getValidAuctionBidItems_:
@@ -1866,7 +1872,9 @@ function adminStartNewAuctionRound_(body) {
     }
   }
 
-  PropertiesService.getScriptProperties().setProperty(AUCTION_CURRENT_ROUND_PROP, String(nextRound));
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(AUCTION_CURRENT_ROUND_PROP, String(nextRound));
+  props.setProperty(AUCTION_ROUND_STARTED_AT_PROP, new Date().toISOString());
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_START_AUCTION_ROUND', 'admin', 'ปิดรอบประมูลที่ ' + currentRound + ' และเริ่มรอบที่ ' + nextRound + ' (ถอดรายการที่ยังไม่ขาย ' + removedCount + ' รายการออกจากรายการเปิดประมูล รอ Admin เลือกเข้ารอบใหม่)');
   return { ok: true, data: { previousRound: currentRound, currentRound: nextRound, removedCount: removedCount } };

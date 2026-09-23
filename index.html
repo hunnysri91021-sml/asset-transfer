@@ -1466,22 +1466,36 @@ function renderAuction(root){
     const when = parts.length ? ` (${parts.join(' ')})` : '';
     return `<div style="background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔒 ${esc(notice.message||'ปิดรับการประมูลแล้ว')}${when}</div>`;
   }
+  // แถบประกาศ "เริ่มรอบใหม่แล้ว" — ให้เห็นชัดเจนตั้งแต่เข้าหน้า ไม่ใช่แค่ป้ายเล็กๆ ข้างหัวข้อ แสดงเฉพาะตอนอยู่รอบ 2 ขึ้นไป
+  // (รอบ 1 คือการเปิดประมูลครั้งแรกตามปกติ ไม่ต้องประกาศ) ใช้ roundStartedAt (เวลาที่ Admin กดปิดรอบล่าสุด) บอกเวลาเปิดรอบด้วย
+  function auctionRoundBannerHtml(info){
+    if(!info || !info.currentRound || info.currentRound <= 1) return '';
+    let when = '';
+    if(info.roundStartedAt){
+      const dt = new Date(info.roundStartedAt);
+      if(!isNaN(dt)) when = ' — เปิดเมื่อ '+fmtDate(dt)+' '+('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2)+' น.';
+    }
+    return `<div style="background:#eaf3ff;color:#1a3c6e;border:1px solid #b8d4f5;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔄 ขณะนี้เปิดรับประมูล รอบที่ ${info.currentRound} แล้ว${esc(when)}</div>`;
+  }
   function showIntro(){
     root.innerHTML = `<div class="card"><div class="empty">กำลังโหลด...</div></div>`;
     Promise.all([
       apiGet({ action:'getAuctionPriceBrackets' }),
       apiGet({ action:'getAuctionIntroContent' }),
-      apiGet({ action:'getAuctionClosedNotice' })
-    ]).then(([bracketsRes, contentRes, closedRes])=>{
+      apiGet({ action:'getAuctionClosedNotice' }),
+      apiGet({ action:'getAuctionRoundInfo' })
+    ]).then(([bracketsRes, contentRes, closedRes, roundRes])=>{
       priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
       const content = contentRes.ok ? contentRes.data : {};
       const closedNotice = closedRes.ok ? closedRes.data : null;
+      const roundInfo = roundRes.ok ? roundRes.data : null;
       const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
         priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
         `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
       root.innerHTML = `
         <div class="card">
           ${closedNoticeBannerHtml(closedNotice)}
+          ${auctionRoundBannerHtml(roundInfo)}
           <h2>${esc(content.title||'สรุปขั้นตอนการประมูลสินค้า')}</h2>
           <h3>📦 รายการสินค้า</h3>
           <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
@@ -1520,6 +1534,7 @@ function renderAuction(root){
           <button class="btn btn-secondary btn-sm" id="btnAuctionGoLive2">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>
         </div>
         <div id="auctionClosedBanner"></div>
+        <div id="auctionRoundBanner"></div>
         <h2>ประมูลขาย <span id="auctionRoundBadge" class="badge badge-pending" style="font-size:12px;vertical-align:middle;"></span></h2>
         <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และทรัพย์สินขายออกที่เลือกช่องทางประมูล — Admin คัดเลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
@@ -1553,6 +1568,8 @@ function renderAuction(root){
     apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
       const badge = document.getElementById('auctionRoundBadge');
       if(badge && res.ok) badge.textContent = '🔄 รอบที่ '+res.data.currentRound;
+      const banner = document.getElementById('auctionRoundBanner');
+      if(banner && res.ok) banner.innerHTML = auctionRoundBannerHtml(res.data);
     });
     document.getElementById('auctionSearch').oninput = renderAuctionTable;
     document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
