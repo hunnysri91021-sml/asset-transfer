@@ -155,7 +155,11 @@ function doGet(e) {
         result = { ok: true, data: getAssetsFull_(e.parameter.q || '') };
         break;
       case 'getAssetListBundle':
-        result = { ok: true, data: getAssetListBundle_(e.parameter.q || '') };
+        if (!isValidUserPassword_(e.parameter.password)) {
+          result = { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
+        } else {
+          result = { ok: true, data: getAssetListBundle_(e.parameter.q || '') };
+        }
         break;
       case 'getAuctionPublicEnabled':
         result = { ok: true, data: { enabled: getAuctionPublicEnabled_() } };
@@ -173,7 +177,7 @@ function doGet(e) {
         result = { ok: true, data: getAuctionClosedNotice_() };
         break;
       case 'getAuctionListing':
-        result = { ok: true, data: getAuctionListing_() };
+        result = getAuctionListingPublic_(e.parameter.password);
         break;
       case 'getAuctionSoldListing':
         result = { ok: true, data: getAuctionSoldListing_() };
@@ -934,6 +938,21 @@ function checkAdminPassword_(pw) {
   const idx = indexMap_(values[0]);
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Password]) === p && String(values[i][idx.Role]) === 'admin') return true;
+  }
+  return false;
+}
+
+// เช็คว่ารหัสผ่านนี้เป็นของผู้ใช้ที่มีอยู่จริงในระบบหรือไม่ (ทุก role) — ใช้แยก "ล็อกอินอยู่จริง" ออกจากผู้เข้าชม
+// สาธารณะที่ไม่ได้ล็อกอิน สำหรับ action ที่เปิดให้สาธารณะดูได้แบบมีเงื่อนไข (เช่น getAuctionListing เมื่อปิดสวิตช์
+// "หน้าประมูลขายแบบสาธารณะ" ไว้ พนักงานที่ล็อกอินอยู่ยังต้องเข้าดูได้ตามปกติ ไม่ใช่แค่ Admin)
+function isValidUserPassword_(pw) {
+  const p = String(pw || '');
+  if (!p) return false;
+  const sh = getSS_().getSheetByName(SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.Password]) === p) return true;
   }
   return false;
 }
@@ -1699,7 +1718,9 @@ function adminCancelAuctionWinner_(body) {
 }
 
 // รายการที่แสดงจริงในหน้า "ประมูลขาย" สาธารณะ — เฉพาะทรัพย์สินที่ Admin ติ๊กส่งประมูลไว้ และยังไม่มีคนประมูลได้ (AuctionSold)
-// อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะหน้านี้เปิดดูได้โดยไม่ต้องล็อกอิน เหมือนการตั้งค่าหน้าประมูลขายอื่นๆ
+// ฟังก์ชันดิบนี้ไม่มีการเช็คสิทธิ์ ใช้เรียกจากภายในระบบเท่านั้น (เช่น getAuctionBidLiveSummary_, sendAuctionSummaryEmail_,
+// หน้า "Live ประมูล"/"คัดเลือกรายการประมูล" ฝั่ง admin) — action ที่ doGet เปิดให้เรียกตรงจากสาธารณะ ให้ผ่าน
+// getAuctionListingPublic_() ด้านล่างแทน ซึ่งเป็นจุดเดียวที่เช็คสวิตช์ "หน้าประมูลขายแบบสาธารณะ"
 function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
   const saleAuctionChannel = getSaleAuctionChannelMap_();
@@ -1724,6 +1745,17 @@ function getAuctionListing_() {
       InterestCount: parseInt(r.AuctionInterestCount, 10) || 0,
       HasBids: biddedAssetIds.has(String(r.AssetID))
     }));
+}
+
+// จุดเดียวที่ action='getAuctionListing' จาก doGet เรียกถึง — บังคับเช็คสวิตช์ "หน้าประมูลขายแบบสาธารณะ" จริง
+// (auctionPublicEnabled) ก่อนคืนข้อมูล ถ้าปิดสวิตช์ไว้ ผู้เข้าชมที่ไม่ได้ล็อกอินจะไม่เห็นรายการเลย แต่พนักงาน/Admin
+// ที่ล็อกอินอยู่ (มีรหัสผ่านผู้ใช้ที่ถูกต้อง ไม่จำกัด role) ยังเข้าดูได้ตามปกติเสมอ ไม่ต้องพึ่งสวิตช์นี้
+// คนละเรื่องกับ "Live ประมูล" (getAuctionBidLiveSummary_) ซึ่งตั้งใจเปิดอิสระเสมอ ไม่ผ่านจุดเช็คนี้
+function getAuctionListingPublic_(password) {
+  if (!getAuctionPublicEnabled_() && !isValidUserPassword_(password)) {
+    return { ok: false, error: 'หน้าประมูลขายสาธารณะยังไม่เปิดใช้งาน กรุณาเข้าสู่ระบบ' };
+  }
+  return { ok: true, data: getAuctionListing_() };
 }
 
 // รายการทรัพย์สินที่ขายผ่านประมูลสำเร็จแล้ว (AuctionSold=true) — แยกแท็บต่างหากจาก "รายการเปิดประมูล" ในหน้าประมูลขาย

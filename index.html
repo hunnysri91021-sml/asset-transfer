@@ -943,7 +943,7 @@ function renderAssetList(root){
 
   function load(){
     const q = document.getElementById('alSearch').value.trim();
-    const params = { action:'getAssetListBundle' };
+    const params = { action:'getAssetListBundle', password: STATE.adminPassword || '' };
     if(q) params.q = q;
     document.getElementById('alTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet(params).then(res=>{
@@ -1300,7 +1300,7 @@ function renderDashboard(root){
       <div id="dashHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
-  apiGet({action:'getAssetListBundle'}).then(res=>{
+  apiGet({action:'getAssetListBundle', password: STATE.adminPassword || ''}).then(res=>{
     if(!res.ok){ document.getElementById('dashHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
     renderDashboardContent(res.data.assets, res.data.transferQueue||[], res.data.saleQueue||[], res.data.writeOffQueue||[]);
   });
@@ -1625,7 +1625,7 @@ function renderAuction(root){
   function load(){
     document.getElementById('auctionTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     Promise.all([
-      apiGet({ action:'getAuctionListing' }),
+      apiGet({ action:'getAuctionListing', password: STATE.adminPassword || '' }),
       apiGet({ action:'getAuctionPriceBrackets' })
     ]).then(([res, bracketsRes])=>{
       if(!res.ok){ document.getElementById('auctionTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
@@ -2736,7 +2736,7 @@ function renderAuctionLive(root){
   else renderEmployeeLiveTab();
 
   if(isAdmin){
-    apiGet({ action:'getAuctionListing' }).then(res=>{
+    apiGet({ action:'getAuctionListing', password: STATE.adminPassword || '' }).then(res=>{
       auctionCandidates = res.ok ? (res.data||[]) : [];
     });
   }
