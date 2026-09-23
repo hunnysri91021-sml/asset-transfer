@@ -44,6 +44,7 @@ const SHEETS = {
   WRITEOFF_ITEMS: 'WriteOffItems',
   AUCTION_BIDS: 'AuctionBids',
   AUCTION_BID_ITEMS: 'AuctionBidItems',
+  AUCTION_OFFLIST: 'AuctionOffListing',
   LOG: 'ActivityLog'
 };
 
@@ -60,6 +61,7 @@ const HEADERS = {
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL', 'Voided'],
   AUCTION_BIDS: ['BidID', 'RunningNo', 'CreatedAt', 'BidderName', 'BidderContact', 'Remark', 'CreatedBy'],
   AUCTION_BID_ITEMS: ['BidID', 'LineNo', 'AssetID', 'AssetName', 'Price'],
+  AUCTION_OFFLIST: ['AssetID', 'AssetName', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionCancelledAt'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
 };
 
@@ -107,6 +109,7 @@ function setup() {
   ensureSheet_(ss, SHEETS.WRITEOFF_ITEMS, HEADERS.WRITEOFF_ITEMS);
   ensureSheet_(ss, SHEETS.AUCTION_BIDS, HEADERS.AUCTION_BIDS);
   ensureSheet_(ss, SHEETS.AUCTION_BID_ITEMS, HEADERS.AUCTION_BID_ITEMS);
+  ensureSheet_(ss, SHEETS.AUCTION_OFFLIST, HEADERS.AUCTION_OFFLIST);
   ensureSheet_(ss, SHEETS.LOG, HEADERS.LOG);
   Logger.log('Setup complete. Sheets ready: ' + Object.values(SHEETS).join(', '));
 }
@@ -1512,6 +1515,52 @@ function adminSetAuctionSelection_(body) {
   return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
 }
 
+// ============================================================
+// AUCTION OFF-LISTING — เก็บสถานะ Confirm/CC ของรหัสสินค้า "ไม่มีทะเบียน" (off-listing ที่ Admin คีย์เข้ามาเองตอน
+// กรอกใบประมูล ไม่มีแถวคู่กันในชีต Assets เลย) เพราะ adminSetAuctionSold_/adminCancelAuctionWinner_ เดิมค้นหา/เขียน
+// เฉพาะแถวที่มีอยู่จริงในชีต Assets เท่านั้น ทำให้กด Confirm/CC รายการเหล่านี้แล้วไม่ถูกบันทึกที่ไหนเลย (error "ไม่พบ
+// ทรัพย์สินนี้") ชีตนี้เก็บสถานะแยกไว้ต่างหาก ใช้ AssetID เป็นคีย์ อ่านรวมกับข้อมูลชีต Assets ใน buildAuctionWinnersList_
+// และ getValidAuctionBidItems_ เพื่อให้หน้าประกาศผลเห็นผลลัพธ์ถูกต้องไม่ว่าจะมีทะเบียนหรือไม่ก็ตาม
+// ============================================================
+function getAuctionOffListingMap_() {
+  const sh = getSS_().getSheetByName(SHEETS.AUCTION_OFFLIST);
+  if (!sh) return {};
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  const idx = indexMap_(headers);
+  const map = {};
+  values.forEach(r => {
+    if (r[idx.AssetID]) map[String(r[idx.AssetID])] = rowToObj_(r, idx);
+  });
+  return map;
+}
+
+// สร้าง/แก้ไขแถวสถานะของรหัสสินค้านอกฐาน 1 รายการ (upsert ตาม AssetID) — เขียนตามตำแหน่งคอลัมน์จริงในชีต
+// (headers/idx) เสมอ ไม่อิงลำดับคงที่ใน HEADERS.AUCTION_OFFLIST ตามกติกาใน CLAUDE.md
+function upsertAuctionOffListing_(assetId, assetName, fields) {
+  const sh = getSS_().getSheetByName(SHEETS.AUCTION_OFFLIST);
+  if (!sh) return { ok: false, error: 'ไม่พบชีต AuctionOffListing กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
+  const values = sh.getDataRange().getValues();
+  const headers = values[0];
+  const idx = indexMap_(headers);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      Object.keys(fields).forEach(f => {
+        if (idx[f] !== undefined) sh.getRange(i + 1, idx[f] + 1).setValue(fields[f]);
+      });
+      return { ok: true };
+    }
+  }
+  const newRow = headers.map(h => {
+    if (h === 'AssetID') return assetId;
+    if (h === 'AssetName') return assetName || '';
+    if (fields[h] !== undefined) return fields[h];
+    return '';
+  });
+  sh.appendRow(newRow);
+  return { ok: true };
+}
+
 // Admin ทำเครื่องหมายว่าทรัพย์สินที่ส่งประมูลอยู่ "ขายแล้ว" (มีคนประมูลได้แล้ว) พร้อมบันทึกผู้ประมูลได้ + ราคาที่ประมูลได้
 // รายการที่ขายแล้วจะหายไปจากหน้า "ประมูลขาย" สาธารณะทันที (ดู getAuctionListing_) — ส่ง sold:false เพื่อยกเลิกเครื่องหมายนี้ได้
 function adminSetAuctionSold_(body) {
@@ -1544,7 +1593,17 @@ function adminSetAuctionSold_(body) {
       return { ok: true };
     }
   }
-  return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
+  // ไม่พบแถวคู่กันในชีต Assets — เป็นรายการนอกฐาน/off-listing (ไม่มีทะเบียน) บันทึกสถานะแยกไว้ในชีต AuctionOffListing แทน
+  const offRes = upsertAuctionOffListing_(assetId, body.assetName || '', {
+    AuctionSold: sold ? 'TRUE' : 'FALSE',
+    AuctionBuyer: sold ? buyer : '',
+    AuctionSoldPrice: sold ? soldPrice : '',
+    AuctionSoldAt: sold ? new Date() : ''
+  });
+  if (!offRes.ok) return offRes;
+  invalidateDisposedAssetStatusCache_();
+  logActivity_('', 'ADMIN_SET_AUCTION_SOLD', 'admin', (sold ? ('ทำเครื่องหมายรายการนอกฐาน (ไม่มีทะเบียน) ' + assetId + ' ขายแล้ว ผู้ประมูลได้ ' + buyer + ' ราคา ' + soldPrice) : ('ยกเลิกเครื่องหมายขายแล้วของรายการนอกฐาน ' + assetId)));
+  return { ok: true };
 }
 
 // Admin กด "Confirm" ที่หน้าประกาศผล — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (เท่ากับ adminSetAuctionSold_
@@ -1561,7 +1620,7 @@ function adminConfirmAuctionWinner_(body) {
     return { ok: false, error: 'มีผู้เสนอราคาสูงสุดเท่ากันหลายคน (' + winner.BidderName + ') กรุณาแก้ไขราคาในใบประมูลให้ต่างกันก่อนยืนยัน' };
   }
 
-  return adminSetAuctionSold_({ password: body.password, assetId: assetId, sold: true, buyer: winner.BidderName, soldPrice: winner.MaxPrice });
+  return adminSetAuctionSold_({ password: body.password, assetId: assetId, assetName: winner.AssetName, sold: true, buyer: winner.BidderName, soldPrice: winner.MaxPrice });
 }
 
 // Admin กด "CC" ที่หน้าประกาศผล — ยกเลิก/ไม่ยอมรับราคาผู้ประมูลได้ปัจจุบันของรายการนี้ เข้าสถานะ "ประมูลใหม่": ใบประมูลเดิมที่เคย
@@ -1585,7 +1644,12 @@ function adminCancelAuctionWinner_(body) {
       return { ok: true };
     }
   }
-  return { ok: false, error: 'ไม่พบทรัพย์สินนี้' };
+  // ไม่พบแถวคู่กันในชีต Assets — เป็นรายการนอกฐาน/off-listing (ไม่มีทะเบียน) บันทึกสถานะแยกไว้ในชีต AuctionOffListing แทน
+  const winner = buildAuctionWinnersList_().find(w => w.AssetID === assetId);
+  const offRes = upsertAuctionOffListing_(assetId, (winner && winner.AssetName) || body.assetName || '', { AuctionCancelledAt: new Date() });
+  if (!offRes.ok) return offRes;
+  logActivity_('', 'ADMIN_CANCEL_AUCTION_WINNER', 'admin', 'ยกเลิกผลผู้ประมูลได้เดิมของรายการนอกฐาน (ไม่มีทะเบียน) ' + assetId + ' เข้าสถานะประมูลใหม่ (CC)');
+  return { ok: true };
 }
 
 // รายการที่แสดงจริงในหน้า "ประมูลขาย" สาธารณะ — เฉพาะทรัพย์สินที่ Admin ติ๊กส่งประมูลไว้ และยังไม่มีคนประมูลได้ (AuctionSold)
@@ -1960,6 +2024,8 @@ function buildAuctionWinnersList_() {
   // ราคาทรัพย์สิน (ราคาซื้อ), ราคากลางประมูล และมูลค่าทางบัญชี ดึงจากชีต Assets ตามรหัสทรัพย์สิน เพื่อแนบไปกับผลประมูลได้
   const assetById = {};
   getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
+  // สถานะ Confirm/CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน — ไม่มีแถวในชีต Assets) เก็บแยกไว้ในชีต AuctionOffListing
+  const offListingById = getAuctionOffListingMap_();
 
   // รวมทุกใบเสนอราคาที่ "ยังมีผล" (ไม่รวมรอบที่ถูก CC/ยกเลิกไปแล้ว — ดู getValidAuctionBidItems_) ต่อรหัสสินค้าก่อน
   // แล้วค่อยหาราคาสูงสุด + รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
@@ -1987,12 +2053,16 @@ function buildAuctionWinnersList_() {
       bids.forEach(b => {
         if (b.price === maxPrice && topBidderNames.indexOf(b.bidderName) === -1) topBidderNames.push(b.bidderName);
       });
-      const asset = assetById[assetId] || {};
+      const asset = assetById[assetId] || offListingById[assetId] || {};
       return {
         AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
         PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || '',
         Custodian: asset.Custodian || '', Location: asset.Location || '',
-        Sold: String(asset.AuctionSold).toLowerCase() === 'true'
+        Sold: String(asset.AuctionSold).toLowerCase() === 'true',
+        // มีทะเบียน = รหัสสินค้านี้มีแถวตรงกันจริงในชีต Assets (ทรัพย์สินที่ลงทะเบียนไว้ในระบบ)
+        // ไม่มีทะเบียน = รายการนอกฐาน/off-listing ที่ Admin คีย์บันทึกเข้ามาเองตอนกรอกใบประมูล ไม่มีทรัพย์สินคู่กันในระบบ
+        // (สถานะ Confirm/CC ของรายการเหล่านี้อ่านจาก offListingById แทน ดู getAuctionOffListingMap_)
+        HasAssetRecord: !!assetById[assetId]
       };
     });
   return winners.sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
@@ -2023,6 +2093,12 @@ function getValidAuctionBidItems_() {
   const cancelledAtByAsset = {};
   getAssetsRaw_().forEach(a => {
     if (a.AuctionCancelledAt) cancelledAtByAsset[String(a.AssetID)] = new Date(a.AuctionCancelledAt).getTime();
+  });
+  // รวม CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน) ที่เก็บแยกไว้ในชีต AuctionOffListing ด้วย
+  const offListingById = getAuctionOffListingMap_();
+  Object.keys(offListingById).forEach(assetId => {
+    const c = offListingById[assetId].AuctionCancelledAt;
+    if (c) cancelledAtByAsset[assetId] = new Date(c).getTime();
   });
 
   return itemValues
@@ -2112,11 +2188,13 @@ function sendAuctionWinnersEmail_(body) {
   const message = String(body.message || '').trim();
   const belowReferenceLabel = 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่';
   const isBelowReference = w => Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
+  const registeredLabel = w => w.HasAssetRecord ? 'มีทะเบียน' : 'ไม่มีทะเบียน';
   const rowsHtml = winners.map((w, i) => (
     '<tr>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetID) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(registeredLabel(w)) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.Custodian || '-') + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.Location || '-') + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.BidderName) + '</td>' +
@@ -2134,7 +2212,7 @@ function sendAuctionWinnersEmail_(body) {
     '<h3>ประกาศผลผู้ประมูลได้ (' + winners.length + ' รายการ)</h3>' +
     (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
     '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
-    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
     rowsHtml +
     '</table>' +
     '</div>';
@@ -2142,8 +2220,8 @@ function sendAuctionWinnersEmail_(body) {
   try {
     const xlsxBlob = buildXlsxBlob_('ประกาศผลผู้ประมูลได้', [{
       name: 'ประกาศผล',
-      headers: ['รหัส', 'รายการ', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
-      rows: winners.map(w => [w.AssetID, w.AssetName, w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
+      headers: ['รหัส', 'รายการ', 'ประเภท', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
+      rows: winners.map(w => [w.AssetID, w.AssetName, registeredLabel(w), w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
     }]);
     MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: [xlsxBlob] });
     logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
