@@ -2214,6 +2214,7 @@ function buildAuctionWinnersList_(roundFilter) {
         // คำนวณสำเร็จรูปไว้เสมอ (ไม่ต้องพึ่ง ReferencePrice ดิบที่อาจถูกซ่อนจากสาธารณะ — ดู maskAuctionWinnersForPublic_)
         BelowReferencePrice: referencePrice > 0 && maxPrice < referencePrice,
         Custodian: asset.Custodian || '', Location: asset.Location || '',
+        DisplayImage: asset.DisplayImage || '',
         Sold: String(asset.AuctionSold).toLowerCase() === 'true',
         // มีทะเบียน = รหัสสินค้านี้มีแถวตรงกันจริงในชีต Assets (ทรัพย์สินที่ลงทะเบียนไว้ในระบบ)
         // ไม่มีทะเบียน = รายการนอกฐาน/off-listing ที่ Admin คีย์บันทึกเข้ามาเองตอนกรอกใบประมูล ไม่มีทรัพย์สินคู่กันในระบบ

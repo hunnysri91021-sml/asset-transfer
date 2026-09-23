@@ -2409,12 +2409,13 @@ function renderAuctionLive(root){
       const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
       // Admin ปิดสวิตช์ "แสดงราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชี" ไว้สำหรับสาธารณะ — ซ่อนคอลัมน์ราคากลางไปเลย (ไม่ใช่แค่ค่าว่าง)
       const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
-      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th>${showRefCol ? '<th>ราคากลาง</th>' : ''}<th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รูป</th><th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th>${showRefCol ? '<th>ราคากลาง</th>' : ''}<th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
         const actionable = !w.Sold && w.BidderName && w.Round===currentRound;
         const checked = selectedWinnerAssetIds.indexOf(w.AssetID)!==-1 ? 'checked' : '';
         html += `<tr>
           ${isAdmin ? `<td class="no-print">${actionable ? `<input type="checkbox" class="winnerRowChk" data-id="${esc(w.AssetID)}" ${checked}>` : ''}</td>` : ''}
+          <td><img class="thumb" src="${esc(w.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(w.DisplayImage||'')}')"></td>
           <td><b>${esc(w.AssetID)}</b></td>
           <td>${esc(w.AssetName)}</td>
           <td style="text-align:center;">${w.Round===currentRound ? `<b>${w.Round}</b>` : w.Round}</td>
