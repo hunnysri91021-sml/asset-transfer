@@ -2324,7 +2324,9 @@ function renderAuctionLive(root){
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
           <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
-          ${isAdmin ? `<td class="no-print">${w.Sold ? '' : (w.BidderName ? `
+          ${isAdmin ? `<td class="no-print">${w.Sold
+            ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
+            : (w.BidderName ? `
             <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
             <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
           ` : '-')}</td>` : ''}
@@ -2339,6 +2341,9 @@ function renderAuctionLive(root){
         });
         host.querySelectorAll('.winnerCcBtn').forEach(btn=>{
           btn.onclick = ()=> ccWinner(btn.dataset.id, btn);
+        });
+        host.querySelectorAll('.winnerUnconfirmBtn').forEach(btn=>{
+          btn.onclick = ()=> unconfirmWinner(btn.dataset.id, btn);
         });
         const selectAllEl = document.getElementById('winnersSelectAll');
         if(selectAllEl) selectAllEl.onchange = (e)=>{
@@ -2381,6 +2386,19 @@ function renderAuctionLive(root){
         if(btn) btn.disabled = false;
         if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
         toast('ยกเลิกผลผู้ประมูลได้เดิมของ '+assetId+' แล้ว — เข้าสถานะประมูลใหม่','ok');
+        loadWinners();
+      });
+    }
+
+    // ปุ่ม "ยกเลิก Confirm" — เอาเครื่องหมาย "ขายแล้ว" ออก กลับไปเป็น "รอประมูล" ให้แก้ไข/ยืนยันใหม่ได้อีกครั้ง
+    // (เดิมทำได้แค่ที่หน้า "คัดเลือกรายการประมูล" > แท็บ "รายการที่ส่งประมูล" ย้ายมาไว้ที่นี่ด้วยเพื่อความสะดวก)
+    function unconfirmWinner(assetId, btn){
+      if(!confirm('ยืนยันยกเลิก Confirm ของรายการ '+assetId+'? (กลับไปเป็น "รอประมูล" ให้แก้ไข/ยืนยันใหม่ได้)')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminSetAuctionSold', password: STATE.adminPassword, assetId, sold:false }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+        toast('ยกเลิก Confirm ของ '+assetId+' สำเร็จ — กลับเป็นรอประมูล','ok');
         loadWinners();
       });
     }
