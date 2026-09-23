@@ -2262,6 +2262,7 @@ function renderAuctionLive(root){
         <div class="toolbar no-print">
           <input type="text" id="winnersSearch" placeholder="ค้นหารหัส / ชื่อสินค้า / ผู้ประมูลได้..." style="max-width:240px;">
           <select id="winnersRoundFilter" style="max-width:170px;"><option value="">รอบปัจจุบัน</option></select>
+          <span id="winnersRoundFixedBadge" class="badge badge-pending" style="display:none;"></span>
           <select id="winnersTypeFilter" style="max-width:160px;">
             <option value="">ทุกประเภท</option>
             <option value="registered">มีทะเบียน</option>
@@ -2311,6 +2312,24 @@ function renderAuctionLive(root){
       });
     }
 
+    let winnersMeta = null; // { publicRoundPinned, showPrices } — ส่งมาเฉพาะตอนโหลดผ่าน endpoint สาธารณะ (ไม่ใช่ Admin)
+
+    function applyPublicDisplaySettings(){
+      const sel = document.getElementById('winnersRoundFilter');
+      const fixedBadge = document.getElementById('winnersRoundFixedBadge');
+      const banner = document.getElementById('winnersRoundBanner');
+      if(!isAdmin && winnersMeta && winnersMeta.publicRoundPinned != null){
+        // Admin ปักหมุดรอบให้สาธารณะเห็นไว้ — ซ่อนตัวกรองรอบ ไม่ให้เลือกเอง แสดงเป็นป้ายค่าคงที่แทน
+        sel.style.display = 'none';
+        fixedBadge.style.display = '';
+        fixedBadge.textContent = '🔒 รอบที่ '+winnersMeta.publicRoundPinned+' (กำหนดโดยผู้ดูแลระบบ)';
+        if(banner) banner.textContent = '🏆 ประกาศผลรอบที่ '+winnersMeta.publicRoundPinned+' — สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ';
+      } else {
+        sel.style.display = '';
+        fixedBadge.style.display = 'none';
+      }
+    }
+
     function loadWinners(){
       document.getElementById('winnersTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
       const round = document.getElementById('winnersRoundFilter').value || undefined;
@@ -2324,6 +2343,8 @@ function renderAuctionLive(root){
           return res;
         }
         winners = res.data || [];
+        winnersMeta = res.meta || null;
+        applyPublicDisplaySettings();
         renderWinnersTable();
         return res;
       });
@@ -2349,9 +2370,10 @@ function renderAuctionLive(root){
       // — รอบเก่าที่ปิดไปแล้วดูได้อย่างเดียว แก้ไข/ยืนยันซ้ำไม่ได้)
       const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && w.Round===currentRound).map(w=>w.AssetID);
       const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
-      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
+      // Admin ปิดสวิตช์ "แสดงราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชี" ไว้สำหรับสาธารณะ — ซ่อนคอลัมน์ราคากลางไปเลย (ไม่ใช่แค่ค่าว่าง)
+      const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
+      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th>${showRefCol ? '<th>ราคากลาง</th>' : ''}<th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
-        const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
         const actionable = !w.Sold && w.BidderName && w.Round===currentRound;
         const checked = selectedWinnerAssetIds.indexOf(w.AssetID)!==-1 ? 'checked' : '';
         html += `<tr>
@@ -2363,10 +2385,10 @@ function renderAuctionLive(root){
           <td>${esc(w.Custodian||'-')}</td>
           <td>${esc(w.Location||'-')}</td>
           <td>${esc(w.BidderName||'-')}</td>
-          <td class="money">${fmtMoney(w.ReferencePrice)}</td>
+          ${showRefCol ? `<td class="money">${fmtMoney(w.ReferencePrice)}</td>` : ''}
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
-          <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
+          <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (w.BelowReferencePrice ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
           ${isAdmin ? `<td class="no-print">${w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.Sold
             ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
             : (w.BidderName ? `
@@ -2500,11 +2522,11 @@ function renderAuctionLive(root){
     const exportBtn = document.getElementById('btnExportWinners');
     if(exportBtn) exportBtn.onclick = ()=>{
       if(!winners.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-      const header = ['รหัสสินค้า','รายการ','รอบ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้','ราคากลาง','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
+      const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
+      const header = ['รหัสสินค้า','รายการ','รอบ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้', ...(showRefCol?['ราคากลาง']:[]), 'ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
       const dataRows = winners.map(w=>{
-        const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
-        return [w.AssetID, w.AssetName, w.Round, w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน', w.Custodian||'', w.Location||'', w.BidderName||'', Number(w.ReferencePrice)||0, Number(w.MaxPrice)||0, w.BidCount,
-          belowReference ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : ''];
+        return [w.AssetID, w.AssetName, w.Round, w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน', w.Custodian||'', w.Location||'', w.BidderName||'', ...(showRefCol?[Number(w.ReferencePrice)||0]:[]), Number(w.MaxPrice)||0, w.BidCount,
+          w.BelowReferencePrice ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : ''];
       });
       exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
     };
@@ -4653,6 +4675,21 @@ function renderSettings(root){
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionWinnersPublic" style="margin-top:8px;">บันทึก</button>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>ควบคุมข้อมูลที่สาธารณะเห็นในประกาศผล</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ใช้ปรับละเอียดเพิ่มเติมจากสวิตช์เปิด/ปิดด้านบน — มีผลเฉพาะกับผู้ที่ไม่ได้ล็อกอินเป็น Admin เท่านั้น (Admin ที่ล็อกอินอยู่ยังเห็นข้อมูลครบทุกรอบ/ทุกราคาตามปกติ)</p>
+        <label style="margin-top:8px;">รอบที่ให้สาธารณะเห็น</label>
+        <select id="auctionPublicRoundSelect">
+          <option value="">ตามรอบปัจจุบันเสมอ (ไม่ปักหมุด)</option>
+        </select>
+        <p style="color:var(--muted);font-size:11px;margin:4px 0 0;">ถ้าเลือกรอบใดรอบหนึ่งไว้ สาธารณะจะเห็นเฉพาะผลของรอบนั้นเท่านั้น เลือกรอบอื่นเองไม่ได้ (ตัวกรองรอบที่หน้าประกาศผลจะถูกซ่อนไปสำหรับสาธารณะ)</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+          <input type="checkbox" id="auctionPublicShowPrices" style="width:auto;" checked>
+          <label for="auctionPublicShowPrices" style="margin:0;font-weight:400;">แสดงราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชีให้สาธารณะเห็น</label>
+        </div>
+        <p style="color:var(--muted);font-size:11px;margin:4px 0 0;">ถ้าปิดไว้ สาธารณะจะยังเห็น "ราคาที่ประมูลได้" ตามปกติ (เป็นผลการประมูลจริง) แต่จะไม่เห็นราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชีซึ่งเป็นข้อมูลภายใน</p>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionWinnersPublicSettings" style="margin-top:10px;">บันทึก</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
         <div id="auctionBracketsHost">กำลังโหลด...</div>
@@ -4711,6 +4748,7 @@ function renderSettings(root){
   loadAuctionClosedNotice();
   loadAuctionBidListPublic();
   loadAuctionWinnersPublic();
+  loadAuctionWinnersPublicSettings();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
@@ -4718,6 +4756,7 @@ function renderSettings(root){
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
   document.getElementById('btnSaveAuctionBidListPublic').onclick = saveAuctionBidListPublic;
   document.getElementById('btnSaveAuctionWinnersPublic').onclick = saveAuctionWinnersPublic;
+  document.getElementById('btnSaveAuctionWinnersPublicSettings').onclick = saveAuctionWinnersPublicSettings;
   document.getElementById('btnAddAuctionBracket').onclick = addAuctionBracketRow;
   document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
   document.getElementById('btnSaveAuctionIntroNote').onclick = saveAuctionIntroNote;
@@ -4982,6 +5021,34 @@ function renderSettings(root){
     apiGet({ action:'getAuctionWinnersPublicEnabled' }).then(res=>{
       if(!res.ok) return;
       document.getElementById('auctionWinnersPublicEnabled').checked = !!res.data.enabled;
+    });
+  }
+
+  function loadAuctionWinnersPublicSettings(){
+    Promise.all([
+      apiGet({ action:'getAuctionRoundInfo' }),
+      apiPost({ action:'adminGetAuctionWinnersPublicSettings', password: STATE.adminPassword })
+    ]).then(([roundRes, settingsRes])=>{
+      const currentRound = (roundRes.ok && roundRes.data && roundRes.data.currentRound) || 1;
+      const sel = document.getElementById('auctionPublicRoundSelect');
+      let opts = '<option value="">ตามรอบปัจจุบันเสมอ (ไม่ปักหมุด)</option>';
+      for(let r = currentRound; r >= 1; r--){ opts += `<option value="${r}">รอบที่ ${r}${r===currentRound?' (รอบปัจจุบัน)':''}</option>`; }
+      sel.innerHTML = opts;
+      if(!settingsRes.ok) return;
+      sel.value = settingsRes.data.publicRound ? String(settingsRes.data.publicRound) : '';
+      document.getElementById('auctionPublicShowPrices').checked = settingsRes.data.showPrices !== false;
+    });
+  }
+
+  function saveAuctionWinnersPublicSettings(){
+    const publicRound = document.getElementById('auctionPublicRoundSelect').value;
+    const showPrices = document.getElementById('auctionPublicShowPrices').checked;
+    const btn = document.getElementById('btnSaveAuctionWinnersPublicSettings');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveAuctionWinnersPublicSettings', password: STATE.adminPassword, publicRound, showPrices }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('บันทึกการควบคุมข้อมูลสาธารณะสำเร็จ','ok');
     });
   }
 
