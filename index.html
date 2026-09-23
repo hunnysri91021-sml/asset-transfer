@@ -2244,6 +2244,11 @@ function renderAuctionLive(root){
         <p style="color:var(--muted);font-size:13px;">สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ จากทุกใบประมูลที่บันทึกไว้</p>
         <div class="toolbar no-print">
           <input type="text" id="winnersSearch" placeholder="ค้นหารหัส / ชื่อสินค้า / ผู้ประมูลได้..." style="max-width:240px;">
+          <select id="winnersTypeFilter" style="max-width:160px;">
+            <option value="">ทุกประเภท</option>
+            <option value="registered">มีทะเบียน</option>
+            <option value="unregistered">ไม่มีทะเบียน</option>
+          </select>
           ${canManage ? `
           <button class="btn btn-secondary btn-sm" id="btnExportWinners">⬇ Export Excel</button>
           <button class="btn btn-secondary btn-sm" id="btnPrintWinners">🖨 พิมพ์</button>
@@ -2297,18 +2302,19 @@ function renderAuctionLive(root){
 
     function renderWinnersTable(){
       const qq = (document.getElementById('winnersSearch').value||'').trim().toLowerCase();
-      const rows = winners.filter(w => !qq ||
+      const typeFilter = document.getElementById('winnersTypeFilter').value;
+      const rows = winners.filter(w => (!qq ||
         String(w.AssetID).toLowerCase().indexOf(qq)!==-1 ||
         String(w.AssetName).toLowerCase().indexOf(qq)!==-1 ||
         String(w.BidderName).toLowerCase().indexOf(qq)!==-1
-      );
+      ) && (!typeFilter || (typeFilter==='registered') === !!w.HasAssetRecord));
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
       const host = document.getElementById('winnersTableHost');
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
       // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว และมีผู้ประมูลได้)
       const actionableIds = rows.filter(w=>!w.Sold && w.BidderName).map(w=>w.AssetID);
       const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
-      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
         const actionable = !w.Sold && w.BidderName;
@@ -2317,6 +2323,7 @@ function renderAuctionLive(root){
           ${isAdmin ? `<td class="no-print">${actionable ? `<input type="checkbox" class="winnerRowChk" data-id="${esc(w.AssetID)}" ${checked}>` : ''}</td>` : ''}
           <td><b>${esc(w.AssetID)}</b></td>
           <td>${esc(w.AssetName)}</td>
+          <td>${w.HasAssetRecord ? '<span class="badge badge-approved">มีทะเบียน</span>' : '<span class="badge badge-pending">ไม่มีทะเบียน</span>'}</td>
           <td>${esc(w.Custodian||'-')}</td>
           <td>${esc(w.Location||'-')}</td>
           <td>${esc(w.BidderName||'-')}</td>
@@ -2451,14 +2458,15 @@ function renderAuctionLive(root){
     if(bulkCcBtn) bulkCcBtn.onclick = bulkCcWinners;
 
     document.getElementById('winnersSearch').oninput = renderWinnersTable;
+    document.getElementById('winnersTypeFilter').onchange = renderWinnersTable;
 
     const exportBtn = document.getElementById('btnExportWinners');
     if(exportBtn) exportBtn.onclick = ()=>{
       if(!winners.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-      const header = ['รหัสสินค้า','รายการ','ผู้ดูแล','สถานที่','ผู้ประมูลได้','ราคากลาง','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
+      const header = ['รหัสสินค้า','รายการ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้','ราคากลาง','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
       const dataRows = winners.map(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
-        return [w.AssetID, w.AssetName, w.Custodian||'', w.Location||'', w.BidderName||'', Number(w.ReferencePrice)||0, Number(w.MaxPrice)||0, w.BidCount,
+        return [w.AssetID, w.AssetName, w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน', w.Custodian||'', w.Location||'', w.BidderName||'', Number(w.ReferencePrice)||0, Number(w.MaxPrice)||0, w.BidCount,
           belowReference ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : ''];
       });
       exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
