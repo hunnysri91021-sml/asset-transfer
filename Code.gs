@@ -539,6 +539,9 @@ function getAssetQueue_(purpose) {
 function getAssetListBundle_(q) {
   const disposed = getDisposedAssetStatus_();
   const lifecycleMeta = getAssetLifecycleMeta_();
+  // ใช้บอก frontend ว่ารายการที่เคยถูก CC (AuctionCancelledAt) มีผู้เสนอราคารอบปัจจุบันเข้ามาแล้วหรือยัง — กันไม่ให้
+  // สถานะ "ประมูลใหม่" ค้างแสดงตลอดไปทั้งที่มีคนยื่นประมูลใหม่แล้ว (ดู assetLifecycleBucket ฝั่ง frontend)
+  const biddedAssetIds = getBiddedAssetIdSet_();
   const allAssets = getAssetsRaw_();
   allAssets.forEach(r => {
     const id = String(r.AssetID);
@@ -547,6 +550,7 @@ function getAssetListBundle_(q) {
     r.SaleConfirmedAt = lifecycleMeta.confirmedByAsset[id] ? 1 : '';
     r.PendingSale = !!lifecycleMeta.pendingSaleByAsset[id];
     r.PendingWriteOff = !!lifecycleMeta.pendingWriteOffByAsset[id];
+    r.HasCurrentAuctionBid = biddedAssetIds.has(id);
   });
 
   let assets = allAssets;

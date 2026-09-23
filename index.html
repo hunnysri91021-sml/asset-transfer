@@ -388,7 +388,9 @@ function assetLifecycleBucket(a, queuedPurpose){
   const auctionSold = String(a.AuctionSold).toLowerCase()==='true';
   // Admin กด "CC" ที่หน้าประกาศผล (ยกเลิกผลผู้ประมูลได้เดิม) จะตั้งเวลาไว้ที่ AuctionCancelledAt — ทรัพย์สินยังอยู่ในรอบ
   // ประมูลต่อไป (sendToAuction=true, auctionSold=false เหมือนเดิม) แต่ต้องรอผู้เสนอราคาใหม่ จึงแยกเป็นสถานะ "ประมูลใหม่"
-  const needsReAuction = sendToAuction && !auctionSold && !!a.AuctionCancelledAt;
+  // — เช็ค HasCurrentAuctionBid ด้วย (มาจาก getAssetListBundle_) เพื่อไม่ให้สถานะนี้ค้างแสดงตลอดไปทั้งที่มีคนยื่น
+  // ประมูลรอบใหม่เข้ามาแล้ว (แค่ยังไม่ได้ Confirm) — กรณีนั้นควรถือว่า "กำลังประมูล" ตามปกติ ไม่ใช่ "รอผู้เสนอราคาใหม่" อีก
+  const needsReAuction = sendToAuction && !auctionSold && !!a.AuctionCancelledAt && !a.HasCurrentAuctionBid;
 
   if(a.AssetStatus==='WrittenOff'){
     if(needsReAuction) return 'NeedsReAuction';
