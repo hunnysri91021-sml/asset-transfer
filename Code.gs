@@ -1756,15 +1756,32 @@ function adminCreateAuctionBid_(body) {
   if (!items.length) return { ok: false, error: 'ต้องมีรายการสินค้าอย่างน้อย 1 รายการ' };
 
   const cleanItems = [];
+  const seenAssetIds = {};
   for (const it of items) {
     const assetId = String(it.assetId || '').trim();
     const price = parseFloat(it.price);
     if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสสินค้าให้ครบทุกรายการ' };
     if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคาที่เสนอให้ถูกต้อง (รหัสสินค้า ' + assetId + ')' };
+    // กันคีย์รหัสสินค้าซ้ำภายในใบประมูลใบเดียวกัน (พิมพ์/แนบซ้ำโดยไม่ได้ตั้งใจ)
+    if (seenAssetIds[assetId]) return { ok: false, error: 'มีรหัสสินค้า ' + assetId + ' ซ้ำกันในใบประมูลนี้ กรุณาลบรายการที่ซ้ำออกก่อนบันทึก' };
+    seenAssetIds[assetId] = true;
     cleanItems.push({ assetId: assetId, assetName: String(it.assetName || ''), price: price });
   }
 
   return withLock_(() => {
+    // กันบันทึกซ้ำ: ผู้ยื่นประมูลคนเดียวกัน (เทียบชื่อไม่สนตัวพิมพ์เล็ก/ใหญ่และช่องว่างหัวท้าย) ยื่นประมูลรายการ
+    // ทรัพย์สินชิ้นเดียวกันซ้ำอีกใบ — นับเฉพาะใบประมูลที่ "ยังมีผลอยู่" เท่านั้น (ดู getValidAuctionBidItems_)
+    // เพราะถ้ารายการนั้นถูก Admin กด CC (ยกเลิกผลเดิม เข้าสถานะประมูลใหม่) ไปแล้ว ผู้ประมูลคนเดิมต้องยื่นใหม่ได้ตามปกติ
+    const bidderKey = bidderName.toLowerCase();
+    const existingAssetIdsByBidder = {};
+    getValidAuctionBidItems_().forEach(it => {
+      if (String(it.bidderName || '').trim().toLowerCase() === bidderKey) existingAssetIdsByBidder[it.assetId] = true;
+    });
+    const dupAssetIds = cleanItems.filter(it => existingAssetIdsByBidder[it.assetId]).map(it => it.assetId);
+    if (dupAssetIds.length) {
+      return { ok: false, error: 'ผู้ประมูล "' + bidderName + '" เคยยื่นประมูลรหัสสินค้า ' + dupAssetIds.join(', ') + ' ไว้แล้ว ไม่สามารถบันทึกซ้ำได้ (ถ้าต้องการแก้ไขราคา กรุณาลบใบประมูลเดิมก่อน)' };
+    }
+
     const bidId = Utilities.getUuid();
     const runningNo = getNextRunningNo_('PB', SHEETS.AUCTION_BIDS);
 
