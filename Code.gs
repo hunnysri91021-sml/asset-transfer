@@ -1122,6 +1122,10 @@ function adminSaveAsset_(body) {
     if (String(values[i][idx.AssetID]) === assetId) { rowNum = i + 1; break; }
   }
 
+  // "แท็กสถานะ" (Tag) แก้ไขได้เฉพาะ Admin เท่านั้น (ผลกระทบสูง — ค่า "ขาย"/"ชำรุด" ที่หน้ารายการทรัพย์สิน
+  // ไปสร้างใบขาย/ใบตัดชำรุดอนุมัติอัตโนมัติผ่าน adminQuickDisposeAsset_) — ฟิลด์อื่นยังแก้ได้ตามสิทธิ์หน่วยงานปกติ
+  const editableFields = user.role === 'admin' ? ADMIN_ASSET_EDITABLE_FIELDS : ADMIN_ASSET_EDITABLE_FIELDS.filter(f => f !== 'Tag');
+
   if (rowNum === -1) {
     if (!canManageDept_(user, asset.Department)) return { ok: false, error: 'ไม่มีสิทธิ์เพิ่มทรัพย์สินของหน่วยงานนี้' };
     // เขียนตามตำแหน่งคอลัมน์จริงในชีต (headers/idx) แทนการอิงลำดับคงที่ใน HEADERS.ASSETS
@@ -1130,7 +1134,7 @@ function adminSaveAsset_(body) {
       if (h === 'AssetID') return assetId;
       if (h === 'UpdatedAt') return new Date();
       if (h === 'ScrapPrice') return asset.BookValue || '';
-      if (ADMIN_ASSET_EDITABLE_FIELDS.indexOf(h) !== -1) return asset[h] || '';
+      if (editableFields.indexOf(h) !== -1) return asset[h] || '';
       return '';
     });
     sh.appendRow(newRow);
@@ -1144,7 +1148,7 @@ function adminSaveAsset_(body) {
     return { ok: false, error: 'ไม่มีสิทธิ์ย้ายทรัพย์สินไปยังหน่วยงานนี้' };
   }
 
-  ADMIN_ASSET_EDITABLE_FIELDS.forEach(f => {
+  editableFields.forEach(f => {
     if (asset[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
   });
   // ราคาซาก = มูลค่าตามบัญชีเสมอ (ไม่รับค่าที่พิมพ์แยก) — ใช้ค่าที่เพิ่งบันทึกถ้ามี ไม่งั้นใช้ค่าเดิมในชีต
