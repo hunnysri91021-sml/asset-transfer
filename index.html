@@ -807,6 +807,13 @@ function openAssetEditModal(asset, onSaved){
       if(!res.ok){ btn.disabled = false; btn.innerHTML = 'บันทึก'; toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกทรัพย์สินสำเร็จ','ok');
       closeAssetModal();
+      if(!isNew){
+        // แก้ไขทรัพย์สินเดิม — a คือ object เดียวกับที่อยู่ใน STATE.assetsFull (ผู้เรียกส่ง reference เข้ามา)
+        // อัปเดตค่าลงในนั้นทันทีแทนการโหลดทรัพย์สินทั้งหมดใหม่จากเซิร์ฟเวอร์ทุกครั้งที่แก้ไข ซึ่งช้าเมื่อมีทรัพย์สินหลักพันรายการ
+        Object.assign(a, payload);
+        a.ScrapPrice = payload.BookValue; // ราคาซาก = มูลค่าตามบัญชีเสมอ ตาม logic ฝั่ง backend
+        a.SyncFlag = ''; a.SyncNote = '';
+      }
       if(onSaved) onSaved();
     });
   };
@@ -1031,7 +1038,7 @@ function renderAssetList(root){
     host.querySelectorAll('[data-editid]').forEach(btn=>{
       btn.onclick = ()=>{
         const asset = STATE.assetsFull.find(x=>x.AssetID===btn.dataset.editid);
-        openAssetEditModal(asset, load);
+        openAssetEditModal(asset, renderTable);
       };
     });
     const QUEUE_PURPOSE_INFO = {
@@ -1042,12 +1049,16 @@ function renderAssetList(root){
     host.querySelectorAll('[data-queueid]').forEach(btn=>{
       btn.onclick = ()=>{
         const assetId = btn.dataset.queueid;
-        const info = QUEUE_PURPOSE_INFO[btn.dataset.queuepurpose];
+        const purpose = btn.dataset.queuepurpose;
+        const info = QUEUE_PURPOSE_INFO[purpose];
         btn.disabled = true;
         apiPost({ action: info.action, assetId, addedBy: STATE.username||'' }).then(res=>{
-          btn.disabled = false;
-          if(!res.ok){ toast(res.error||'เพิ่มเข้าคิวไม่สำเร็จ','err'); return; }
+          if(!res.ok){ btn.disabled = false; toast(res.error||'เพิ่มเข้าคิวไม่สำเร็จ','err'); return; }
           toast(res.data.alreadyQueued ? ('ทรัพย์สินนี้อยู่ในคิวรอ'+info.label+'อยู่แล้ว') : ('เพิ่มเข้าคิวรอ'+info.label+'สำเร็จ — ดูได้ที่แถบ "'+info.tab+'"'),'ok');
+          // อัปเดตสถานะคิวรอในเครื่องทันที ไม่ต้องรอโหลดทรัพย์สินทั้งหมดใหม่ ปุ่ม/ป้ายในแถวนี้จะเปลี่ยนทันที
+          if(!STATE.assetQueuedPurposes[assetId]) STATE.assetQueuedPurposes[assetId] = [];
+          if(STATE.assetQueuedPurposes[assetId].indexOf(purpose)===-1) STATE.assetQueuedPurposes[assetId].push(purpose);
+          renderTable();
         });
       };
     });
@@ -1058,7 +1069,8 @@ function renderAssetList(root){
         apiPost({ action:'adminClearAssetQueues', password: STATE.adminPassword, assetId }).then(res=>{
           if(!res.ok){ toast(res.error||'ล้างคิวซ้ำไม่สำเร็จ','err'); return; }
           toast('ล้างคิวซ้ำสำเร็จ','ok');
-          load();
+          delete STATE.assetQueuedPurposes[assetId];
+          renderTable();
         });
       };
     });
@@ -1069,7 +1081,10 @@ function renderAssetList(root){
         apiPost({ action:'adminDeleteAsset', password: STATE.adminPassword, assetId }).then(res=>{
           if(!res.ok){ toast(res.error||'ลบไม่สำเร็จ','err'); return; }
           toast('ลบทรัพย์สินสำเร็จ','ok');
-          load();
+          STATE.assetsFull = STATE.assetsFull.filter(x=>x.AssetID!==assetId);
+          STATE.selectedAssetIds = STATE.selectedAssetIds.filter(id=>id!==assetId);
+          delete STATE.assetQueuedPurposes[assetId];
+          renderTable();
         });
       };
     });
@@ -1230,12 +1245,17 @@ function renderAssetList(root){
     const next = ()=>{
       if(done+failed >= selected.length){
         toast('คืนสถานะสำเร็จ '+done+' รายการ'+(failed?(' ผิดพลาด '+failed+' รายการ'):''), failed? 'err':'ok');
-        load();
+        renderTable(); // อัปเดตจาก object ที่แพตช์ไว้แล้วทีละรายการด้านล่าง ไม่ต้องโหลดทรัพย์สินทั้งหมดใหม่
         return;
       }
       const a = selected[done+failed];
       apiPost({action:'adminRestoreAsset', password: STATE.adminPassword, assetId: a.AssetID}).then(res=>{
-        if(res.ok) done++; else failed++;
+        if(res.ok){
+          done++;
+          a.Tag = 'ใช้งาน'; a.AssetStatus = 'Active'; a.SaleChannel = ''; a.SaleConfirmedAt = '';
+          a.SendToAuction = false; a.AuctionSold = false; a.AuctionBuyer = ''; a.AuctionSoldPrice = '';
+          a.AuctionSoldAt = ''; a.AuctionReferencePrice = ''; a.AuctionCancelledAt = '';
+        } else failed++;
         next();
       });
     };
@@ -3584,7 +3604,11 @@ function renderSaleList(root){
       if(btn) btn.disabled = false;
       if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
       toast('ยืนยันขายแล้วสำเร็จ','ok');
-      loadSales();
+      // แพตช์ในเครื่องแทนโหลดใบขายออกทั้งหมดใหม่ — ตาราง + Kanban สรุปด้านบนอัปเดตทันที
+      const s = allSales.find(x=>x.SaleID===saleId);
+      if(s) s.SaleConfirmedAt = new Date().toISOString();
+      renderSaleKanban();
+      renderSaleListTable();
     });
   };
 
@@ -3595,7 +3619,10 @@ function renderSaleList(root){
       if(btn) btn.disabled = false;
       if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
       toast('ยกเลิกการยืนยันสำเร็จ','ok');
-      loadSales();
+      const s = allSales.find(x=>x.SaleID===saleId);
+      if(s) s.SaleConfirmedAt = '';
+      renderSaleKanban();
+      renderSaleListTable();
     });
   };
 }
