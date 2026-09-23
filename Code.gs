@@ -1669,6 +1669,8 @@ function getAuctionListing_() {
       AssetID: r.AssetID,
       AssetName: r.AssetName,
       Department: r.Department,
+      Custodian: r.Custodian || '',
+      Location: r.Location || '',
       DisplayImage: r.DisplayImage,
       BookValue: r.BookValue || 0,
       AssetStatus: disposed[String(r.AssetID)],
