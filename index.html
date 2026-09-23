@@ -57,6 +57,21 @@
 
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(20,30,50,.05);}
   .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
+
+  /* ===== SETTINGS: กลุ่มหัวข้อ + แถบเมนูลัด ===== */
+  .settings-jumpnav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:26px;}
+  .settings-jumpnav button{background:var(--navy-light);color:var(--navy);border:none;border-radius:20px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;}
+  .settings-jumpnav button:hover{background:var(--navy);color:#fff;}
+  .settings-group{margin:34px 0 14px;scroll-margin-top:74px;}
+  .settings-group:first-of-type{margin-top:0;}
+  .settings-group-header{display:flex;align-items:baseline;gap:10px;padding-bottom:8px;margin-bottom:14px;border-bottom:2px solid var(--navy);}
+  .settings-group-header .settings-group-icon{font-size:19px;line-height:1;}
+  .settings-group-header h3{margin:0;font-size:15px;color:var(--navy);font-weight:700;}
+  .settings-group-header span.settings-group-desc{font-size:12px;color:var(--muted);font-weight:400;}
+  .settings-subcard{margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;}
+  .settings-subcard:first-child{margin-top:0;}
+  .settings-subcard h4{margin:0 0 4px;font-size:13.5px;color:var(--navy);}
+  .settings-subcard-divider{border:none;border-top:1px dashed var(--border);margin:16px 0;}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:500;}
   input[type=text], input[type=date], input[type=email], input[type=password], select, textarea{
     width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:7px;font-family:inherit;font-size:14px;background:#fff;
@@ -4644,45 +4659,74 @@ function renderActivityLog(root){
 /* ================= SETTINGS VIEW (Dept Codes + Admin Asset Data) ================= */
 function renderSettings(root){
   root.innerHTML = `
-    <div class="card">
-      <h2>ผู้ใช้งานออนไลน์ตอนนี้</h2>
-      <p style="color:var(--muted);font-size:13px;">นับว่า "ออนไลน์" ถ้ามีการใช้งานภายใน 2 นาทีล่าสุด</p>
-      <div id="onlineUsersHost">กำลังโหลด...</div>
-      <div class="toolbar" style="margin-top:8px;"><button class="btn btn-secondary btn-sm" id="btnRefreshOnlineUsers">↻ รีเฟรช</button></div>
+    <div class="settings-jumpnav no-print">
+      <button onclick="document.getElementById('grpUsers').scrollIntoView({behavior:'smooth',block:'start'})">👥 ผู้ใช้งาน</button>
+      <button onclick="document.getElementById('grpDepts').scrollIntoView({behavior:'smooth',block:'start'})">🏢 หน่วยงาน</button>
+      <button onclick="document.getElementById('grpSync').scrollIntoView({behavior:'smooth',block:'start'})">🔄 เชื่อมข้อมูลบัญชี</button>
+      <button onclick="document.getElementById('grpNav').scrollIntoView({behavior:'smooth',block:'start'})">🧭 เมนูภายในระบบ</button>
+      <button onclick="document.getElementById('grpAuctionPublic').scrollIntoView({behavior:'smooth',block:'start'})">🔨 ประมูลขาย (สาธารณะ)</button>
+      <button onclick="document.getElementById('grpLivePublic').scrollIntoView({behavior:'smooth',block:'start'})">📡 Live ประมูล (สาธารณะ)</button>
+      <button onclick="document.getElementById('grpAuctionContent').scrollIntoView({behavior:'smooth',block:'start'})">🎯 เนื้อหา/ราคาประมูล</button>
+      <button onclick="document.getElementById('grpMaintenance').scrollIntoView({behavior:'smooth',block:'start'})">🧹 บำรุงรักษาข้อมูล</button>
     </div>
 
-    <div class="card">
-      <h2>หน่วยงาน และอีเมลผู้อนุมัติ</h2>
-      <p style="color:var(--muted);font-size:13px;">กำหนดรหัสหน่วยงาน (ใช้ออกเลขที่เอกสาร รูปแบบ <b>รหัส/ลำดับ/ปีพ.ศ.2หลัก</b> เช่น ACC/001/69) และอีเมลผู้อนุมัติประจำหน่วยงาน — ระบบจะเติมชื่อ/อีเมลผู้อนุมัติให้อัตโนมัติเมื่อเลือกหน่วยงานตอนสร้างใบโอนย้าย/ขายออก/ตัดชำรุด</p>
-      <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnDeptAddNew">+ เพิ่มหน่วยงานใหม่</button></div>
-      <div id="deptTableHost">กำลังโหลด...</div>
+    <div class="settings-group" id="grpUsers">
+      <div class="settings-group-header"><span class="settings-group-icon">👥</span><h3>ผู้ใช้งานและสิทธิ์</h3></div>
+      <div class="card">
+        <h2>ผู้ใช้งานออนไลน์ตอนนี้</h2>
+        <p style="color:var(--muted);font-size:13px;">นับว่า "ออนไลน์" ถ้ามีการใช้งานภายใน 2 นาทีล่าสุด</p>
+        <div id="onlineUsersHost">กำลังโหลด...</div>
+        <div class="toolbar" style="margin-top:8px;"><button class="btn btn-secondary btn-sm" id="btnRefreshOnlineUsers">↻ รีเฟรช</button></div>
+      </div>
+      <div class="card">
+        <h2>ผู้ใช้งาน</h2>
+        <p style="color:var(--muted);font-size:13px;">เพิ่ม/แก้ไข/ลบผู้ใช้งานระบบ พร้อมกำหนดรหัสผ่านและสิทธิ์การใช้งาน (User เข้าได้ทุกแถบยกเว้นตั้งค่า, Admin เข้าได้ทุกแถบ) — เว้นว่างช่องรหัสผ่านเวลาบันทึกแก้ไขผู้ใช้เดิม เพื่อไม่เปลี่ยนรหัสผ่าน<br>กำหนด "หน่วยงานที่ดูแล" (เลือกได้หลายหน่วยงาน) เพื่อจำกัดสิทธิ์ User ให้แก้ไข/เพิ่ม/ลบทรัพย์สินได้เฉพาะหน่วยงานที่ได้รับมอบหมายเท่านั้น (ยังดูข้อมูลทั้งหมดได้ปกติที่แถบ "ข้อมูลทั้งหมด") — Admin ไม่ถูกจำกัด ไม่ต้องเลือกหน่วยงาน</p>
+        <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnUserAddNew">+ เพิ่มผู้ใช้ใหม่</button></div>
+        <div id="userTableHost">กำลังโหลด...</div>
+      </div>
     </div>
 
-    <div class="card" id="adminCard">
-      <h2>เชื่อมข้อมูลทรัพย์สินหลักจากทีมบัญชี</h2>
-      <p style="color:var(--muted);font-size:13px;">ข้อมูลหลักในชีต <b>Assets</b> ถูกอัปโหลดเข้ามาเป็นระยะโดยทีมบัญชี (จาก AppSheet) ผ่านลิงก์ด้านล่างนี้ ส่วนการดู/แก้ไข/เพิ่ม/ลบรายการทรัพย์สินแต่ละรายการ ทำได้ที่หน้า <b>"รายการทรัพย์สิน"</b> โดยตรง</p>
-      <div id="adminSourceLinkHost" style="padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ลิงก์ Google Sheet เชื่อมข้อมูล (ต้นทางจากทีมบัญชี)</label>
-        <input type="text" id="sourceSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/....">
-        <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ระบบจะอ่านจากแท็บที่ชื่อขึ้นต้นด้วย <b>AppSheet.ViewData</b> ในลิงก์นี้ (เลือกแท็บวันที่ล่าสุดให้อัตโนมัติ) โดยจับคู่คอลัมน์ตามชื่อหัวตาราง เช่น AssetID, AssetName, Department, PurchasePrice ฯลฯ แล้วอัปเดตรายการที่มี AssetID ตรงกับที่มีอยู่แล้ว และเพิ่มรายการใหม่ให้กับ AssetID ที่ยังไม่มีในระบบ</p>
-        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-secondary btn-sm" id="btnSaveSourceLink">บันทึกลิงก์</button>
-          <button class="btn btn-primary btn-sm" id="btnSyncSource">↻ ดึงข้อมูลล่าสุด</button>
+    <div class="settings-group" id="grpDepts">
+      <div class="settings-group-header"><span class="settings-group-icon">🏢</span><h3>หน่วยงานและการแจ้งเตือน</h3></div>
+      <div class="card">
+        <h2>หน่วยงาน และอีเมลผู้อนุมัติ</h2>
+        <p style="color:var(--muted);font-size:13px;">กำหนดรหัสหน่วยงาน (ใช้ออกเลขที่เอกสาร รูปแบบ <b>รหัส/ลำดับ/ปีพ.ศ.2หลัก</b> เช่น ACC/001/69) และอีเมลผู้อนุมัติประจำหน่วยงาน — ระบบจะเติมชื่อ/อีเมลผู้อนุมัติให้อัตโนมัติเมื่อเลือกหน่วยงานตอนสร้างใบโอนย้าย/ขายออก/ตัดชำรุด</p>
+        <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnDeptAddNew">+ เพิ่มหน่วยงานใหม่</button></div>
+        <div id="deptTableHost">กำลังโหลด...</div>
+      </div>
+      <div class="card">
+        <h2>อีเมลแจ้งเตือนฝ่ายบัญชี / GA</h2>
+        <p style="color:var(--muted);font-size:13px;">อีเมลปลายทางสำหรับปุ่ม "แจ้งบัญชี/GA" ที่แสดงในตารางรายการใบโอนย้าย/ขายออก/ตัดชำรุด (เฉพาะเอกสารที่อนุมัติแล้ว) — ใส่อีเมลได้ทั้งคู่หรือใส่อย่างใดอย่างหนึ่งก็ได้</p>
+        <div class="row">
+          <div><label>อีเมลฝ่ายบัญชี</label><input type="text" id="accountingEmail" placeholder="accounting@example.com"></div>
+          <div><label>อีเมล GA</label><input type="text" id="gaEmail" placeholder="ga@example.com"></div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveNotifyEmails" style="margin-top:6px;">บันทึกอีเมล</button>
+      </div>
+    </div>
+
+    <div class="settings-group" id="grpSync">
+      <div class="settings-group-header"><span class="settings-group-icon">🔄</span><h3>เชื่อมข้อมูลทรัพย์สินจากทีมบัญชี</h3></div>
+      <div class="card">
+        <h2>เชื่อมข้อมูลทรัพย์สินหลักจากทีมบัญชี</h2>
+        <p style="color:var(--muted);font-size:13px;">ข้อมูลหลักในชีต <b>Assets</b> ถูกอัปโหลดเข้ามาเป็นระยะโดยทีมบัญชี (จาก AppSheet) ผ่านลิงก์ด้านล่างนี้ ส่วนการดู/แก้ไข/เพิ่ม/ลบรายการทรัพย์สินแต่ละรายการ ทำได้ที่หน้า <b>"รายการทรัพย์สิน"</b> โดยตรง</p>
+        <div id="adminSourceLinkHost" class="settings-subcard">
+          <label>ลิงก์ Google Sheet เชื่อมข้อมูล (ต้นทางจากทีมบัญชี)</label>
+          <input type="text" id="sourceSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/....">
+          <p style="color:var(--muted);font-size:12px;margin:6px 0 0;">ระบบจะอ่านจากแท็บที่ชื่อขึ้นต้นด้วย <b>AppSheet.ViewData</b> ในลิงก์นี้ (เลือกแท็บวันที่ล่าสุดให้อัตโนมัติ) โดยจับคู่คอลัมน์ตามชื่อหัวตาราง เช่น AssetID, AssetName, Department, PurchasePrice ฯลฯ แล้วอัปเดตรายการที่มี AssetID ตรงกับที่มีอยู่แล้ว และเพิ่มรายการใหม่ให้กับ AssetID ที่ยังไม่มีในระบบ</p>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" id="btnSaveSourceLink">บันทึกลิงก์</button>
+            <button class="btn btn-primary btn-sm" id="btnSyncSource">↻ ดึงข้อมูลล่าสุด</button>
+          </div>
         </div>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>หน้าประมูลขายแบบสาธารณะ</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เปิดให้ใครก็ตามเปิดหน้า "ประมูลขาย" ดูได้ทันทีโดยไม่ต้องล็อกอิน (ใช้ตอนแชร์ลิงก์/เปิดจอให้ผู้เข้าประมูลดูรายการ) — ไม่แสดงราคาซากและซ่อนมูลค่าตามบัญชีเสมอสำหรับผู้ที่ไม่ได้ล็อกอิน</p>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" id="auctionPublicEnabled" style="width:auto;">
-          <label for="auctionPublicEnabled" style="margin:0;font-weight:400;">เปิดให้เข้าดูได้โดยไม่ต้องล็อกอิน</label>
-        </div>
-        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionPublic" style="margin-top:8px;">บันทึก</button>
-        <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
-      </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>เมนูประมูลในแถบเมนูของพนักงาน</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">คนละเรื่องกับ "หน้าประมูลขายแบบสาธารณะ" ด้านบน (ซึ่งคุมคนที่ไม่ได้ล็อกอิน) — ใช้ซ่อนเมนูจากพนักงานที่ล็อกอินอยู่ ถ้าไม่ต้องการให้เข้าถึงผ่านแถบเมนูภายใน (เช่น ให้ใช้ผ่านลิงก์สาธารณะแทน) Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร</p>
+    </div>
+
+    <div class="settings-group" id="grpNav">
+      <div class="settings-group-header"><span class="settings-group-icon">🧭</span><h3>เมนูภายในระบบ</h3><span class="settings-group-desc">ควบคุมเมนูที่พนักงานซึ่งล็อกอินอยู่มองเห็น — คนละเรื่องกับ "การเข้าถึงสาธารณะ" ด้านล่าง</span></div>
+      <div class="card">
+        <h2>เมนูประมูลในแถบเมนูของพนักงาน</h2>
+        <p style="color:var(--muted);font-size:13px;">ใช้ซ่อนเมนู "ประมูลขาย"/"Live ประมูล" จากพนักงานที่ล็อกอินอยู่ ถ้าไม่ต้องการให้เข้าถึงผ่านแถบเมนูภายใน (เช่น ให้ใช้ผ่านลิงก์สาธารณะแทน) — Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร</p>
         <div style="display:flex;align-items:center;gap:8px;">
           <input type="checkbox" id="navShowAuction" style="width:auto;" checked>
           <label for="navShowAuction" style="margin:0;font-weight:400;">แสดงเมนู "ประมูลขาย"</label>
@@ -4693,9 +4737,23 @@ function renderSettings(root){
         </div>
         <button class="btn btn-secondary btn-sm" id="btnSaveNavVisibility" style="margin-top:10px;">บันทึก</button>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ประกาศปิดประมูล</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
+    </div>
+
+    <div class="settings-group" id="grpAuctionPublic">
+      <div class="settings-group-header"><span class="settings-group-icon">🔨</span><h3>ประมูลขาย — การเข้าถึงสาธารณะ</h3><span class="settings-group-desc">ควบคุมสิ่งที่คนนอกที่ไม่ได้ล็อกอินเห็นได้ที่หน้า "ประมูลขาย"</span></div>
+      <div class="card">
+        <h2>หน้าประมูลขายแบบสาธารณะ</h2>
+        <p style="color:var(--muted);font-size:13px;">เปิดให้ใครก็ตามเปิดหน้า "ประมูลขาย" ดูได้ทันทีโดยไม่ต้องล็อกอิน (ใช้ตอนแชร์ลิงก์/เปิดจอให้ผู้เข้าประมูลดูรายการ) — ไม่แสดงราคาซากและซ่อนมูลค่าตามบัญชีเสมอสำหรับผู้ที่ไม่ได้ล็อกอิน</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="auctionPublicEnabled" style="width:auto;">
+          <label for="auctionPublicEnabled" style="margin:0;font-weight:400;">เปิดให้เข้าดูได้โดยไม่ต้องล็อกอิน</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionPublic" style="margin-top:8px;">บันทึก</button>
+        <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
+      </div>
+      <div class="card">
+        <h2>ประกาศปิดประมูล</h2>
+        <p style="color:var(--muted);font-size:13px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
         <div style="display:flex;align-items:center;gap:8px;">
           <input type="checkbox" id="auctionClosedEnabled" style="width:auto;">
           <label for="auctionClosedEnabled" style="margin:0;font-weight:400;">แสดงประกาศปิดประมูล</label>
@@ -4707,28 +4765,31 @@ function renderSettings(root){
         </div>
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionClosedNotice" style="margin-top:8px;">บันทึก</button>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>เผยแพร่รายการใบประมูลต่อสาธารณะ</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน แท็บ "รายการใบประมูล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นชื่อผู้ยื่นประมูลและราคาที่เสนอทุกรายการ (ไม่แสดงเบอร์ติดต่อ) — ใช้เปิดภายหลังปิดประมูลแล้วเพื่อความโปร่งใส ปุ่ม Export ยังใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
+    </div>
+
+    <div class="settings-group" id="grpLivePublic">
+      <div class="settings-group-header"><span class="settings-group-icon">📡</span><h3>Live ประมูล — การเข้าถึงสาธารณะ</h3><span class="settings-group-desc">ควบคุมสิ่งที่คนนอกที่ไม่ได้ล็อกอินเห็นได้ที่หน้า "Live ประมูล"</span></div>
+      <div class="card">
+        <h2>เผยแพร่รายการใบประมูลต่อสาธารณะ</h2>
+        <p style="color:var(--muted);font-size:13px;">เมื่อเปิดใช้งาน แท็บ "รายการใบประมูล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นชื่อผู้ยื่นประมูลและราคาที่เสนอทุกรายการ (ไม่แสดงเบอร์ติดต่อ) — ใช้เปิดภายหลังปิดประมูลแล้วเพื่อความโปร่งใส ปุ่ม Export ยังใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
         <div style="display:flex;align-items:center;gap:8px;">
           <input type="checkbox" id="auctionBidListPublicEnabled" style="width:auto;">
           <label for="auctionBidListPublicEnabled" style="margin:0;font-weight:400;">เปิดให้ทุกคนดูรายการใบประมูลได้</label>
         </div>
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionBidListPublic" style="margin-top:8px;">บันทึก</button>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ประกาศผลผู้ประมูลได้ต่อสาธารณะ</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน แท็บ "ประกาศผล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นสรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ — คนละสวิตช์กับ "เผยแพร่รายการใบประมูล" ด้านบน ใช้เปิดเมื่อพร้อมประกาศผลแล้ว ปุ่ม Export/พิมพ์/ส่งอีเมล ใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
+      <div class="card">
+        <h2>ประกาศผลผู้ประมูลได้ต่อสาธารณะ</h2>
+        <p style="color:var(--muted);font-size:13px;">เมื่อเปิดใช้งาน แท็บ "ประกาศผล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นสรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ — คนละสวิตช์กับ "เผยแพร่รายการใบประมูล" ด้านบน ใช้เปิดเมื่อพร้อมประกาศผลแล้ว ปุ่ม Export/พิมพ์/ส่งอีเมล ใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
         <div style="display:flex;align-items:center;gap:8px;">
           <input type="checkbox" id="auctionWinnersPublicEnabled" style="width:auto;">
           <label for="auctionWinnersPublicEnabled" style="margin:0;font-weight:400;">เปิดให้ทุกคนดูประกาศผลได้</label>
         </div>
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionWinnersPublic" style="margin-top:8px;">บันทึก</button>
-      </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ควบคุมข้อมูลที่สาธารณะเห็นในประกาศผล</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ใช้ปรับละเอียดเพิ่มเติมจากสวิตช์เปิด/ปิดด้านบน — มีผลเฉพาะกับผู้ที่ไม่ได้ล็อกอินเป็น Admin เท่านั้น (Admin ที่ล็อกอินอยู่ยังเห็นข้อมูลครบทุกรอบ/ทุกราคาตามปกติ)</p>
-        <label style="margin-top:8px;">รอบที่ให้สาธารณะเห็น</label>
+        <hr class="settings-subcard-divider">
+        <h4>ควบคุมข้อมูลที่สาธารณะเห็นในประกาศผล</h4>
+        <p style="color:var(--muted);font-size:13px;margin:0 0 10px;">ใช้ปรับละเอียดเพิ่มเติมจากสวิตช์เปิด/ปิดด้านบน — มีผลเฉพาะกับผู้ที่ไม่ได้ล็อกอินเป็น Admin เท่านั้น (Admin ที่ล็อกอินอยู่ยังเห็นข้อมูลครบทุกรอบ/ทุกราคาตามปกติ)</p>
+        <label>รอบที่ให้สาธารณะเห็น</label>
         <select id="auctionPublicRoundSelect">
           <option value="">ตามรอบปัจจุบันเสมอ (ไม่ปักหมุด)</option>
         </select>
@@ -4740,18 +4801,22 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:11px;margin:4px 0 0;">ถ้าปิดไว้ สาธารณะจะยังเห็น "ราคาที่ประมูลได้" ตามปกติ (เป็นผลการประมูลจริง) แต่จะไม่เห็นราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชีซึ่งเป็นข้อมูลภายใน</p>
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionWinnersPublicSettings" style="margin-top:10px;">บันทึก</button>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
+    </div>
+
+    <div class="settings-group" id="grpAuctionContent">
+      <div class="settings-group-header"><span class="settings-group-icon">🎯</span><h3>เนื้อหาและราคาหน้าประมูลขาย</h3></div>
+      <div class="card">
+        <h2>ช่วงราคากลาง (Rank) สำหรับหน้าประมูลขาย</h2>
+        <p style="color:var(--muted);font-size:13px;">กำหนดช่วงราคากลางที่ใช้จัดกลุ่มรายการในหน้า "ประมูลขาย" (แสดงเป็นช่วงๆ เรียงลงมา) และราคาเริ่มต้นที่แนะนำให้อัตโนมัติเมื่อยังไม่เคยตั้งราคากลางของรายการนั้น (เว้นว่างช่องราคาเริ่มต้น = ไม่แนะนำราคาให้) เว้นว่างช่อง "ถึง" ของช่วงบนสุด = ไม่จำกัดเพดานบน</p>
         <div id="auctionBracketsHost">กำลังโหลด...</div>
         <div class="toolbar" style="margin-top:8px;">
           <button class="btn btn-secondary btn-sm" id="btnAddAuctionBracket">+ เพิ่มช่วงราคา</button>
           <button class="btn btn-primary btn-sm" id="btnSaveAuctionBrackets">บันทึกช่วงราคาทั้งหมด</button>
         </div>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>เนื้อหาหน้าแรกประมูลขาย</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า แก้ไขได้ทั้งหมด (ตารางเกณฑ์ราคา Rank แสดงให้อัตโนมัติจากช่วงราคากลางด้านบนแยกต่างหาก ไม่ต้องพิมพ์ซ้ำในนี้) แก้ไขวันที่/ขั้นตอนในช่องล่างสุดทุกรอบที่มีการประมูลใหม่</p>
+      <div class="card">
+        <h2>เนื้อหาหน้าแรกประมูลขาย</h2>
+        <p style="color:var(--muted);font-size:13px;">แสดงในหน้าแรกของ "ประมูลขาย" ก่อนเข้าดูรายการสินค้า แก้ไขได้ทั้งหมด (ตารางเกณฑ์ราคา Rank แสดงให้อัตโนมัติจากช่วงราคากลางด้านบนแยกต่างหาก ไม่ต้องพิมพ์ซ้ำในนี้) แก้ไขวันที่/ขั้นตอนในช่องล่างสุดทุกรอบที่มีการประมูลใหม่</p>
         <label>หัวข้อหน้าแรก</label>
         <input type="text" id="auctionIntroTitle" placeholder="สรุปขั้นตอนการประมูลสินค้า">
         <div class="row" style="margin-top:10px;">
@@ -4762,32 +4827,20 @@ function renderSettings(root){
         <textarea id="auctionIntroNote" rows="10" style="width:100%;font-family:inherit;"></textarea>
         <button class="btn btn-secondary btn-sm" id="btnSaveAuctionIntroNote" style="margin-top:8px;">บันทึกเนื้อหาหน้าแรก</button>
       </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ราคาซาก = มูลค่าตามบัญชี</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ราคาซากของทุกทรัพย์สินถูกกำหนดให้เท่ากับมูลค่าตามบัญชีเสมอ (ปรับอัตโนมัติทุกครั้งที่แก้ไข/เพิ่มทรัพย์สิน หรือดึงข้อมูลจากบัญชี) หากมีรายการเก่าที่ราคาซากยังไม่ตรงกับมูลค่าตามบัญชี กดปุ่มด้านล่างเพื่อไล่ตรวจสอบและอัปเดตให้ตรงกันย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
-        <button class="btn btn-secondary btn-sm" id="btnSyncScrapPrice">🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง</button>
-      </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>อีเมลแจ้งเตือนฝ่ายบัญชี / GA</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">อีเมลปลายทางสำหรับปุ่ม "แจ้งบัญชี/GA" ที่แสดงในตารางรายการใบโอนย้าย/ขายออก/ตัดชำรุด (เฉพาะเอกสารที่อนุมัติแล้ว) — ใส่อีเมลได้ทั้งคู่หรือใส่อย่างใดอย่างหนึ่งก็ได้</p>
-        <div class="row">
-          <div><label>อีเมลฝ่ายบัญชี</label><input type="text" id="accountingEmail" placeholder="accounting@example.com"></div>
-          <div><label>อีเมล GA</label><input type="text" id="gaEmail" placeholder="ga@example.com"></div>
-        </div>
-        <button class="btn btn-secondary btn-sm" id="btnSaveNotifyEmails" style="margin-top:6px;">บันทึกอีเมล</button>
-      </div>
-      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
-        <label>ซิงค์แท็กสถานะ "ขาย" / "ชำรุด" ย้อนหลัง</label>
-        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">ระบบจะติดแท็ก "ขาย"/"ชำรุด" ให้ทรัพย์สินอัตโนมัติเฉพาะใบขาย/ใบตัดชำรุดที่อนุมัติ<b>นับจากนี้ไป</b> — ถ้ามีรายการที่ขาย/ตัดชำรุดไปแล้วก่อนหน้านี้และแท็กยังไม่ตรง กดปุ่มนี้เพื่อไล่ตรวจสอบเอกสารที่อนุมัติแล้วทั้งหมดแล้วปรับแท็กในชีต Assets ให้ตรงกับความจริงย้อนหลัง (กดซ้ำได้ ไม่มีผลเสีย)</p>
-        <button class="btn btn-secondary btn-sm" id="btnBackfillTags">🔄 ซิงค์แท็กสถานะย้อนหลัง</button>
-      </div>
     </div>
 
-    <div class="card">
-      <h2>ผู้ใช้งาน</h2>
-      <p style="color:var(--muted);font-size:13px;">เพิ่ม/แก้ไข/ลบผู้ใช้งานระบบ พร้อมกำหนดรหัสผ่านและสิทธิ์การใช้งาน (User เข้าได้ทุกแถบยกเว้นตั้งค่า, Admin เข้าได้ทุกแถบ) — เว้นว่างช่องรหัสผ่านเวลาบันทึกแก้ไขผู้ใช้เดิม เพื่อไม่เปลี่ยนรหัสผ่าน<br>กำหนด "หน่วยงานที่ดูแล" (เลือกได้หลายหน่วยงาน) เพื่อจำกัดสิทธิ์ User ให้แก้ไข/เพิ่ม/ลบทรัพย์สินได้เฉพาะหน่วยงานที่ได้รับมอบหมายเท่านั้น (ยังดูข้อมูลทั้งหมดได้ปกติที่แถบ "ข้อมูลทั้งหมด") — Admin ไม่ถูกจำกัด ไม่ต้องเลือกหน่วยงาน</p>
-      <div class="toolbar"><button class="btn btn-primary btn-sm" id="btnUserAddNew">+ เพิ่มผู้ใช้ใหม่</button></div>
-      <div id="userTableHost">กำลังโหลด...</div>
+    <div class="settings-group" id="grpMaintenance">
+      <div class="settings-group-header"><span class="settings-group-icon">🧹</span><h3>งานบำรุงรักษาข้อมูล</h3><span class="settings-group-desc">ไล่ตรวจสอบ/ซิงค์ข้อมูลย้อนหลัง — กดซ้ำได้ ไม่มีผลเสีย</span></div>
+      <div class="card">
+        <h2>ราคาซาก = มูลค่าตามบัญชี</h2>
+        <p style="color:var(--muted);font-size:13px;">ราคาซากของทุกทรัพย์สินถูกกำหนดให้เท่ากับมูลค่าตามบัญชีเสมอ (ปรับอัตโนมัติทุกครั้งที่แก้ไข/เพิ่มทรัพย์สิน หรือดึงข้อมูลจากบัญชี) หากมีรายการเก่าที่ราคาซากยังไม่ตรงกับมูลค่าตามบัญชี กดปุ่มด้านล่างเพื่อไล่ตรวจสอบและอัปเดตให้ตรงกันย้อนหลัง</p>
+        <button class="btn btn-secondary btn-sm" id="btnSyncScrapPrice">🔄 ตรวจสอบและอัปเดตราคาซากย้อนหลัง</button>
+      </div>
+      <div class="card">
+        <h2>ซิงค์แท็กสถานะ "ขาย" / "ชำรุด" ย้อนหลัง</h2>
+        <p style="color:var(--muted);font-size:13px;">ระบบจะติดแท็ก "ขาย"/"ชำรุด" ให้ทรัพย์สินอัตโนมัติเฉพาะใบขาย/ใบตัดชำรุดที่อนุมัติ<b>นับจากนี้ไป</b> — ถ้ามีรายการที่ขาย/ตัดชำรุดไปแล้วก่อนหน้านี้และแท็กยังไม่ตรง กดปุ่มนี้เพื่อไล่ตรวจสอบเอกสารที่อนุมัติแล้วทั้งหมดแล้วปรับแท็กในชีต Assets ให้ตรงกับความจริงย้อนหลัง</p>
+        <button class="btn btn-secondary btn-sm" id="btnBackfillTags">🔄 ซิงค์แท็กสถานะย้อนหลัง</button>
+      </div>
     </div>
   `;
 
