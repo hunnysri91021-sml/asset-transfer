@@ -160,6 +160,9 @@ function doGet(e) {
       case 'getAuctionPublicEnabled':
         result = { ok: true, data: { enabled: getAuctionPublicEnabled_() } };
         break;
+      case 'getNavVisibilitySettings':
+        result = { ok: true, data: getNavVisibilitySettings_() };
+        break;
       case 'getAuctionPriceBrackets':
         result = { ok: true, data: { brackets: getAuctionPriceBrackets_() } };
         break;
@@ -327,6 +330,9 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionPublicSetting':
         result = adminSaveAuctionPublicSetting_(body);
+        break;
+      case 'adminSaveNavVisibilitySettings':
+        result = adminSaveNavVisibilitySettings_(body);
         break;
       case 'adminGetAuctionCandidates':
         result = getAuctionCandidates_(body);
@@ -1429,6 +1435,30 @@ function adminSaveAuctionPublicSetting_(body) {
   const enabled = !!body.enabled;
   PropertiesService.getScriptProperties().setProperty(AUCTION_PUBLIC_ENABLED_PROP, enabled ? '1' : '0');
   logActivity_('', 'ADMIN_SET_AUCTION_PUBLIC', 'admin', (enabled ? 'เปิด' : 'ปิด') + 'การเข้าดูหน้าประมูลขายแบบสาธารณะ (ไม่ต้องล็อกอิน)');
+  return { ok: true };
+}
+
+// เมนู "ประมูลขาย"/"Live ประมูล" ในแถบเมนูฝั่งพนักงานที่ล็อกอินอยู่ (คนละเรื่องกับสวิตช์สาธารณะด้านบน ซึ่งคุมคนที่ไม่ได้
+// ล็อกอิน) — Admin ซ่อนเมนูเหล่านี้จากพนักงานทั่วไปได้ถ้าไม่อยากให้ใช้งานผ่านแถบเมนูภายใน (เช่น ให้ประมูลผ่านลิงก์สาธารณะ
+// แทน) ค่าเริ่มต้น = แสดงทั้งคู่เหมือนเดิม — Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร (ดูฝั่ง frontend)
+const NAV_SHOW_AUCTION_PROP = 'NAV_SHOW_AUCTION';
+const NAV_SHOW_AUCTION_LIVE_PROP = 'NAV_SHOW_AUCTION_LIVE';
+function getNavVisibilitySettings_() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    showAuction: props.getProperty(NAV_SHOW_AUCTION_PROP) !== '0',
+    showAuctionLive: props.getProperty(NAV_SHOW_AUCTION_LIVE_PROP) !== '0'
+  };
+}
+function adminSaveNavVisibilitySettings_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const props = PropertiesService.getScriptProperties();
+  const showAuction = body.showAuction !== false;
+  const showAuctionLive = body.showAuctionLive !== false;
+  props.setProperty(NAV_SHOW_AUCTION_PROP, showAuction ? '1' : '0');
+  props.setProperty(NAV_SHOW_AUCTION_LIVE_PROP, showAuctionLive ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_NAV_VISIBILITY', 'admin',
+    'ตั้งค่าแสดงเมนูพนักงาน: ประมูลขาย=' + (showAuction ? 'แสดง' : 'ซ่อน') + ', Live ประมูล=' + (showAuctionLive ? 'แสดง' : 'ซ่อน'));
   return { ok: true };
 }
 

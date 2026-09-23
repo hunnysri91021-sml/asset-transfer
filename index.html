@@ -163,8 +163,10 @@
       <div class="nav-group-label">ภาพรวม</div>
       <button data-view="dashboard">ข้อมูลรวม</button>
       <button data-view="assetList">รายการทรัพย์สิน</button>
-      <button data-view="auction">ประมูลขาย</button>
-      <button data-view="auctionLive">Live ประมูล</button>
+      <div class="nav-group-label">ประมูล</div>
+      <button data-view="auction" id="navAuction">ประมูลขาย</button>
+      <button data-view="auctionLive" id="navAuctionLive">Live ประมูล</button>
+      <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
       <div class="nav-group-label">โอนย้าย</div>
       <button data-view="list">รายการใบโอนย้าย</button>
       <button data-view="create">+ สร้างใบโอนย้าย</button>
@@ -176,7 +178,6 @@
       <button data-view="writeOffList">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
       <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
-      <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
       <button data-view="activityLog" id="navActivityLog">ประวัติการใช้งาน</button>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
@@ -204,6 +205,7 @@ let STATE = {
   view: 'dashboard',
   role: null,
   username: null,
+  navVisibility: { showAuction: true, showAuctionLive: true },
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -545,7 +547,13 @@ function enterApp(){
     });
     return;
   }
-  if(checkAuth()){ startHeartbeat(); route(); } else { stopHeartbeat(); renderLogin(); }
+  if(checkAuth()){
+    startHeartbeat();
+    apiGet({ action:'getNavVisibilitySettings' }).then(res=>{
+      if(res.ok) STATE.navVisibility = res.data;
+      route();
+    });
+  } else { stopHeartbeat(); renderLogin(); }
 }
 
 /* ================= HEARTBEAT / สถานะออนไลน์ ================= */
@@ -672,6 +680,16 @@ function render(){
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
   if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection') && STATE.role !== 'admin') STATE.view = 'dashboard';
+  // Admin ซ่อนเมนู "ประมูลขาย"/"Live ประมูล" จากพนักงานทั่วไปได้ที่หน้าตั้งค่า (ดู getNavVisibilitySettings) —
+  // Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร
+  const navAuctionBtn = document.getElementById('navAuction');
+  const navAuctionLiveBtn = document.getElementById('navAuctionLive');
+  const hideAuctionNav = STATE.role!=='admin' && !STATE.navVisibility.showAuction;
+  const hideAuctionLiveNav = STATE.role!=='admin' && !STATE.navVisibility.showAuctionLive;
+  if(navAuctionBtn) navAuctionBtn.style.display = hideAuctionNav ? 'none' : '';
+  if(navAuctionLiveBtn) navAuctionLiveBtn.style.display = hideAuctionLiveNav ? 'none' : '';
+  if(STATE.view==='auction' && hideAuctionNav) STATE.view = 'dashboard';
+  if(STATE.view==='auctionLive' && hideAuctionLiveNav) STATE.view = 'dashboard';
   // ผู้บริหาร: ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ — ซ่อนปุ่มเมนู "+ สร้าง..." และกันไม่ให้เข้าหน้าสร้างเอกสารตรงๆ
   ['create','saleCreate','writeOffCreate'].forEach(v=>{
     const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
@@ -4660,6 +4678,19 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>เมนูประมูลในแถบเมนูของพนักงาน</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">คนละเรื่องกับ "หน้าประมูลขายแบบสาธารณะ" ด้านบน (ซึ่งคุมคนที่ไม่ได้ล็อกอิน) — ใช้ซ่อนเมนูจากพนักงานที่ล็อกอินอยู่ ถ้าไม่ต้องการให้เข้าถึงผ่านแถบเมนูภายใน (เช่น ให้ใช้ผ่านลิงก์สาธารณะแทน) Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="navShowAuction" style="width:auto;" checked>
+          <label for="navShowAuction" style="margin:0;font-weight:400;">แสดงเมนู "ประมูลขาย"</label>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <input type="checkbox" id="navShowAuctionLive" style="width:auto;" checked>
+          <label for="navShowAuctionLive" style="margin:0;font-weight:400;">แสดงเมนู "Live ประมูล"</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveNavVisibility" style="margin-top:10px;">บันทึก</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ประกาศปิดประมูล</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -4759,6 +4790,7 @@ function renderSettings(root){
 
   loadDeptCodes().then(loadUsers);
   loadSourceLink();
+  loadNavVisibility();
   loadOnlineUsers();
   loadAuctionBrackets();
   loadAuctionIntroNote();
@@ -4771,6 +4803,7 @@ function renderSettings(root){
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
+  document.getElementById('btnSaveNavVisibility').onclick = saveNavVisibility;
   document.getElementById('btnSaveAuctionBidListPublic').onclick = saveAuctionBidListPublic;
   document.getElementById('btnSaveAuctionWinnersPublic').onclick = saveAuctionWinnersPublic;
   document.getElementById('btnSaveAuctionWinnersPublicSettings').onclick = saveAuctionWinnersPublicSettings;
@@ -4906,6 +4939,28 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast(enabled ? 'เปิดหน้าประมูลขายแบบสาธารณะแล้ว' : 'ปิดหน้าประมูลขายแบบสาธารณะแล้ว','ok');
+    });
+  }
+
+  function loadNavVisibility(){
+    apiGet({ action:'getNavVisibilitySettings' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('navShowAuction').checked = res.data.showAuction !== false;
+      document.getElementById('navShowAuctionLive').checked = res.data.showAuctionLive !== false;
+    });
+  }
+
+  function saveNavVisibility(){
+    const showAuction = document.getElementById('navShowAuction').checked;
+    const showAuctionLive = document.getElementById('navShowAuctionLive').checked;
+    const btn = document.getElementById('btnSaveNavVisibility');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveNavVisibilitySettings', password: STATE.adminPassword, showAuction, showAuctionLive }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      STATE.navVisibility = { showAuction, showAuctionLive };
+      render();
+      toast('บันทึกการแสดงเมนูสำเร็จ','ok');
     });
   }
 
