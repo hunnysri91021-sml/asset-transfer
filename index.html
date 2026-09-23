@@ -754,8 +754,10 @@ function openAssetEditModal(asset, onSaved){
           <div><label>ราคาซาก (= มูลค่าตามบัญชี)</label><input type="${canSeePrice()?'text':'password'}" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.BookValue||0))} บาท" disabled style="background:#f4f6f9;"></div>
           <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
         </div>
-        <label>แท็กสถานะ</label>
-        <select id="amTag">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${(a.Tag||'ใช้งาน')===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
+        <label>แท็กสถานะ${STATE.role==='admin'?'':' (แก้ไขได้เฉพาะ Admin)'}</label>
+        ${STATE.role==='admin'
+          ? `<select id="amTag">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${(a.Tag||'ใช้งาน')===t?'selected':''}>${esc(t)}</option>`).join('')}</select>`
+          : `<input type="text" id="amTag" value="${esc(a.Tag||'ใช้งาน')}" readonly style="background:#f4f6f9;">`}
         <label>รูปภาพ</label>
         <div class="item-img-gallery">
           <div class="item-img-thumb">
@@ -826,7 +828,7 @@ function renderAssetList(root){
         <button class="btn ${!manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabAll">ข้อมูลทั้งหมด</button>
         ${isViewOnly() ? '' : `<button class="btn ${manageMode?'btn-primary':'btn-secondary'} btn-sm" id="btnAlTabManage">จัดการทรัพย์สินหน่วยงานของฉัน</button>`}
       </div>
-      <p style="color:var(--muted);font-size:13px;">${manageMode ? 'แก้ไข/เพิ่ม/ลบทรัพย์สิน — แสดงเฉพาะหน่วยงานที่คุณได้รับสิทธิ์ดูแล' + (isAdmin?' (Admin เห็นทุกหน่วยงาน)':'')  : 'ดูข้อมูลทรัพย์สินทั้งหมดของทุกหน่วยงาน (ไม่สามารถแก้ไขจากแถบนี้)'}</p>
+      <p style="color:var(--muted);font-size:13px;">${manageMode ? 'แก้ไข/เพิ่ม/ลบทรัพย์สิน — แสดงเฉพาะหน่วยงานที่คุณได้รับสิทธิ์ดูแล' + (isAdmin?' (Admin เห็นทุกหน่วยงาน)':' (คอลัมน์ "แท็กสถานะ" แก้ไขได้เฉพาะ Admin เท่านั้น)')  : 'ดูข้อมูลทรัพย์สินทั้งหมดของทุกหน่วยงาน (ไม่สามารถแก้ไขจากแถบนี้)'}</p>
       <div class="toolbar no-print">
         <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน / ผู้ดูแล..." style="max-width:220px;">
         <select id="alStatus" style="max-width:170px;">
@@ -993,7 +995,7 @@ function renderAssetList(root){
         <td class="money">${fmtMoney(a.PurchasePrice)}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td>${assetStatusBadge(assetLifecycleBucket(a, queuedPurposeOf(a)))}</td>
-        ${manageMode
+        ${(manageMode && isAdmin)
           ? `<td class="no-print"><select class="alTagSelect" data-id="${esc(a.AssetID)}" style="width:100%;">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${curTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></td>`
           : `<td>${esc(curTag)}</td>`}
         ${manageMode ? `<td class="no-print" style="white-space:normal;">
@@ -1115,7 +1117,11 @@ function renderAssetList(root){
       apiPost({ action:'adminQuickDisposeAsset', password: STATE.adminPassword, assetId, kind:'sale', buyer: buyer||'', salePrice: Number(priceStr)||0 }).then(res=>{
         if(!res.ok){ toast(res.error||'สร้างใบขายไม่สำเร็จ','err'); load(); return; }
         toast('บันทึกขายทรัพย์สินสำเร็จ (เลขที่ '+res.data.runningNo+')','ok');
-        load();
+        // อัปเดตข้อมูลในเครื่องทันที (ไม่รอโหลดทรัพย์สินทั้งหมด 1,250+ รายการใหม่จากเซิร์ฟเวอร์) ให้คอลัมน์
+        // "สถานะ"/"แท็กสถานะ" ของแถวนี้เปลี่ยนทันทีโดยไม่หน่วง — ตรงกับสิ่งที่ backend เพิ่งบันทึกจริงเป๊ะ
+        if(a){ a.Tag = 'ขาย'; a.AssetStatus = 'Sold'; a.SaleChannel = 'ขาย'; a.SaleConfirmedAt = new Date().toISOString(); }
+        delete STATE.assetQueuedPurposes[assetId];
+        renderTable();
       });
       return;
     }
@@ -1129,7 +1135,9 @@ function renderAssetList(root){
       apiPost({ action:'adminQuickDisposeAsset', password: STATE.adminPassword, assetId, kind:'writeoff', reason: reason||'ชำรุด', scrapPrice: Number(priceStr)||0 }).then(res=>{
         if(!res.ok){ toast(res.error||'สร้างใบตัดชำรุดไม่สำเร็จ','err'); load(); return; }
         toast('บันทึกตัดชำรุดทรัพย์สินสำเร็จ (เลขที่ '+res.data.runningNo+')','ok');
-        load();
+        if(a){ a.Tag = 'ชำรุด'; a.AssetStatus = 'WrittenOff'; }
+        delete STATE.assetQueuedPurposes[assetId];
+        renderTable();
       });
       return;
     }
@@ -1139,7 +1147,12 @@ function renderAssetList(root){
       apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId }).then(res=>{
         if(!res.ok){ toast(res.error||'คืนสถานะไม่สำเร็จ','err'); load(); return; }
         toast('คืนสถานะใช้งานสำเร็จ','ok');
-        load();
+        if(a){
+          a.Tag = 'ใช้งาน'; a.AssetStatus = 'Active'; a.SaleChannel = ''; a.SaleConfirmedAt = '';
+          a.SendToAuction = false; a.AuctionSold = false; a.AuctionBuyer = ''; a.AuctionSoldPrice = '';
+          a.AuctionSoldAt = ''; a.AuctionReferencePrice = ''; a.AuctionCancelledAt = '';
+        }
+        renderTable();
       });
       return;
     }
