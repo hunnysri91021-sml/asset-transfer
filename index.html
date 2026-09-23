@@ -163,8 +163,10 @@
       <div class="nav-group-label">ภาพรวม</div>
       <button data-view="dashboard">ข้อมูลรวม</button>
       <button data-view="assetList">รายการทรัพย์สิน</button>
-      <button data-view="auction">ประมูลขาย</button>
-      <button data-view="auctionLive">Live ประมูล</button>
+      <div class="nav-group-label">ประมูล</div>
+      <button data-view="auction" id="navAuction">ประมูลขาย</button>
+      <button data-view="auctionLive" id="navAuctionLive">Live ประมูล</button>
+      <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
       <div class="nav-group-label">โอนย้าย</div>
       <button data-view="list">รายการใบโอนย้าย</button>
       <button data-view="create">+ สร้างใบโอนย้าย</button>
@@ -176,7 +178,6 @@
       <button data-view="writeOffList">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
       <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
-      <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
       <button data-view="activityLog" id="navActivityLog">ประวัติการใช้งาน</button>
       <button data-view="settings">ตั้งค่า</button>
     </nav>
@@ -204,6 +205,7 @@ let STATE = {
   view: 'dashboard',
   role: null,
   username: null,
+  navVisibility: { showAuction: true, showAuctionLive: true },
   assets: [],
   deptCodes: [],
   transfers: [],
@@ -386,7 +388,9 @@ function assetLifecycleBucket(a, queuedPurpose){
   const auctionSold = String(a.AuctionSold).toLowerCase()==='true';
   // Admin กด "CC" ที่หน้าประกาศผล (ยกเลิกผลผู้ประมูลได้เดิม) จะตั้งเวลาไว้ที่ AuctionCancelledAt — ทรัพย์สินยังอยู่ในรอบ
   // ประมูลต่อไป (sendToAuction=true, auctionSold=false เหมือนเดิม) แต่ต้องรอผู้เสนอราคาใหม่ จึงแยกเป็นสถานะ "ประมูลใหม่"
-  const needsReAuction = sendToAuction && !auctionSold && !!a.AuctionCancelledAt;
+  // — เช็ค HasCurrentAuctionBid ด้วย (มาจาก getAssetListBundle_) เพื่อไม่ให้สถานะนี้ค้างแสดงตลอดไปทั้งที่มีคนยื่น
+  // ประมูลรอบใหม่เข้ามาแล้ว (แค่ยังไม่ได้ Confirm) — กรณีนั้นควรถือว่า "กำลังประมูล" ตามปกติ ไม่ใช่ "รอผู้เสนอราคาใหม่" อีก
+  const needsReAuction = sendToAuction && !auctionSold && !!a.AuctionCancelledAt && !a.HasCurrentAuctionBid;
 
   if(a.AssetStatus==='WrittenOff'){
     if(needsReAuction) return 'NeedsReAuction';
@@ -545,7 +549,13 @@ function enterApp(){
     });
     return;
   }
-  if(checkAuth()){ startHeartbeat(); route(); } else { stopHeartbeat(); renderLogin(); }
+  if(checkAuth()){
+    startHeartbeat();
+    apiGet({ action:'getNavVisibilitySettings' }).then(res=>{
+      if(res.ok) STATE.navVisibility = res.data;
+      route();
+    });
+  } else { stopHeartbeat(); renderLogin(); }
 }
 
 /* ================= HEARTBEAT / สถานะออนไลน์ ================= */
@@ -672,6 +682,16 @@ function render(){
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
   if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection') && STATE.role !== 'admin') STATE.view = 'dashboard';
+  // Admin ซ่อนเมนู "ประมูลขาย"/"Live ประมูล" จากพนักงานทั่วไปได้ที่หน้าตั้งค่า (ดู getNavVisibilitySettings) —
+  // Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร
+  const navAuctionBtn = document.getElementById('navAuction');
+  const navAuctionLiveBtn = document.getElementById('navAuctionLive');
+  const hideAuctionNav = STATE.role!=='admin' && !STATE.navVisibility.showAuction;
+  const hideAuctionLiveNav = STATE.role!=='admin' && !STATE.navVisibility.showAuctionLive;
+  if(navAuctionBtn) navAuctionBtn.style.display = hideAuctionNav ? 'none' : '';
+  if(navAuctionLiveBtn) navAuctionLiveBtn.style.display = hideAuctionLiveNav ? 'none' : '';
+  if(STATE.view==='auction' && hideAuctionNav) STATE.view = 'dashboard';
+  if(STATE.view==='auctionLive' && hideAuctionLiveNav) STATE.view = 'dashboard';
   // ผู้บริหาร: ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ — ซ่อนปุ่มเมนู "+ สร้าง..." และกันไม่ให้เข้าหน้าสร้างเอกสารตรงๆ
   ['create','saleCreate','writeOffCreate'].forEach(v=>{
     const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
@@ -1466,22 +1486,36 @@ function renderAuction(root){
     const when = parts.length ? ` (${parts.join(' ')})` : '';
     return `<div style="background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔒 ${esc(notice.message||'ปิดรับการประมูลแล้ว')}${when}</div>`;
   }
+  // แถบประกาศ "เริ่มรอบใหม่แล้ว" — ให้เห็นชัดเจนตั้งแต่เข้าหน้า ไม่ใช่แค่ป้ายเล็กๆ ข้างหัวข้อ แสดงเฉพาะตอนอยู่รอบ 2 ขึ้นไป
+  // (รอบ 1 คือการเปิดประมูลครั้งแรกตามปกติ ไม่ต้องประกาศ) ใช้ roundStartedAt (เวลาที่ Admin กดปิดรอบล่าสุด) บอกเวลาเปิดรอบด้วย
+  function auctionRoundBannerHtml(info){
+    if(!info || !info.currentRound || info.currentRound <= 1) return '';
+    let when = '';
+    if(info.roundStartedAt){
+      const dt = new Date(info.roundStartedAt);
+      if(!isNaN(dt)) when = ' — เปิดเมื่อ '+fmtDate(dt)+' '+('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2)+' น.';
+    }
+    return `<div style="background:#eaf3ff;color:#1a3c6e;border:1px solid #b8d4f5;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔄 ขณะนี้เปิดรับประมูล รอบที่ ${info.currentRound} แล้ว${esc(when)}</div>`;
+  }
   function showIntro(){
     root.innerHTML = `<div class="card"><div class="empty">กำลังโหลด...</div></div>`;
     Promise.all([
       apiGet({ action:'getAuctionPriceBrackets' }),
       apiGet({ action:'getAuctionIntroContent' }),
-      apiGet({ action:'getAuctionClosedNotice' })
-    ]).then(([bracketsRes, contentRes, closedRes])=>{
+      apiGet({ action:'getAuctionClosedNotice' }),
+      apiGet({ action:'getAuctionRoundInfo' })
+    ]).then(([bracketsRes, contentRes, closedRes, roundRes])=>{
       priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
       const content = contentRes.ok ? contentRes.data : {};
       const closedNotice = closedRes.ok ? closedRes.data : null;
+      const roundInfo = roundRes.ok ? roundRes.data : null;
       const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
         priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
         `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
       root.innerHTML = `
         <div class="card">
           ${closedNoticeBannerHtml(closedNotice)}
+          ${auctionRoundBannerHtml(roundInfo)}
           <h2>${esc(content.title||'สรุปขั้นตอนการประมูลสินค้า')}</h2>
           <h3>📦 รายการสินค้า</h3>
           <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
@@ -1520,6 +1554,7 @@ function renderAuction(root){
           <button class="btn btn-secondary btn-sm" id="btnAuctionGoLive2">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>
         </div>
         <div id="auctionClosedBanner"></div>
+        <div id="auctionRoundBanner"></div>
         <h2>ประมูลขาย <span id="auctionRoundBadge" class="badge badge-pending" style="font-size:12px;vertical-align:middle;"></span></h2>
         <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และทรัพย์สินขายออกที่เลือกช่องทางประมูล — Admin คัดเลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
@@ -1553,6 +1588,8 @@ function renderAuction(root){
     apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
       const badge = document.getElementById('auctionRoundBadge');
       if(badge && res.ok) badge.textContent = '🔄 รอบที่ '+res.data.currentRound;
+      const banner = document.getElementById('auctionRoundBanner');
+      if(banner && res.ok) banner.innerHTML = auctionRoundBannerHtml(res.data);
     });
     document.getElementById('auctionSearch').oninput = renderAuctionTable;
     document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
@@ -4643,6 +4680,19 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
       </div>
       <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
+        <label>เมนูประมูลในแถบเมนูของพนักงาน</label>
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">คนละเรื่องกับ "หน้าประมูลขายแบบสาธารณะ" ด้านบน (ซึ่งคุมคนที่ไม่ได้ล็อกอิน) — ใช้ซ่อนเมนูจากพนักงานที่ล็อกอินอยู่ ถ้าไม่ต้องการให้เข้าถึงผ่านแถบเมนูภายใน (เช่น ให้ใช้ผ่านลิงก์สาธารณะแทน) Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="navShowAuction" style="width:auto;" checked>
+          <label for="navShowAuction" style="margin:0;font-weight:400;">แสดงเมนู "ประมูลขาย"</label>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <input type="checkbox" id="navShowAuctionLive" style="width:auto;" checked>
+          <label for="navShowAuctionLive" style="margin:0;font-weight:400;">แสดงเมนู "Live ประมูล"</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveNavVisibility" style="margin-top:10px;">บันทึก</button>
+      </div>
+      <div style="margin-top:16px;padding:14px;background:#f7f9fc;border:1px solid var(--border);border-radius:8px;">
         <label>ประกาศปิดประมูล</label>
         <p style="color:var(--muted);font-size:12px;margin:4px 0 10px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -4742,6 +4792,7 @@ function renderSettings(root){
 
   loadDeptCodes().then(loadUsers);
   loadSourceLink();
+  loadNavVisibility();
   loadOnlineUsers();
   loadAuctionBrackets();
   loadAuctionIntroNote();
@@ -4754,6 +4805,7 @@ function renderSettings(root){
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
+  document.getElementById('btnSaveNavVisibility').onclick = saveNavVisibility;
   document.getElementById('btnSaveAuctionBidListPublic').onclick = saveAuctionBidListPublic;
   document.getElementById('btnSaveAuctionWinnersPublic').onclick = saveAuctionWinnersPublic;
   document.getElementById('btnSaveAuctionWinnersPublicSettings').onclick = saveAuctionWinnersPublicSettings;
@@ -4889,6 +4941,28 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast(enabled ? 'เปิดหน้าประมูลขายแบบสาธารณะแล้ว' : 'ปิดหน้าประมูลขายแบบสาธารณะแล้ว','ok');
+    });
+  }
+
+  function loadNavVisibility(){
+    apiGet({ action:'getNavVisibilitySettings' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('navShowAuction').checked = res.data.showAuction !== false;
+      document.getElementById('navShowAuctionLive').checked = res.data.showAuctionLive !== false;
+    });
+  }
+
+  function saveNavVisibility(){
+    const showAuction = document.getElementById('navShowAuction').checked;
+    const showAuctionLive = document.getElementById('navShowAuctionLive').checked;
+    const btn = document.getElementById('btnSaveNavVisibility');
+    btn.disabled = true;
+    apiPost({ action:'adminSaveNavVisibilitySettings', password: STATE.adminPassword, showAuction, showAuctionLive }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      STATE.navVisibility = { showAuction, showAuctionLive };
+      render();
+      toast('บันทึกการแสดงเมนูสำเร็จ','ok');
     });
   }
 

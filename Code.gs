@@ -160,6 +160,9 @@ function doGet(e) {
       case 'getAuctionPublicEnabled':
         result = { ok: true, data: { enabled: getAuctionPublicEnabled_() } };
         break;
+      case 'getNavVisibilitySettings':
+        result = { ok: true, data: getNavVisibilitySettings_() };
+        break;
       case 'getAuctionPriceBrackets':
         result = { ok: true, data: { brackets: getAuctionPriceBrackets_() } };
         break;
@@ -327,6 +330,9 @@ function doPost(e) {
         break;
       case 'adminSaveAuctionPublicSetting':
         result = adminSaveAuctionPublicSetting_(body);
+        break;
+      case 'adminSaveNavVisibilitySettings':
+        result = adminSaveNavVisibilitySettings_(body);
         break;
       case 'adminGetAuctionCandidates':
         result = getAuctionCandidates_(body);
@@ -533,6 +539,9 @@ function getAssetQueue_(purpose) {
 function getAssetListBundle_(q) {
   const disposed = getDisposedAssetStatus_();
   const lifecycleMeta = getAssetLifecycleMeta_();
+  // ใช้บอก frontend ว่ารายการที่เคยถูก CC (AuctionCancelledAt) มีผู้เสนอราคารอบปัจจุบันเข้ามาแล้วหรือยัง — กันไม่ให้
+  // สถานะ "ประมูลใหม่" ค้างแสดงตลอดไปทั้งที่มีคนยื่นประมูลใหม่แล้ว (ดู assetLifecycleBucket ฝั่ง frontend)
+  const biddedAssetIds = getBiddedAssetIdSet_();
   const allAssets = getAssetsRaw_();
   allAssets.forEach(r => {
     const id = String(r.AssetID);
@@ -541,6 +550,7 @@ function getAssetListBundle_(q) {
     r.SaleConfirmedAt = lifecycleMeta.confirmedByAsset[id] ? 1 : '';
     r.PendingSale = !!lifecycleMeta.pendingSaleByAsset[id];
     r.PendingWriteOff = !!lifecycleMeta.pendingWriteOffByAsset[id];
+    r.HasCurrentAuctionBid = biddedAssetIds.has(id);
   });
 
   let assets = allAssets;
@@ -1432,6 +1442,30 @@ function adminSaveAuctionPublicSetting_(body) {
   return { ok: true };
 }
 
+// เมนู "ประมูลขาย"/"Live ประมูล" ในแถบเมนูฝั่งพนักงานที่ล็อกอินอยู่ (คนละเรื่องกับสวิตช์สาธารณะด้านบน ซึ่งคุมคนที่ไม่ได้
+// ล็อกอิน) — Admin ซ่อนเมนูเหล่านี้จากพนักงานทั่วไปได้ถ้าไม่อยากให้ใช้งานผ่านแถบเมนูภายใน (เช่น ให้ประมูลผ่านลิงก์สาธารณะ
+// แทน) ค่าเริ่มต้น = แสดงทั้งคู่เหมือนเดิม — Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร (ดูฝั่ง frontend)
+const NAV_SHOW_AUCTION_PROP = 'NAV_SHOW_AUCTION';
+const NAV_SHOW_AUCTION_LIVE_PROP = 'NAV_SHOW_AUCTION_LIVE';
+function getNavVisibilitySettings_() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    showAuction: props.getProperty(NAV_SHOW_AUCTION_PROP) !== '0',
+    showAuctionLive: props.getProperty(NAV_SHOW_AUCTION_LIVE_PROP) !== '0'
+  };
+}
+function adminSaveNavVisibilitySettings_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const props = PropertiesService.getScriptProperties();
+  const showAuction = body.showAuction !== false;
+  const showAuctionLive = body.showAuctionLive !== false;
+  props.setProperty(NAV_SHOW_AUCTION_PROP, showAuction ? '1' : '0');
+  props.setProperty(NAV_SHOW_AUCTION_LIVE_PROP, showAuctionLive ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_NAV_VISIBILITY', 'admin',
+    'ตั้งค่าแสดงเมนูพนักงาน: ประมูลขาย=' + (showAuction ? 'แสดง' : 'ซ่อน') + ', Live ประมูล=' + (showAuctionLive ? 'แสดง' : 'ซ่อน'));
+  return { ok: true };
+}
+
 // ประกาศ "ปิดประมูลแล้ว" ที่ Admin เปิด/ปิดเองได้ที่หน้าตั้งค่า แสดงเป็นข้อความเด่นบนหน้า "ประมูลขาย" สาธารณะ
 // (ใช้แจ้งผู้เข้าประมูลว่าปิดรับแล้วโดยไม่ต้องปิดการเข้าดูหน้าประมูลขายทั้งหน้า — คนละเรื่องกับ AUCTION_PUBLIC_ENABLED_PROP ด้านบน)
 // การอ่านค่านี้ (getAuctionClosedNotice) ไม่ต้องใช้รหัสผ่านโดยตั้งใจ เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน
@@ -1824,13 +1858,19 @@ function markAuctionInterest_(body) {
 // ที่หน้าประกาศผล (มีตัวกรองรอบ) และกันไม่ให้ราคาจากรอบเก่ามานับรวมเป็นผู้ประมูลได้/มีผู้ประมูลแล้วของรอบใหม่
 // ============================================================
 const AUCTION_CURRENT_ROUND_PROP = 'AUCTION_CURRENT_ROUND';
+const AUCTION_ROUND_STARTED_AT_PROP = 'AUCTION_ROUND_STARTED_AT';
 function getAuctionCurrentRound_() {
   const v = parseInt(PropertiesService.getScriptProperties().getProperty(AUCTION_CURRENT_ROUND_PROP), 10);
   return (v && v > 0) ? v : 1;
 }
 
+// currentRound + roundStartedAt (เวลาที่ Admin กด "ปิดรอบและเริ่มรอบใหม่" ล่าสุด, ว่าง = ยังไม่เคยปิดรอบเลยตั้งแต่ใช้
+// ฟีเจอร์นี้ ยังเป็นรอบ 1 มาตั้งแต่ต้น) — หน้าประมูลขายใช้แสดงแถบประกาศ "เริ่มรอบใหม่แล้ว" ให้คนเห็นชัดเจน
 function getAuctionRoundInfo_() {
-  return { currentRound: getAuctionCurrentRound_() };
+  return {
+    currentRound: getAuctionCurrentRound_(),
+    roundStartedAt: PropertiesService.getScriptProperties().getProperty(AUCTION_ROUND_STARTED_AT_PROP) || ''
+  };
 }
 
 // แปลงค่า round ที่ frontend ส่งมาเป็นตัวกรองที่ใช้จริงใน buildAuctionWinnersList_/getValidAuctionBidItems_:
@@ -1866,7 +1906,9 @@ function adminStartNewAuctionRound_(body) {
     }
   }
 
-  PropertiesService.getScriptProperties().setProperty(AUCTION_CURRENT_ROUND_PROP, String(nextRound));
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(AUCTION_CURRENT_ROUND_PROP, String(nextRound));
+  props.setProperty(AUCTION_ROUND_STARTED_AT_PROP, new Date().toISOString());
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_START_AUCTION_ROUND', 'admin', 'ปิดรอบประมูลที่ ' + currentRound + ' และเริ่มรอบที่ ' + nextRound + ' (ถอดรายการที่ยังไม่ขาย ' + removedCount + ' รายการออกจากรายการเปิดประมูล รอ Admin เลือกเข้ารอบใหม่)');
   return { ok: true, data: { previousRound: currentRound, currentRound: nextRound, removedCount: removedCount } };
