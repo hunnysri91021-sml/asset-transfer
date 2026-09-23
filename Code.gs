@@ -59,7 +59,7 @@ const HEADERS = {
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL', 'Voided'],
-  AUCTION_BIDS: ['BidID', 'RunningNo', 'CreatedAt', 'BidderName', 'BidderContact', 'Remark', 'CreatedBy'],
+  AUCTION_BIDS: ['BidID', 'RunningNo', 'CreatedAt', 'BidderName', 'BidderContact', 'Remark', 'CreatedBy', 'Round'],
   AUCTION_BID_ITEMS: ['BidID', 'LineNo', 'AssetID', 'AssetName', 'Price'],
   AUCTION_OFFLIST: ['AssetID', 'AssetName', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionCancelledAt'],
   LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
@@ -191,7 +191,10 @@ function doGet(e) {
         result = { ok: true, data: { enabled: getAuctionWinnersPublicEnabled_() } };
         break;
       case 'getAuctionWinnersPublicList':
-        result = getAuctionWinnersPublicList_();
+        result = getAuctionWinnersPublicList_(e.parameter.round);
+        break;
+      case 'getAuctionRoundInfo':
+        result = { ok: true, data: getAuctionRoundInfo_() };
         break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
@@ -339,6 +342,9 @@ function doPost(e) {
         break;
       case 'adminCancelAuctionWinner':
         result = adminCancelAuctionWinner_(body);
+        break;
+      case 'adminStartNewAuctionRound':
+        result = adminStartNewAuctionRound_(body);
         break;
       case 'markAuctionInterest':
         result = markAuctionInterest_(body);
@@ -1614,7 +1620,7 @@ function adminConfirmAuctionWinner_(body) {
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
-  const winner = buildAuctionWinnersList_().find(w => w.AssetID === assetId);
+  const winner = buildAuctionWinnersList_(getAuctionCurrentRound_()).find(w => w.AssetID === assetId);
   if (!winner || !winner.BidderName) return { ok: false, error: 'ยังไม่มีผู้ประมูลในรอบนี้ ไม่สามารถยืนยันได้' };
   if (winner.BidderName.indexOf(',') !== -1) {
     return { ok: false, error: 'มีผู้เสนอราคาสูงสุดเท่ากันหลายคน (' + winner.BidderName + ') กรุณาแก้ไขราคาในใบประมูลให้ต่างกันก่อนยืนยัน' };
@@ -1645,7 +1651,7 @@ function adminCancelAuctionWinner_(body) {
     }
   }
   // ไม่พบแถวคู่กันในชีต Assets — เป็นรายการนอกฐาน/off-listing (ไม่มีทะเบียน) บันทึกสถานะแยกไว้ในชีต AuctionOffListing แทน
-  const winner = buildAuctionWinnersList_().find(w => w.AssetID === assetId);
+  const winner = buildAuctionWinnersList_(getAuctionCurrentRound_()).find(w => w.AssetID === assetId);
   const offRes = upsertAuctionOffListing_(assetId, (winner && winner.AssetName) || body.assetName || '', { AuctionCancelledAt: new Date() });
   if (!offRes.ok) return offRes;
   logActivity_('', 'ADMIN_CANCEL_AUCTION_WINNER', 'admin', 'ยกเลิกผลผู้ประมูลได้เดิมของรายการนอกฐาน (ไม่มีทะเบียน) ' + assetId + ' เข้าสถานะประมูลใหม่ (CC)');
@@ -1767,7 +1773,7 @@ function getDirectSoldListing_() {
 // (ต่างจากแท็บ Employee Live ที่เห็นราคาสูงสุดได้)
 function getBiddedAssetIdSet_() {
   const set = new Set();
-  getValidAuctionBidItems_().forEach(it => set.add(it.assetId));
+  getValidAuctionBidItems_(getAuctionCurrentRound_()).forEach(it => set.add(it.assetId));
   return set;
 }
 
@@ -1807,6 +1813,60 @@ function markAuctionInterest_(body) {
 }
 
 // ============================================================
+// AUCTION ROUND — รองรับการประมูลหลายรอบ (เช่น รอบ 1 ปิดแล้ว รายการที่ยังไม่ขายให้ Admin เลือกเข้ารอบ 2 เอง)
+// ใบประมูลทุกใบที่บันทึกใหม่จะถูกประทับเลขรอบปัจจุบันไว้เสมอ (ดู adminCreateAuctionBid_) ใช้แยกผลประมูลรายรอบ
+// ที่หน้าประกาศผล (มีตัวกรองรอบ) และกันไม่ให้ราคาจากรอบเก่ามานับรวมเป็นผู้ประมูลได้/มีผู้ประมูลแล้วของรอบใหม่
+// ============================================================
+const AUCTION_CURRENT_ROUND_PROP = 'AUCTION_CURRENT_ROUND';
+function getAuctionCurrentRound_() {
+  const v = parseInt(PropertiesService.getScriptProperties().getProperty(AUCTION_CURRENT_ROUND_PROP), 10);
+  return (v && v > 0) ? v : 1;
+}
+
+function getAuctionRoundInfo_() {
+  return { currentRound: getAuctionCurrentRound_() };
+}
+
+// แปลงค่า round ที่ frontend ส่งมาเป็นตัวกรองที่ใช้จริงใน buildAuctionWinnersList_/getValidAuctionBidItems_:
+// 'all' = ไม่กรอง (ดูทุกรอบ), ไม่ส่งมา/ค่าไม่ถูกต้อง = default เป็นรอบปัจจุบัน, เลขรอบ = กรองเฉพาะรอบนั้น
+function resolveAuctionRoundFilter_(roundParam) {
+  if (roundParam === 'all') return null;
+  const n = parseInt(roundParam, 10);
+  if (n > 0) return n;
+  return getAuctionCurrentRound_();
+}
+
+// Admin กด "ปิดรอบและเริ่มรอบใหม่" — ถอดรายการที่ยังไม่ขาย (SendToAuction=true แต่ยัง AuctionSold ไม่ true) ออกจาก
+// รายการเปิดประมูลทั้งหมดก่อน (กลับไปอยู่ในรายการ "คัดเลือกรายการประมูล" ให้ Admin เลือกเข้ารอบใหม่เองทีละรายการ ไม่ auto
+// carry-over) แล้วขยับเลขรอบปัจจุบันขึ้น 1 — ใบประมูลที่บันทึกหลังจากนี้นับเป็นรอบใหม่ทันที ส่วนใบประมูล/ผลของรอบเก่า
+// ยังเก็บไว้เป็นประวัติครบ ดูย้อนหลังได้ที่หน้าประกาศผล (เลือกตัวกรองรอบ)
+function adminStartNewAuctionRound_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const currentRound = getAuctionCurrentRound_();
+  const nextRound = currentRound + 1;
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let removedCount = 0;
+  if (idx.SendToAuction !== undefined && idx.AuctionSold !== undefined) {
+    for (let i = 1; i < values.length; i++) {
+      const sendToAuction = String(values[i][idx.SendToAuction]).toLowerCase() === 'true';
+      const auctionSold = String(values[i][idx.AuctionSold]).toLowerCase() === 'true';
+      if (sendToAuction && !auctionSold) {
+        sh.getRange(i + 1, idx.SendToAuction + 1).setValue('FALSE');
+        removedCount++;
+      }
+    }
+  }
+
+  PropertiesService.getScriptProperties().setProperty(AUCTION_CURRENT_ROUND_PROP, String(nextRound));
+  invalidateDisposedAssetStatusCache_();
+  logActivity_('', 'ADMIN_START_AUCTION_ROUND', 'admin', 'ปิดรอบประมูลที่ ' + currentRound + ' และเริ่มรอบที่ ' + nextRound + ' (ถอดรายการที่ยังไม่ขาย ' + removedCount + ' รายการออกจากรายการเปิดประมูล รอ Admin เลือกเข้ารอบใหม่)');
+  return { ok: true, data: { previousRound: currentRound, currentRound: nextRound, removedCount: removedCount } };
+}
+
+// ============================================================
 // AUCTION BIDS — "Live ประมูล": Admin คีย์ใบประมูลที่ผู้ยื่นแต่ละคนส่งมา (เก็บทุกใบ/ทุกราคาที่เสนอ)
 // ส่วนพนักงานทุกคนดูสรุปแบบ Live ได้ที่หน้าเดียวกัน เห็นเฉพาะราคาสูงสุดต่อรหัสสินค้า ไม่เห็นชื่อผู้ยื่น
 // ราคาสูงสุดคำนวณสดจากทุกใบที่บันทึกไว้เสมอ (ดู getAuctionBidLiveSummary_) ไม่ได้เก็บแยกไว้ต่างหาก
@@ -1835,17 +1895,19 @@ function adminCreateAuctionBid_(body) {
   }
 
   return withLock_(() => {
+    const currentRound = getAuctionCurrentRound_();
+
     // กันบันทึกซ้ำ: ผู้ยื่นประมูลคนเดียวกัน (เทียบชื่อไม่สนตัวพิมพ์เล็ก/ใหญ่และช่องว่างหัวท้าย) ยื่นประมูลรายการ
-    // ทรัพย์สินชิ้นเดียวกันซ้ำอีกใบ — นับเฉพาะใบประมูลที่ "ยังมีผลอยู่" เท่านั้น (ดู getValidAuctionBidItems_)
-    // เพราะถ้ารายการนั้นถูก Admin กด CC (ยกเลิกผลเดิม เข้าสถานะประมูลใหม่) ไปแล้ว ผู้ประมูลคนเดิมต้องยื่นใหม่ได้ตามปกติ
+    // ทรัพย์สินชิ้นเดียวกันซ้ำอีกใบ — นับเฉพาะใบประมูลที่ "ยังมีผลอยู่ในรอบปัจจุบัน" เท่านั้น (ดู getValidAuctionBidItems_)
+    // เพราะถ้ารายการนั้นถูก Admin กด CC ไปแล้ว หรือขึ้นรอบใหม่แล้ว ผู้ประมูลคนเดิมต้องยื่นใหม่ได้ตามปกติ
     const bidderKey = bidderName.toLowerCase();
     const existingAssetIdsByBidder = {};
-    getValidAuctionBidItems_().forEach(it => {
+    getValidAuctionBidItems_(currentRound).forEach(it => {
       if (String(it.bidderName || '').trim().toLowerCase() === bidderKey) existingAssetIdsByBidder[it.assetId] = true;
     });
     const dupAssetIds = cleanItems.filter(it => existingAssetIdsByBidder[it.assetId]).map(it => it.assetId);
     if (dupAssetIds.length) {
-      return { ok: false, error: 'ผู้ประมูล "' + bidderName + '" เคยยื่นประมูลรหัสสินค้า ' + dupAssetIds.join(', ') + ' ไว้แล้ว ไม่สามารถบันทึกซ้ำได้ (ถ้าต้องการแก้ไขราคา กรุณาลบใบประมูลเดิมก่อน)' };
+      return { ok: false, error: 'ผู้ประมูล "' + bidderName + '" เคยยื่นประมูลรหัสสินค้า ' + dupAssetIds.join(', ') + ' ไว้แล้วในรอบนี้ ไม่สามารถบันทึกซ้ำได้ (ถ้าต้องการแก้ไขราคา กรุณาลบใบประมูลเดิมก่อน)' };
     }
 
     const bidId = Utilities.getUuid();
@@ -1862,6 +1924,7 @@ function adminCreateAuctionBid_(body) {
     if (idx.BidderContact !== undefined) newRow[idx.BidderContact] = String(body.bidderContact || '');
     if (idx.Remark !== undefined) newRow[idx.Remark] = String(body.remark || '');
     if (idx.CreatedBy !== undefined) newRow[idx.CreatedBy] = 'admin';
+    if (idx.Round !== undefined) newRow[idx.Round] = currentRound;
     sh.appendRow(newRow);
 
     const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
@@ -2019,37 +2082,45 @@ function getAuctionBidPublicList_() {
 }
 
 // ============================================================
-// AUCTION WINNERS — "ประกาศผล": สรุปผู้ประมูลได้ (ราคาสูงสุด) ต่อรหัสสินค้า 1 รายการ จากทุกใบประมูลที่เคยบันทึกไว้
+// AUCTION WINNERS — "ประกาศผล": สรุปผู้ประมูลได้ (ราคาสูงสุด) ต่อรหัสสินค้า 1 รายการ "ต่อรอบ" จากทุกใบประมูลที่เคยบันทึกไว้
 // (ไม่จำกัดเฉพาะรายการที่ยังเปิดประมูลอยู่ตอนนี้ ต่างจาก getAuctionBidLiveSummary_ เพราะใช้ตอนปิดประมูลแล้วก็ยังดูผลได้)
+// roundFilter: เลขรอบ = กรองเฉพาะรอบนั้น, null/undefined = ทุกรอบ (แต่ละรอบที่รายการนั้นมีผู้เสนอราคาจะแยกเป็นคนละแถว)
 // ============================================================
-function buildAuctionWinnersList_() {
+function buildAuctionWinnersList_(roundFilter) {
+  const currentRound = getAuctionCurrentRound_();
   // ราคาทรัพย์สิน (ราคาซื้อ), ราคากลางประมูล และมูลค่าทางบัญชี ดึงจากชีต Assets ตามรหัสทรัพย์สิน เพื่อแนบไปกับผลประมูลได้
   const assetById = {};
   getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
   // สถานะ Confirm/CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน — ไม่มีแถวในชีต Assets) เก็บแยกไว้ในชีต AuctionOffListing
   const offListingById = getAuctionOffListingMap_();
 
-  // รวมทุกใบเสนอราคาที่ "ยังมีผล" (ไม่รวมรอบที่ถูก CC/ยกเลิกไปแล้ว — ดู getValidAuctionBidItems_) ต่อรหัสสินค้าก่อน
-  // แล้วค่อยหาราคาสูงสุด + รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
-  const byAsset = {};
-  getValidAuctionBidItems_().forEach(it => {
-    if (!byAsset[it.assetId]) byAsset[it.assetId] = { assetName: it.assetName, bids: [] };
-    byAsset[it.assetId].bids.push({ price: it.price, bidderName: it.bidderName });
+  // รวมทุกใบเสนอราคาที่ "ยังมีผล" (ไม่รวมรอบที่ถูก CC/ยกเลิกไปแล้ว — ดู getValidAuctionBidItems_) แยกกลุ่มตาม
+  // "รหัสสินค้า+รอบ" ก่อน (รายการเดียวกันที่ประมูลหลายรอบ แต่ละรอบถือเป็นผลแยกกันคนละแถว) แล้วค่อยหาราคาสูงสุด +
+  // รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
+  const byKey = {};
+  getValidAuctionBidItems_(roundFilter != null ? roundFilter : null).forEach(it => {
+    const key = it.assetId + '::' + it.round;
+    if (!byKey[key]) byKey[key] = { assetId: it.assetId, round: it.round, assetName: it.assetName, bids: [] };
+    byKey[key].bids.push({ price: it.price, bidderName: it.bidderName });
   });
 
   // ถ้า Admin ถอดทรัพย์สินออกจากรายการประมูล (SendToAuction=false) และยังไม่ได้ขายผ่านประมูล (AuctionSold ไม่ใช่ true)
   // ให้หายไปจากประกาศผลด้วย เหมือนที่หายจากหน้า Live ประมูล — แต่ถ้าขายผ่านประมูลไปแล้ว (AuctionSold=true) ยังต้องคงอยู่
-  // ในประกาศผลต่อไป เพราะเป็นผลลัพธ์ที่เกิดขึ้นจริงแล้ว แม้จะหลุดจากรายการที่ "กำลังเปิดประมูลอยู่" ก็ตาม
-  const winners = Object.keys(byAsset)
-    .filter(assetId => {
+  // ในประกาศผลต่อไป เพราะเป็นผลลัพธ์ที่เกิดขึ้นจริงแล้ว แม้จะหลุดจากรายการที่ "กำลังเปิดประมูลอยู่" ก็ตาม — กติกานี้ใช้เฉพาะ
+  // "รอบปัจจุบัน" เท่านั้น เพราะรอบที่ปิดไปแล้วทุกรายการจะถูกถอด SendToAuction ออกเป็นปกติตอนเริ่มรอบใหม่ (ดู
+  // adminStartNewAuctionRound_) ไม่ถือว่าถูก "ถอดออกจากรายการ" แบบเดียวกัน ต้องยังแสดงผลของรอบนั้นครบตามประวัติจริง
+  const winners = Object.keys(byKey)
+    .filter(key => {
+      const { assetId, round } = byKey[key];
+      if (round !== currentRound) return true;
       const asset = assetById[assetId];
       // ไม่มีทรัพย์สินนี้ในชีต Assets เลย (เช่น รายการนอกฐาน/off-listing ที่ Admin คีย์บันทึกเอง) — ไม่เคยมี
       // สถานะ SendToAuction ให้ถอดตั้งแต่แรก จึงยังคงแสดงในประกาศผลต่อไปเหมือนเดิม ไม่ถือว่าถูก "ถอดออกจากรายการ"
       if (!asset) return true;
       return String(asset.SendToAuction).toLowerCase() === 'true' || String(asset.AuctionSold).toLowerCase() === 'true';
     })
-    .map(assetId => {
-      const { assetName, bids } = byAsset[assetId];
+    .map(key => {
+      const { assetId, round, assetName, bids } = byKey[key];
       const maxPrice = Math.max.apply(null, bids.map(b => b.price));
       const topBidderNames = [];
       bids.forEach(b => {
@@ -2057,7 +2128,7 @@ function buildAuctionWinnersList_() {
       });
       const asset = assetById[assetId] || offListingById[assetId] || {};
       return {
-        AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
+        AssetID: assetId, Round: round, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
         PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || '',
         Custodian: asset.Custodian || '', Location: asset.Location || '',
         Sold: String(asset.AuctionSold).toLowerCase() === 'true',
@@ -2067,14 +2138,15 @@ function buildAuctionWinnersList_() {
         HasAssetRecord: !!assetById[assetId]
       };
     });
-  return winners.sort((a, b) => String(a.AssetID).localeCompare(String(b.AssetID)));
+  return winners.sort((a, b) => (b.Round - a.Round) || String(a.AssetID).localeCompare(String(b.AssetID)));
 }
 
-// รวมใบเสนอราคาทุกใบที่ "ยังมีผล" อยู่ (BidID + AssetID + ราคา + ชื่อผู้เสนอ + เวลาที่ยื่น) — ไม่รวมรายการที่ถูก Admin
+// รวมใบเสนอราคาทุกใบที่ "ยังมีผล" อยู่ (BidID + AssetID + ราคา + ชื่อผู้เสนอ + เวลาที่ยื่น + รอบ) — ไม่รวมรายการที่ถูก Admin
 // กด "CC" (ยกเลิกผลผู้ประมูลได้เดิม เข้าสถานะประมูลใหม่) ไปแล้ว: ใบเสนอราคาที่ยื่นก่อนหรือเท่ากับเวลาที่ถูกยกเลิก (AuctionCancelledAt
 // ของทรัพย์สินนั้น) จะไม่ถูกนับอีกต่อไป — แต่แถวข้อมูลจริงในชีต AuctionBidItems/AuctionBids ยังคงอยู่ครบ (เก็บประวัติไว้)
 // ใช้ร่วมกันทั้ง buildAuctionWinnersList_, getAuctionBidLiveSummary_ และ getBiddedAssetIdSet_ เพื่อให้ทุกหน้าที่เกี่ยวข้องตรงกัน
-function getValidAuctionBidItems_() {
+// roundFilter (ถ้าระบุ) = กรองเฉพาะใบประมูลของรอบนั้น (ดู AUCTION ROUND ด้านบน) — ไม่ระบุ = คืนทุกรอบ (ใช้ตอนต้องการประวัติ)
+function getValidAuctionBidItems_(roundFilter) {
   const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemHeaders = itemValues.shift();
@@ -2086,10 +2158,13 @@ function getValidAuctionBidItems_() {
   const bidIdx = indexMap_(bidHeaders);
   const bidderById = {};
   const bidCreatedAtById = {};
+  const bidRoundById = {};
   bidValues.forEach(r => {
     const bidId = String(r[bidIdx.BidID]);
     bidderById[bidId] = String(r[bidIdx.BidderName] || '');
     bidCreatedAtById[bidId] = r[bidIdx.CreatedAt];
+    // ใบประมูลเก่าก่อนมีคอลัมน์ Round (หรือ setup() ยังไม่ได้รันใหม่) ให้ถือว่าเป็นรอบ 1 เสมอ
+    bidRoundById[bidId] = (bidIdx.Round !== undefined && r[bidIdx.Round]) ? parseInt(r[bidIdx.Round], 10) || 1 : 1;
   });
 
   const cancelledAtByAsset = {};
@@ -2111,10 +2186,12 @@ function getValidAuctionBidItems_() {
         assetName: r[itemIdx.AssetName],
         price: parseFloat(r[itemIdx.Price]) || 0,
         bidderName: bidderById[bidId] || '',
-        createdAt: bidCreatedAtById[bidId]
+        createdAt: bidCreatedAtById[bidId],
+        round: bidRoundById[bidId] || 1
       };
     })
     .filter(it => {
+      if (roundFilter != null && it.round !== roundFilter) return false;
       const cutoff = cancelledAtByAsset[it.assetId];
       if (!cutoff) return true;
       const createdAt = it.createdAt ? new Date(it.createdAt).getTime() : null;
@@ -2123,9 +2200,10 @@ function getValidAuctionBidItems_() {
 }
 
 // Admin ดูผลประกาศทั้งหมด (เห็นชื่อผู้ประมูลได้เสมอ ไม่ขึ้นกับสวิตช์เปิดเผยแพร่สาธารณะ)
+// body.round: เลขรอบ (กรองเฉพาะรอบนั้น), 'all' (ทุกรอบ), หรือไม่ระบุ (default รอบปัจจุบัน — ดู resolveAuctionRoundFilter_)
 function getAuctionWinnersAdmin_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  return { ok: true, data: buildAuctionWinnersList_() };
+  return { ok: true, data: buildAuctionWinnersList_(resolveAuctionRoundFilter_(body.round)) };
 }
 
 // เปิด/ปิดประกาศผลผู้ประมูลได้ต่อสาธารณะ — Admin เปิดเองเมื่อพร้อมประกาศผล คนละสวิตช์กับการเผยแพร่รายการใบประมูล
@@ -2143,9 +2221,9 @@ function adminSaveAuctionWinnersPublicSetting_(body) {
 }
 
 // เวอร์ชันสาธารณะของประกาศผล — ใช้ได้เฉพาะเมื่อ Admin เปิดไว้เท่านั้น ไม่ต้องรหัสผ่านโดยตั้งใจ
-function getAuctionWinnersPublicList_() {
+function getAuctionWinnersPublicList_(round) {
   if (!getAuctionWinnersPublicEnabled_()) return { ok: false, error: 'ยังไม่เปิดประกาศผลต่อสาธารณะ' };
-  return { ok: true, data: buildAuctionWinnersList_() };
+  return { ok: true, data: buildAuctionWinnersList_(resolveAuctionRoundFilter_(round)) };
 }
 
 // สร้างไฟล์ Excel (.xlsx) ชั่วคราวจากชุดข้อมูล [{name, headers, rows}] แล้วคืนเป็น Blob สำหรับแนบอีเมล
@@ -2184,18 +2262,21 @@ function sendAuctionWinnersEmail_(body) {
   const recipients = String(body.recipients || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!recipients.length) return { ok: false, error: 'กรุณาระบุอีเมลผู้รับอย่างน้อย 1 รายการ' };
 
-  const winners = buildAuctionWinnersList_();
+  const roundFilter = resolveAuctionRoundFilter_(body.round);
+  const winners = buildAuctionWinnersList_(roundFilter);
   if (!winners.length) return { ok: false, error: 'ยังไม่มีข้อมูลผลการประมูล' };
 
   const message = String(body.message || '').trim();
   const belowReferenceLabel = 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่';
   const isBelowReference = w => Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
   const registeredLabel = w => w.HasAssetRecord ? 'มีทะเบียน' : 'ไม่มีทะเบียน';
+  const roundLabel = roundFilter != null ? ('รอบที่ ' + roundFilter) : 'ทุกรอบ';
   const rowsHtml = winners.map((w, i) => (
     '<tr>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetID) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + w.Round + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(registeredLabel(w)) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.Custodian || '-') + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.Location || '-') + '</td>' +
@@ -2211,10 +2292,10 @@ function sendAuctionWinnersEmail_(body) {
   const html =
     '<div style="font-family:Sarabun,Arial,sans-serif;max-width:680px;margin:auto;">' +
     '<h2 style="color:#1a3c6e;">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</h2>' +
-    '<h3>ประกาศผลผู้ประมูลได้ (' + winners.length + ' รายการ)</h3>' +
+    '<h3>ประกาศผลผู้ประมูลได้ — ' + escapeHtml_(roundLabel) + ' (' + winners.length + ' รายการ)</h3>' +
     (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
     '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
-    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">รอบ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
     rowsHtml +
     '</table>' +
     '</div>';
@@ -2222,11 +2303,11 @@ function sendAuctionWinnersEmail_(body) {
   try {
     const xlsxBlob = buildXlsxBlob_('ประกาศผลผู้ประมูลได้', [{
       name: 'ประกาศผล',
-      headers: ['รหัส', 'รายการ', 'ประเภท', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
-      rows: winners.map(w => [w.AssetID, w.AssetName, registeredLabel(w), w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
+      headers: ['รหัส', 'รายการ', 'รอบ', 'ประเภท', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
+      rows: winners.map(w => [w.AssetID, w.AssetName, w.Round, registeredLabel(w), w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
     }]);
-    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: [xlsxBlob] });
-    logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
+    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ (' + roundLabel + ') — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: [xlsxBlob] });
+    logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ (' + roundLabel + ') ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
     return { ok: true, data: { count: winners.length, recipients: recipients } };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -2241,7 +2322,7 @@ function getAuctionBidLiveSummary_() {
   listing.forEach(a => { listingByAsset[String(a.AssetID)] = a; });
 
   const byAsset = {};
-  getValidAuctionBidItems_().forEach(it => {
+  getValidAuctionBidItems_(getAuctionCurrentRound_()).forEach(it => {
     if (!listingByAsset[it.assetId]) return;
     if (!byAsset[it.assetId]) byAsset[it.assetId] = { maxPrice: it.price, bidCount: 0 };
     byAsset[it.assetId].bidCount++;

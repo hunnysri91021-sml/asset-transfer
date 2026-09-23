@@ -1520,7 +1520,7 @@ function renderAuction(root){
           <button class="btn btn-secondary btn-sm" id="btnAuctionGoLive2">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>
         </div>
         <div id="auctionClosedBanner"></div>
-        <h2>ประมูลขาย</h2>
+        <h2>ประมูลขาย <span id="auctionRoundBadge" class="badge badge-pending" style="font-size:12px;vertical-align:middle;"></span></h2>
         <p style="color:var(--muted);font-size:13px;">รวมทรัพย์สินตัดชำรุดอนุมัติแล้ว และทรัพย์สินขายออกที่เลือกช่องทางประมูล — Admin คัดเลือกส่งเข้าประมูล — เปิดดูได้โดยไม่ต้องล็อกอิน — แสดงรายการแยกเป็นช่วงราคากลาง เลื่อนดูแต่ละช่วงได้ด้านล่าง</p>
         <div class="toolbar no-print">
           <input type="text" id="auctionSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
@@ -1549,6 +1549,10 @@ function renderAuction(root){
     apiGet({ action:'getAuctionClosedNotice' }).then(res=>{
       const banner = document.getElementById('auctionClosedBanner');
       if(banner && res.ok) banner.innerHTML = closedNoticeBannerHtml(res.data);
+    });
+    apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
+      const badge = document.getElementById('auctionRoundBadge');
+      if(badge && res.ok) badge.textContent = '🔄 รอบที่ '+res.data.currentRound;
     });
     document.getElementById('auctionSearch').oninput = renderAuctionTable;
     document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
@@ -2250,12 +2254,14 @@ function renderAuctionLive(root){
   function renderWinnersTab(){
     const canManage = checkAuth(); // export/พิมพ์/ส่งอีเมล ใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น
     let selectedWinnerAssetIds = []; // เลือกได้หลายรายการเพื่อ Confirm/CC พร้อมกัน — รีเซ็ตทุกครั้งที่เข้าแท็บนี้ใหม่
+    let currentRound = 1;
     tabHost.innerHTML = `
       <div class="card">
         <h2>🏆 ประกาศผลผู้ประมูลได้</h2>
-        <p style="color:var(--muted);font-size:13px;">สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ จากทุกใบประมูลที่บันทึกไว้</p>
+        <p style="color:var(--muted);font-size:13px;" id="winnersRoundBanner">สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ จากทุกใบประมูลที่บันทึกไว้</p>
         <div class="toolbar no-print">
           <input type="text" id="winnersSearch" placeholder="ค้นหารหัส / ชื่อสินค้า / ผู้ประมูลได้..." style="max-width:240px;">
+          <select id="winnersRoundFilter" style="max-width:170px;"><option value="">รอบปัจจุบัน</option></select>
           <select id="winnersTypeFilter" style="max-width:160px;">
             <option value="">ทุกประเภท</option>
             <option value="registered">มีทะเบียน</option>
@@ -2290,11 +2296,27 @@ function renderAuctionLive(root){
       ` : ''}
     `;
 
+    function loadRoundFilterOptions(){
+      return apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
+        currentRound = (res.ok && res.data && res.data.currentRound) || 1;
+        const sel = document.getElementById('winnersRoundFilter');
+        const prevValue = sel.value;
+        let opts = `<option value="">รอบปัจจุบัน (รอบ ${currentRound})</option>`;
+        for(let r = currentRound - 1; r >= 1; r--){ opts += `<option value="${r}">รอบที่ ${r}</option>`; }
+        opts += `<option value="all">ทุกรอบ</option>`;
+        sel.innerHTML = opts;
+        sel.value = prevValue || '';
+        const banner = document.getElementById('winnersRoundBanner');
+        if(banner) banner.textContent = '🔄 รอบการประมูลปัจจุบัน: รอบที่ '+currentRound+' — สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ';
+      });
+    }
+
     function loadWinners(){
       document.getElementById('winnersTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+      const round = document.getElementById('winnersRoundFilter').value || undefined;
       const req = isAdmin
-        ? apiPost({ action:'adminGetAuctionWinners', password: STATE.adminPassword })
-        : apiGet({ action:'getAuctionWinnersPublicList' });
+        ? apiPost({ action:'adminGetAuctionWinners', password: STATE.adminPassword, round })
+        : apiGet({ action:'getAuctionWinnersPublicList', round });
       return req.then(res=>{
         if(!res.ok){
           document.getElementById('winnersTableHost').innerHTML = '<div class="empty">'+esc(res.error||'โหลดไม่สำเร็จ')+'</div>';
@@ -2323,18 +2345,20 @@ function renderAuctionLive(root){
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
       const host = document.getElementById('winnersTableHost');
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
-      // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว และมีผู้ประมูลได้)
-      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName).map(w=>w.AssetID);
+      // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว มีผู้ประมูลได้ และเป็นผลของรอบปัจจุบันเท่านั้น
+      // — รอบเก่าที่ปิดไปแล้วดูได้อย่างเดียว แก้ไข/ยืนยันซ้ำไม่ได้)
+      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && w.Round===currentRound).map(w=>w.AssetID);
       const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
-      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
+      let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคากลาง</th><th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
-        const actionable = !w.Sold && w.BidderName;
+        const actionable = !w.Sold && w.BidderName && w.Round===currentRound;
         const checked = selectedWinnerAssetIds.indexOf(w.AssetID)!==-1 ? 'checked' : '';
         html += `<tr>
           ${isAdmin ? `<td class="no-print">${actionable ? `<input type="checkbox" class="winnerRowChk" data-id="${esc(w.AssetID)}" ${checked}>` : ''}</td>` : ''}
           <td><b>${esc(w.AssetID)}</b></td>
           <td>${esc(w.AssetName)}</td>
+          <td style="text-align:center;">${w.Round===currentRound ? `<b>${w.Round}</b>` : w.Round}</td>
           <td>${w.HasAssetRecord ? '<span class="badge badge-approved">มีทะเบียน</span>' : '<span class="badge badge-pending">ไม่มีทะเบียน</span>'}</td>
           <td>${esc(w.Custodian||'-')}</td>
           <td>${esc(w.Location||'-')}</td>
@@ -2343,12 +2367,12 @@ function renderAuctionLive(root){
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
           <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (belowReference ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
-          ${isAdmin ? `<td class="no-print">${w.Sold
+          ${isAdmin ? `<td class="no-print">${w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.Sold
             ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
             : (w.BidderName ? `
             <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
             <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
-          ` : '-')}</td>` : ''}
+          ` : '-'))}</td>` : ''}
         </tr>`;
       });
       html += '</table></div>';
@@ -2471,14 +2495,15 @@ function renderAuctionLive(root){
 
     document.getElementById('winnersSearch').oninput = renderWinnersTable;
     document.getElementById('winnersTypeFilter').onchange = renderWinnersTable;
+    document.getElementById('winnersRoundFilter').onchange = loadWinners;
 
     const exportBtn = document.getElementById('btnExportWinners');
     if(exportBtn) exportBtn.onclick = ()=>{
       if(!winners.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
-      const header = ['รหัสสินค้า','รายการ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้','ราคากลาง','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
+      const header = ['รหัสสินค้า','รายการ','รอบ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้','ราคากลาง','ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
       const dataRows = winners.map(w=>{
         const belowReference = Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
-        return [w.AssetID, w.AssetName, w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน', w.Custodian||'', w.Location||'', w.BidderName||'', Number(w.ReferencePrice)||0, Number(w.MaxPrice)||0, w.BidCount,
+        return [w.AssetID, w.AssetName, w.Round, w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน', w.Custodian||'', w.Location||'', w.BidderName||'', Number(w.ReferencePrice)||0, Number(w.MaxPrice)||0, w.BidCount,
           belowReference ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : ''];
       });
       exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
@@ -2492,15 +2517,16 @@ function renderAuctionLive(root){
       const recipients = document.getElementById('winnersEmailRecipients').value.trim();
       const message = document.getElementById('winnersEmailMessage').value.trim();
       if(!recipients){ toast('กรุณาระบุอีเมลผู้รับ','err'); return; }
+      const round = document.getElementById('winnersRoundFilter').value || undefined;
       sendBtn.disabled = true;
-      apiPost({ action:'sendAuctionWinnersEmail', password: STATE.adminPassword, recipients, message }).then(res=>{
+      apiPost({ action:'sendAuctionWinnersEmail', password: STATE.adminPassword, recipients, message, round }).then(res=>{
         sendBtn.disabled = false;
         if(!res.ok){ toast(res.error||'ส่งอีเมลไม่สำเร็จ','err'); return; }
         toast('ส่งอีเมลประกาศผล '+res.data.count+' รายการสำเร็จ','ok');
       });
     };
 
-    loadWinners();
+    loadRoundFilterOptions().then(loadWinners);
   }
 
   /* ---------- ใช้ร่วมกัน: โหลดใบประมูล + Modal กรอกใบประมูล (แยกกล่องต่างหาก ไม่ปนกับหน้าพนักงานดู) ---------- */
@@ -2664,6 +2690,13 @@ function renderAuctionSelection(root){
 
   root.innerHTML = `
     <div class="card">
+      <h2>🔄 รอบการประมูล</h2>
+      <p id="aselRoundBanner" style="color:var(--muted);font-size:13px;">กำลังโหลด...</p>
+      <p style="color:var(--muted);font-size:12px;">เมื่อรอบปัจจุบันปิดรับประมูลแล้ว กด "ปิดรอบและเริ่มรอบใหม่" — รายการที่ยังไม่ขาย (ยังไม่ AuctionSold) จะถูกถอดออกจากรายการเปิดประมูลทั้งหมดกลับมาอยู่ในส่วน "คัดเลือกรายการประมูล" ด้านล่าง ให้ Admin เลือกติ๊ก "ส่งประมูล" เข้ารอบใหม่เองทีละรายการ ผลของรอบเก่ายังดูย้อนหลังได้ครบที่หน้า "ประกาศผล"</p>
+      <button class="btn btn-primary btn-sm no-print" id="btnStartNewAuctionRound">🔁 ปิดรอบและเริ่มรอบใหม่</button>
+    </div>
+
+    <div class="card">
       <h2>คัดเลือกรายการประมูล</h2>
       <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว หรือขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก และยังไม่ได้ส่งประมูล — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — เมื่อส่งประมูลแล้วรายการจะย้ายไปแสดงในส่วน "รายการที่ส่งประมูลแล้ว" ด้านล่างแทน</p>
       <div class="toolbar no-print">
@@ -2697,6 +2730,27 @@ function renderAuctionSelection(root){
   document.getElementById('aselSearch').oninput = renderTable;
   document.getElementById('aselSentSearch').oninput = renderSentTable;
   document.getElementById('aselHistSearch').oninput = renderHistoryTable;
+
+  function loadRoundBanner(){
+    apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
+      const banner = document.getElementById('aselRoundBanner');
+      if(banner) banner.textContent = res.ok ? ('รอบปัจจุบัน: รอบที่ '+res.data.currentRound) : 'โหลดข้อมูลรอบไม่สำเร็จ';
+    });
+  }
+  loadRoundBanner();
+
+  document.getElementById('btnStartNewAuctionRound').onclick = ()=>{
+    if(!confirm('ยืนยันปิดรอบประมูลปัจจุบันและเริ่มรอบใหม่?\n\nรายการที่ "ยังไม่ขาย" ในรอบนี้ทั้งหมดจะถูกถอดออกจากรายการเปิดประมูล (กลับไปรอ Admin เลือกเข้ารอบใหม่เองที่ "คัดเลือกรายการประมูล") ส่วนผลของรอบนี้จะยังดูย้อนหลังได้ครบที่หน้า "ประกาศผล"\n\nการดำเนินการนี้ย้อนกลับไม่ได้')) return;
+    const btn = document.getElementById('btnStartNewAuctionRound');
+    btn.disabled = true;
+    apiPost({ action:'adminStartNewAuctionRound', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ปิดรอบไม่สำเร็จ','err'); return; }
+      toast('ปิดรอบที่ '+res.data.previousRound+' และเริ่มรอบที่ '+res.data.currentRound+' สำเร็จ (ถอดรายการที่ยังไม่ขาย '+res.data.removedCount+' รายการออกจากประมูล)','ok');
+      loadRoundBanner();
+      load();
+    });
+  };
 
   function load(){
     document.getElementById('aselTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
