@@ -373,6 +373,12 @@ function doPost(e) {
       case 'adminSaveAuctionWinnersPublicSetting':
         result = adminSaveAuctionWinnersPublicSetting_(body);
         break;
+      case 'adminGetAuctionWinnersPublicSettings':
+        result = adminGetAuctionWinnersPublicSettings_(body);
+        break;
+      case 'adminSaveAuctionWinnersPublicSettings':
+        result = adminSaveAuctionWinnersPublicSettings_(body);
+        break;
       case 'sendAuctionWinnersEmail':
         result = sendAuctionWinnersEmail_(body);
         break;
@@ -2127,9 +2133,12 @@ function buildAuctionWinnersList_(roundFilter) {
         if (b.price === maxPrice && topBidderNames.indexOf(b.bidderName) === -1) topBidderNames.push(b.bidderName);
       });
       const asset = assetById[assetId] || offListingById[assetId] || {};
+      const referencePrice = computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue);
       return {
         AssetID: assetId, Round: round, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
-        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || '',
+        PurchasePrice: asset.PurchasePrice || '', ReferencePrice: referencePrice, BookValue: asset.BookValue || '',
+        // คำนวณสำเร็จรูปไว้เสมอ (ไม่ต้องพึ่ง ReferencePrice ดิบที่อาจถูกซ่อนจากสาธารณะ — ดู maskAuctionWinnersForPublic_)
+        BelowReferencePrice: referencePrice > 0 && maxPrice < referencePrice,
         Custodian: asset.Custodian || '', Location: asset.Location || '',
         Sold: String(asset.AuctionSold).toLowerCase() === 'true',
         // มีทะเบียน = รหัสสินค้านี้มีแถวตรงกันจริงในชีต Assets (ทรัพย์สินที่ลงทะเบียนไว้ในระบบ)
@@ -2220,10 +2229,59 @@ function adminSaveAuctionWinnersPublicSetting_(body) {
   return { ok: true };
 }
 
+// ============================================================
+// AUCTION PUBLIC SETTINGS — Admin ควบคุมสิ่งที่สาธารณะ (ผู้ไม่ได้ล็อกอิน) เห็นที่หน้าประกาศผลได้ละเอียดขึ้น:
+// 1) "ปักหมุดรอบ" (publicRound) — บังคับให้สาธารณะเห็นเฉพาะรอบที่ Admin กำหนดเท่านั้น ไม่ให้เลือกรอบเองผ่านตัวกรอง
+//    (ค่าว่าง/ไม่ตั้ง = ตามรอบปัจจุบันเสมอ เหมือนเดิม) ฝั่ง Admin เองยังดูรอบไหนก็ได้ตามปกติ ไม่ถูกจำกัดด้วยค่านี้
+// 2) "ซ่อนคอลัมน์ราคาที่อ่อนไหว" (showPrices=false) — ซ่อนราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชีจากสาธารณะ
+//    (ยังเห็นราคาที่ประมูลได้ตามปกติ เพราะเป็นผลลัพธ์หลักของการประกาศผล ไม่ใช่ข้อมูลบัญชีภายใน)
+// ============================================================
+const AUCTION_PUBLIC_ROUND_PROP = 'AUCTION_PUBLIC_ROUND';
+const AUCTION_PUBLIC_SHOW_PRICES_PROP = 'AUCTION_PUBLIC_SHOW_PRICES';
+
+function getAuctionPublicSettings_() {
+  const props = PropertiesService.getScriptProperties();
+  const pinnedRaw = parseInt(props.getProperty(AUCTION_PUBLIC_ROUND_PROP), 10);
+  return {
+    publicRound: (pinnedRaw && pinnedRaw > 0) ? pinnedRaw : null,
+    showPrices: props.getProperty(AUCTION_PUBLIC_SHOW_PRICES_PROP) !== '0' // ค่าเริ่มต้น = แสดง (เหมือนพฤติกรรมเดิมก่อนมีสวิตช์นี้)
+  };
+}
+
+function adminGetAuctionWinnersPublicSettings_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  return { ok: true, data: getAuctionPublicSettings_() };
+}
+
+function adminSaveAuctionWinnersPublicSettings_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const props = PropertiesService.getScriptProperties();
+  const publicRound = parseInt(body.publicRound, 10);
+  if (publicRound > 0) props.setProperty(AUCTION_PUBLIC_ROUND_PROP, String(publicRound));
+  else props.deleteProperty(AUCTION_PUBLIC_ROUND_PROP);
+  const showPrices = body.showPrices !== false;
+  props.setProperty(AUCTION_PUBLIC_SHOW_PRICES_PROP, showPrices ? '1' : '0');
+  logActivity_('', 'ADMIN_SAVE_AUCTION_PUBLIC_SETTINGS', 'admin',
+    'ตั้งค่าการแสดงผลต่อสาธารณะ: รอบที่ให้เห็น=' + (publicRound > 0 ? ('รอบที่ ' + publicRound) : 'ตามรอบปัจจุบันเสมอ') +
+    ', แสดงราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชี=' + (showPrices ? 'เปิด' : 'ปิด'));
+  return { ok: true };
+}
+
+// ซ่อนค่าราคาที่อ่อนไหว (ราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชี) ก่อนส่งให้สาธารณะ เมื่อ Admin ปิดสวิตช์ showPrices ไว้
+// เก็บ BelowReferencePrice ไว้เป็น boolean ที่คำนวณสำเร็จรูปเสมอ (ไม่ต้องพึ่ง ReferencePrice ดิบที่อาจถูกซ่อน)
+function maskAuctionWinnersForPublic_(winners, showPrices) {
+  if (showPrices) return winners;
+  return winners.map(w => Object.assign({}, w, { PurchasePrice: '', ReferencePrice: '', BookValue: '' }));
+}
+
 // เวอร์ชันสาธารณะของประกาศผล — ใช้ได้เฉพาะเมื่อ Admin เปิดไว้เท่านั้น ไม่ต้องรหัสผ่านโดยตั้งใจ
 function getAuctionWinnersPublicList_(round) {
   if (!getAuctionWinnersPublicEnabled_()) return { ok: false, error: 'ยังไม่เปิดประกาศผลต่อสาธารณะ' };
-  return { ok: true, data: buildAuctionWinnersList_(resolveAuctionRoundFilter_(round)) };
+  const settings = getAuctionPublicSettings_();
+  // ถ้า Admin ปักหมุดรอบที่ให้สาธารณะเห็นไว้ บังคับใช้รอบนั้นเสมอ ไม่ให้สาธารณะเลือกรอบเองผ่านพารามิเตอร์ที่ส่งมา
+  const roundFilter = settings.publicRound != null ? settings.publicRound : resolveAuctionRoundFilter_(round);
+  const winners = buildAuctionWinnersList_(roundFilter);
+  return { ok: true, data: maskAuctionWinnersForPublic_(winners, settings.showPrices), meta: { publicRoundPinned: settings.publicRound, showPrices: settings.showPrices } };
 }
 
 // สร้างไฟล์ Excel (.xlsx) ชั่วคราวจากชุดข้อมูล [{name, headers, rows}] แล้วคืนเป็น Blob สำหรับแนบอีเมล
