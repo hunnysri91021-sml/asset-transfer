@@ -1974,6 +1974,7 @@ function buildAuctionWinnersList_() {
       return {
         AssetID: assetId, AssetName: assetName, MaxPrice: maxPrice, BidderName: topBidderNames.join(', '), BidCount: bids.length,
         PurchasePrice: asset.PurchasePrice || '', ReferencePrice: computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue), BookValue: asset.BookValue || '',
+        Custodian: asset.Custodian || '', Location: asset.Location || '',
         Sold: String(asset.AuctionSold).toLowerCase() === 'true'
       };
     });
@@ -2099,6 +2100,8 @@ function sendAuctionWinnersEmail_(body) {
     '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetID) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetName) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.Custodian || '-') + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.Location || '-') + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.BidderName) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.PurchasePrice) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.ReferencePrice) + '</td>' +
@@ -2114,7 +2117,7 @@ function sendAuctionWinnersEmail_(body) {
     '<h3>ประกาศผลผู้ประมูลได้ (' + winners.length + ' รายการ)</h3>' +
     (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
     '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
-    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
     rowsHtml +
     '</table>' +
     '</div>';
@@ -2122,8 +2125,8 @@ function sendAuctionWinnersEmail_(body) {
   try {
     const xlsxBlob = buildXlsxBlob_('ประกาศผลผู้ประมูลได้', [{
       name: 'ประกาศผล',
-      headers: ['รหัส', 'รายการ', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
-      rows: winners.map(w => [w.AssetID, w.AssetName, w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
+      headers: ['รหัส', 'รายการ', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
+      rows: winners.map(w => [w.AssetID, w.AssetName, w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
     }]);
     MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: [xlsxBlob] });
     logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
