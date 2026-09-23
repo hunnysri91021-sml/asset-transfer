@@ -173,6 +173,9 @@ function doGet(e) {
       case 'getAuctionIntroContent':
         result = { ok: true, data: getAuctionIntroContent_() };
         break;
+      case 'getAuctionIntroButtonsSettings':
+        result = { ok: true, data: getAuctionIntroButtonsSettings_() };
+        break;
       case 'getAuctionClosedNotice':
         result = { ok: true, data: getAuctionClosedNotice_() };
         break;
@@ -186,7 +189,7 @@ function doGet(e) {
         result = { ok: true, data: getDirectSoldListing_() };
         break;
       case 'getAuctionBidLiveSummary':
-        result = { ok: true, data: getAuctionBidLiveSummary_() };
+        result = getAuctionBidLiveSummaryPublic_(e.parameter.password);
         break;
       case 'getAuctionBidListPublicEnabled':
         result = { ok: true, data: { enabled: getAuctionBidListPublicEnabled_() } };
@@ -337,6 +340,9 @@ function doPost(e) {
         break;
       case 'adminSaveNavVisibilitySettings':
         result = adminSaveNavVisibilitySettings_(body);
+        break;
+      case 'adminSaveAuctionIntroButtonsSettings':
+        result = adminSaveAuctionIntroButtonsSettings_(body);
         break;
       case 'adminGetAuctionCandidates':
         result = getAuctionCandidates_(body);
@@ -1485,6 +1491,37 @@ function adminSaveNavVisibilitySettings_(body) {
   return { ok: true };
 }
 
+// ปุ่ม "เข้าดูรายการสินค้า" และ "Live ประมูล" บนหน้าแรกของ "ประมูลขาย" สาธารณะ (ตัวอย่าง: ยังไม่พร้อมเปิดให้ดูรายการ
+// สินค้าแต่อยากให้เห็นแค่หน้าแรก/ขั้นตอนก่อน หรือยังไม่มีผลประมูลจะโชว์ก็ปิดปุ่ม Live ไว้ก่อนได้) — ค่าเริ่มต้น = แสดงทั้งคู่
+// คนละเรื่องกับ AUCTION_PUBLIC_ENABLED_PROP (คุมทั้งหน้า) — ปิดปุ่มใดปุ่มหนึ่งที่นี่ยังเห็นหน้าแรกได้ตามปกติ แค่กดต่อไม่ได้
+// การปิดปุ่มบังคับที่ฝั่ง backend ด้วย (ไม่ใช่แค่ซ่อนปุ่ม) — ดู getAuctionListingPublic_/getAuctionBidLiveSummaryPublic_
+// showLiveRefPrice: ควบคุมว่าแถบ "Live ประมูล" (Employee Live) จะโชว์ "ราคากลาง" ของแต่ละรายการให้คนที่ไม่ได้ล็อกอิน
+// เห็นด้วยหรือไม่ (ราคาสูงสุดที่ประมูลได้ยังเห็นเสมอ เพราะเป็นผลประมูลจริง) — พนักงาน/Admin ที่ล็อกอินอยู่เห็นเสมอไม่ว่าตั้งค่านี้
+const AUCTION_INTRO_SHOW_LISTING_PROP = 'AUCTION_INTRO_SHOW_LISTING';
+const AUCTION_INTRO_SHOW_LIVE_PROP = 'AUCTION_INTRO_SHOW_LIVE';
+const AUCTION_LIVE_SHOW_REFPRICE_PROP = 'AUCTION_LIVE_SHOW_REFPRICE';
+function getAuctionIntroButtonsSettings_() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    showListing: props.getProperty(AUCTION_INTRO_SHOW_LISTING_PROP) !== '0',
+    showLive: props.getProperty(AUCTION_INTRO_SHOW_LIVE_PROP) !== '0',
+    showLiveRefPrice: props.getProperty(AUCTION_LIVE_SHOW_REFPRICE_PROP) !== '0'
+  };
+}
+function adminSaveAuctionIntroButtonsSettings_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const props = PropertiesService.getScriptProperties();
+  const showListing = body.showListing !== false;
+  const showLive = body.showLive !== false;
+  const showLiveRefPrice = body.showLiveRefPrice !== false;
+  props.setProperty(AUCTION_INTRO_SHOW_LISTING_PROP, showListing ? '1' : '0');
+  props.setProperty(AUCTION_INTRO_SHOW_LIVE_PROP, showLive ? '1' : '0');
+  props.setProperty(AUCTION_LIVE_SHOW_REFPRICE_PROP, showLiveRefPrice ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_AUCTION_INTRO_BUTTONS', 'admin',
+    'ตั้งค่าปุ่มหน้าแรกประมูลขาย: เข้าดูรายการสินค้า=' + (showListing ? 'แสดง' : 'ซ่อน') + ', Live ประมูล=' + (showLive ? 'แสดง' : 'ซ่อน') + ', ราคากลางใน Live=' + (showLiveRefPrice ? 'แสดง' : 'ซ่อน'));
+  return { ok: true };
+}
+
 // ประกาศ "ปิดประมูลแล้ว" ที่ Admin เปิด/ปิดเองได้ที่หน้าตั้งค่า แสดงเป็นข้อความเด่นบนหน้า "ประมูลขาย" สาธารณะ
 // (ใช้แจ้งผู้เข้าประมูลว่าปิดรับแล้วโดยไม่ต้องปิดการเข้าดูหน้าประมูลขายทั้งหน้า — คนละเรื่องกับ AUCTION_PUBLIC_ENABLED_PROP ด้านบน)
 // การอ่านค่านี้ (getAuctionClosedNotice) ไม่ต้องใช้รหัสผ่านโดยตั้งใจ เพราะหน้าประมูลขายเปิดดูได้โดยไม่ต้องล็อกอิน
@@ -1748,12 +1785,16 @@ function getAuctionListing_() {
 }
 
 // จุดเดียวที่ action='getAuctionListing' จาก doGet เรียกถึง — บังคับเช็คสวิตช์ "หน้าประมูลขายแบบสาธารณะ" จริง
-// (auctionPublicEnabled) ก่อนคืนข้อมูล ถ้าปิดสวิตช์ไว้ ผู้เข้าชมที่ไม่ได้ล็อกอินจะไม่เห็นรายการเลย แต่พนักงาน/Admin
-// ที่ล็อกอินอยู่ (มีรหัสผ่านผู้ใช้ที่ถูกต้อง ไม่จำกัด role) ยังเข้าดูได้ตามปกติเสมอ ไม่ต้องพึ่งสวิตช์นี้
-// คนละเรื่องกับ "Live ประมูล" (getAuctionBidLiveSummary_) ซึ่งตั้งใจเปิดอิสระเสมอ ไม่ผ่านจุดเช็คนี้
+// (auctionPublicEnabled) และสวิตช์ "แสดงปุ่มเข้าดูรายการสินค้า" (showListing) ก่อนคืนข้อมูล ถ้าปิดสวิตช์ใดสวิตช์หนึ่งไว้
+// ผู้เข้าชมที่ไม่ได้ล็อกอินจะไม่เห็นรายการเลย แต่พนักงาน/Admin ที่ล็อกอินอยู่ (มีรหัสผ่านผู้ใช้ที่ถูกต้อง ไม่จำกัด role)
+// ยังเข้าดูได้ตามปกติเสมอ ไม่ต้องพึ่งสวิตช์นี้
+// คนละเรื่องกับ "Live ประมูล" (getAuctionBidLiveSummaryPublic_) ซึ่งมีสวิตช์ของตัวเองแยกต่างหาก (showLive)
 function getAuctionListingPublic_(password) {
   if (!getAuctionPublicEnabled_() && !isValidUserPassword_(password)) {
     return { ok: false, error: 'หน้าประมูลขายสาธารณะยังไม่เปิดใช้งาน กรุณาเข้าสู่ระบบ' };
+  }
+  if (!getAuctionIntroButtonsSettings_().showListing && !isValidUserPassword_(password)) {
+    return { ok: false, error: 'ยังไม่เปิดให้ดูรายการสินค้าในขณะนี้ กรุณาเข้าสู่ระบบ' };
   }
   return { ok: true, data: getAuctionListing_() };
 }
@@ -2447,8 +2488,9 @@ function sendAuctionWinnersEmail_(body) {
   }
 }
 
-// สรุปแบบ Live สำหรับพนักงานทุกคนดูได้ (ไม่ต้องรหัสผ่านโดยตั้งใจ เหมือนหน้าประมูลขายสาธารณะ) — แสดงเฉพาะรหัสสินค้า
-// ที่ยังเปิดประมูลอยู่ตอนนี้ (ดู getAuctionListing_) "และ" มีคนยื่นประมูลแล้วเท่านั้น พร้อมราคาสูงสุด "ไม่แสดงชื่อผู้ยื่น"
+// สรุปแบบ Live — แสดงเฉพาะรหัสสินค้าที่ยังเปิดประมูลอยู่ตอนนี้ (ดู getAuctionListing_) "และ" มีคนยื่นประมูลแล้วเท่านั้น
+// พร้อมราคาสูงสุด "ไม่แสดงชื่อผู้ยื่น" — ฟังก์ชันดิบนี้ไม่มีการเช็คสิทธิ์ ใช้เรียกจากภายในระบบเท่านั้น action ที่ doGet
+// เปิดให้เรียกตรงจากสาธารณะ ให้ผ่าน getAuctionBidLiveSummaryPublic_() ด้านล่างแทน
 function getAuctionBidLiveSummary_() {
   const listing = getAuctionListing_();
   const listingByAsset = {};
@@ -2481,6 +2523,23 @@ function getAuctionBidLiveSummary_() {
     openCount: listing.length - items.length,
     items: items
   };
+}
+
+// จุดเดียวที่ action='getAuctionBidLiveSummary' จาก doGet เรียกถึง — เช็คสวิตช์ "แสดงปุ่ม Live ประมูล" (showLive) ก่อน
+// คืนข้อมูล ผู้เข้าชมที่ไม่ได้ล็อกอินจะไม่เห็นเลยถ้าปิดสวิตช์ไว้ แต่พนักงาน/Admin ที่ล็อกอินอยู่ยังเข้าดูได้เสมอ
+// นอกจากนี้ยังเช็คสวิตช์ "แสดงราคากลางใน Live" (showLiveRefPrice) แยกต่างหาก — ถ้าปิดไว้ ซ่อน ReferencePrice ออกจาก
+// รายการสำหรับผู้ที่ไม่ได้ล็อกอิน (ราคาสูงสุดที่ประมูลได้ยังคงแสดงเสมอ เพราะเป็นผลประมูลจริง ไม่ใช่ข้อมูลภายใน)
+function getAuctionBidLiveSummaryPublic_(password) {
+  const settings = getAuctionIntroButtonsSettings_();
+  const loggedIn = isValidUserPassword_(password);
+  if (!settings.showLive && !loggedIn) {
+    return { ok: false, error: 'ยังไม่เปิดหน้า Live ประมูลในขณะนี้ กรุณาเข้าสู่ระบบ' };
+  }
+  const summary = getAuctionBidLiveSummary_();
+  if (!settings.showLiveRefPrice && !loggedIn) {
+    summary.items = summary.items.map(it => Object.assign({}, it, { ReferencePrice: '' }));
+  }
+  return { ok: true, data: summary };
 }
 
 // Admin กรอกอีเมลผู้บริหาร + ข้อความ/หมายเหตุเอง แล้วกดส่ง — ระบบดึงรายการที่กำลังเปิดประมูลอยู่ (เหมือนหน้า

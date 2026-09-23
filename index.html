@@ -1518,12 +1518,15 @@ function renderAuction(root){
       apiGet({ action:'getAuctionPriceBrackets' }),
       apiGet({ action:'getAuctionIntroContent' }),
       apiGet({ action:'getAuctionClosedNotice' }),
-      apiGet({ action:'getAuctionRoundInfo' })
-    ]).then(([bracketsRes, contentRes, closedRes, roundRes])=>{
+      apiGet({ action:'getAuctionRoundInfo' }),
+      apiGet({ action:'getAuctionIntroButtonsSettings' })
+    ]).then(([bracketsRes, contentRes, closedRes, roundRes, buttonsRes])=>{
       priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
       const content = contentRes.ok ? contentRes.data : {};
       const closedNotice = closedRes.ok ? closedRes.data : null;
       const roundInfo = roundRes.ok ? roundRes.data : null;
+      // ผู้ที่ล็อกอินอยู่ (พนักงาน/Admin) เห็นปุ่มครบเสมอไม่ว่าตั้งค่าไว้อย่างไร — สวิตช์นี้คุมเฉพาะผู้เข้าชมสาธารณะที่ไม่ได้ล็อกอิน
+      const btns = (checkAuth() || !buttonsRes.ok) ? { showListing:true, showLive:true } : buttonsRes.data;
       const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
         priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
         `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
@@ -1542,14 +1545,16 @@ function renderAuction(root){
           <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
           <div style="white-space:pre-wrap;line-height:1.7;font-size:14px;">${esc(content.note||'')}</div>
           <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>
-            <button class="btn btn-secondary" id="btnAuctionGoLive">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>
+            ${btns.showListing ? `<button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>` : ''}
+            ${btns.showLive ? `<button class="btn btn-secondary" id="btnAuctionGoLive">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>` : ''}
+            ${(!btns.showListing && !btns.showLive) ? `<span style="color:var(--muted);font-size:13px;">ยังไม่เปิดให้เข้าดูรายการสินค้า/Live ประมูลในขณะนี้</span>` : ''}
           </div>
         </div>
       `;
       const viewBtn = document.getElementById('btnAuctionViewProducts');
       if(viewBtn) viewBtn.onclick = showListing;
-      document.getElementById('btnAuctionGoLive').onclick = goToAuctionLive;
+      const liveBtn = document.getElementById('btnAuctionGoLive');
+      if(liveBtn) liveBtn.onclick = goToAuctionLive;
     });
   }
 
@@ -2067,7 +2072,7 @@ function renderAuctionLive(root){
 
     function loadLive(){
       document.getElementById('liveGridHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-      apiGet({ action:'getAuctionBidLiveSummary' }).then(res=>{
+      apiGet({ action:'getAuctionBidLiveSummary', password: STATE.adminPassword || '' }).then(res=>{
         if(!res.ok){ document.getElementById('liveGridHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
         liveSummary = res.data;
         document.getElementById('liveTotalCount').textContent = liveSummary.totalCount;
@@ -4752,6 +4757,15 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:12px;margin:10px 0 0;">ลิงก์สำหรับแชร์: <code id="auctionPublicLink" style="user-select:all;"></code></p>
       </div>
       <div class="card">
+        <h2>ปุ่ม "เข้าดูรายการสินค้า" บนหน้าแรก</h2>
+        <p style="color:var(--muted);font-size:13px;">คนละเรื่องกับสวิตช์ "หน้าประมูลขายแบบสาธารณะ" ด้านบน (ซึ่งคุมทั้งหน้า) — ใช้ตอนอยากให้เห็นหน้าแรก/ขั้นตอนก่อน แต่ยังไม่พร้อมเปิดให้ดูรายการสินค้าจริง ปิดไว้แล้วผู้เข้าชมที่ไม่ได้ล็อกอินจะกดปุ่มไม่ได้ (ไม่ใช่แค่ซ่อนปุ่ม) พนักงาน/Admin ที่ล็อกอินอยู่ยังเข้าดูได้ตามปกติเสมอ</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="introShowListing" style="width:auto;" checked>
+          <label for="introShowListing" style="margin:0;font-weight:400;">แสดงปุ่ม "เข้าดูรายการสินค้า"</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveIntroButtons" style="margin-top:8px;">บันทึก</button>
+      </div>
+      <div class="card">
         <h2>ประกาศปิดประมูล</h2>
         <p style="color:var(--muted);font-size:13px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -4769,6 +4783,20 @@ function renderSettings(root){
 
     <div class="settings-group" id="grpLivePublic">
       <div class="settings-group-header"><span class="settings-group-icon">📡</span><h3>Live ประมูล — การเข้าถึงสาธารณะ</h3><span class="settings-group-desc">ควบคุมสิ่งที่คนนอกที่ไม่ได้ล็อกอินเห็นได้ที่หน้า "Live ประมูล"</span></div>
+      <div class="card">
+        <h2>ปุ่ม "Live ประมูล" บนหน้าแรก + ราคากลางที่แสดง</h2>
+        <p style="color:var(--muted);font-size:13px;">ปิดปุ่ม "Live ประมูล" แล้วผู้เข้าชมที่ไม่ได้ล็อกอินจะกดปุ่มไม่ได้ (ไม่ใช่แค่ซ่อนปุ่ม) — คนละเรื่องกับ "เผยแพร่รายการใบประมูล"/"ประกาศผล" ด้านล่าง ซึ่งคุมเฉพาะ 2 แท็บย่อยในหน้า Live ประมูลเท่านั้น สวิตช์นี้คุมแท็บ "Employee Live" (แท็บแรกที่เห็นราคาสูงสุดล่าสุด) พนักงาน/Admin ที่ล็อกอินอยู่ยังเข้าดูได้ตามปกติเสมอ</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="introShowLive" style="width:auto;" checked>
+          <label for="introShowLive" style="margin:0;font-weight:400;">แสดงปุ่ม "Live ประมูล"</label>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <input type="checkbox" id="liveShowRefPrice" style="width:auto;" checked>
+          <label for="liveShowRefPrice" style="margin:0;font-weight:400;">แสดงราคากลางในแถบ "Employee Live"</label>
+        </div>
+        <p style="color:var(--muted);font-size:11px;margin:4px 0 0;">ราคาสูงสุดที่ประมูลได้ยังแสดงเสมอ (เป็นผลประมูลจริง) — ปิดไว้จะซ่อนเฉพาะราคากลางซึ่งเป็นข้อมูลภายใน</p>
+        <button class="btn btn-secondary btn-sm" id="btnSaveIntroButtons2" style="margin-top:10px;">บันทึก</button>
+      </div>
       <div class="card">
         <h2>เผยแพร่รายการใบประมูลต่อสาธารณะ</h2>
         <p style="color:var(--muted);font-size:13px;">เมื่อเปิดใช้งาน แท็บ "รายการใบประมูล" ในหน้า "Live ประมูล" จะเปิดให้ทุกคนดูได้ (ไม่จำกัดเฉพาะ Admin) เห็นชื่อผู้ยื่นประมูลและราคาที่เสนอทุกรายการ (ไม่แสดงเบอร์ติดต่อ) — ใช้เปิดภายหลังปิดประมูลแล้วเพื่อความโปร่งใส ปุ่ม Export ยังใช้ได้เฉพาะผู้ที่ล็อกอินเข้าระบบเท่านั้น</p>
@@ -4854,11 +4882,14 @@ function renderSettings(root){
   loadAuctionBidListPublic();
   loadAuctionWinnersPublic();
   loadAuctionWinnersPublicSettings();
+  loadAuctionIntroButtonsSettings();
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
   document.getElementById('btnSyncSource').onclick = syncSource;
   document.getElementById('btnSaveAuctionPublic').onclick = saveAuctionPublic;
+  document.getElementById('btnSaveIntroButtons').onclick = saveAuctionIntroButtonsSettings;
+  document.getElementById('btnSaveIntroButtons2').onclick = saveAuctionIntroButtonsSettings;
   document.getElementById('btnSaveNavVisibility').onclick = saveNavVisibility;
   document.getElementById('btnSaveAuctionBidListPublic').onclick = saveAuctionBidListPublic;
   document.getElementById('btnSaveAuctionWinnersPublic').onclick = saveAuctionWinnersPublic;
@@ -5177,6 +5208,33 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกการควบคุมข้อมูลสาธารณะสำเร็จ','ok');
+    });
+  }
+
+  function loadAuctionIntroButtonsSettings(){
+    apiGet({ action:'getAuctionIntroButtonsSettings' }).then(res=>{
+      if(!res.ok) return;
+      document.getElementById('introShowListing').checked = res.data.showListing !== false;
+      document.getElementById('introShowLive').checked = res.data.showLive !== false;
+      document.getElementById('liveShowRefPrice').checked = res.data.showLiveRefPrice !== false;
+    });
+  }
+
+  // ปุ่ม "บันทึก" ทั้งสองจุด (การ์ดปุ่มเข้าดูรายการสินค้า + การ์ดปุ่ม Live ประมูล) บันทึกค่าทั้ง 3 ช่องพร้อมกันเสมอ
+  // เพราะเป็นการตั้งค่าชุดเดียวกันฝั่ง backend แค่แยกการ์ดแสดงผลตามกลุ่มหัวข้อให้หาเจอง่าย
+  function saveAuctionIntroButtonsSettings(){
+    const showListing = document.getElementById('introShowListing').checked;
+    const showLive = document.getElementById('introShowLive').checked;
+    const showLiveRefPrice = document.getElementById('liveShowRefPrice').checked;
+    const btn1 = document.getElementById('btnSaveIntroButtons');
+    const btn2 = document.getElementById('btnSaveIntroButtons2');
+    if(btn1) btn1.disabled = true;
+    if(btn2) btn2.disabled = true;
+    apiPost({ action:'adminSaveAuctionIntroButtonsSettings', password: STATE.adminPassword, showListing, showLive, showLiveRefPrice }).then(res=>{
+      if(btn1) btn1.disabled = false;
+      if(btn2) btn2.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast('บันทึกการตั้งค่าปุ่มหน้าแรกประมูลขายสำเร็จ','ok');
     });
   }
 
