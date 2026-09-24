@@ -59,9 +59,10 @@
   .card h2{margin-top:0;font-size:16px;color:var(--navy);border-bottom:2px solid var(--navy-light);padding-bottom:10px;}
 
   /* ===== SETTINGS: กลุ่มหัวข้อ + แถบเมนูลัด ===== */
-  .settings-jumpnav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:26px;}
-  .settings-jumpnav button{background:var(--navy-light);color:var(--navy);border:none;border-radius:20px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;}
+  .settings-jumpnav{display:flex;flex-wrap:nowrap;gap:8px;margin-bottom:26px;overflow-x:auto;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;scrollbar-width:thin;padding-bottom:4px;}
+  .settings-jumpnav button{flex:0 0 auto;background:var(--navy-light);color:var(--navy);border:none;border-radius:20px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap;}
   .settings-jumpnav button:hover{background:var(--navy);color:#fff;}
+  .settings-jumpnav button.active{background:var(--navy);color:#fff;}
   .settings-group{margin:34px 0 14px;scroll-margin-top:74px;}
   .settings-group:first-of-type{margin-top:0;}
   .settings-group-header{display:flex;align-items:baseline;gap:10px;padding-bottom:8px;margin-bottom:14px;border-bottom:2px solid var(--navy);}
@@ -4662,17 +4663,30 @@ function renderActivityLog(root){
 }
 
 /* ================= SETTINGS VIEW (Dept Codes + Admin Asset Data) ================= */
+// คลิกปุ่มเมนูลัดในหน้าตั้งค่าแล้ว: (1) เลื่อนหน้าหลักลงไปที่กลุ่มหัวข้อนั้น (2) เลื่อนแถบเมนูลัดแนวนอนเอง
+// ให้ปุ่มที่เพิ่งกดไปอยู่ชิดขวาสุดเท่าที่ทำได้ — แยกกันคนละแกน ไม่ให้การเลื่อนปุ่มไปกระทบตำแหน่งเลื่อนแนวตั้งของหน้า
+function jumpToSettingsGroup(groupId, btn){
+  const nav = btn.closest('.settings-jumpnav');
+  if(nav){
+    const targetScrollLeft = btn.offsetLeft + btn.offsetWidth - nav.clientWidth;
+    nav.scrollTo({ left: Math.max(0, targetScrollLeft), behavior: 'smooth' });
+  }
+  document.querySelectorAll('.settings-jumpnav button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(groupId).scrollIntoView({behavior:'smooth',block:'start'});
+}
+
 function renderSettings(root){
   root.innerHTML = `
     <div class="settings-jumpnav no-print">
-      <button onclick="document.getElementById('grpUsers').scrollIntoView({behavior:'smooth',block:'start'})">👥 ผู้ใช้งาน</button>
-      <button onclick="document.getElementById('grpDepts').scrollIntoView({behavior:'smooth',block:'start'})">🏢 หน่วยงาน</button>
-      <button onclick="document.getElementById('grpSync').scrollIntoView({behavior:'smooth',block:'start'})">🔄 เชื่อมข้อมูลบัญชี</button>
-      <button onclick="document.getElementById('grpNav').scrollIntoView({behavior:'smooth',block:'start'})">🧭 เมนูภายในระบบ</button>
-      <button onclick="document.getElementById('grpAuctionPublic').scrollIntoView({behavior:'smooth',block:'start'})">🔨 ประมูลขาย (สาธารณะ)</button>
-      <button onclick="document.getElementById('grpLivePublic').scrollIntoView({behavior:'smooth',block:'start'})">📡 Live ประมูล (สาธารณะ)</button>
-      <button onclick="document.getElementById('grpAuctionContent').scrollIntoView({behavior:'smooth',block:'start'})">🎯 เนื้อหา/ราคาประมูล</button>
-      <button onclick="document.getElementById('grpMaintenance').scrollIntoView({behavior:'smooth',block:'start'})">🧹 บำรุงรักษาข้อมูล</button>
+      <button onclick="jumpToSettingsGroup('grpUsers',this)">👥 ผู้ใช้งาน</button>
+      <button onclick="jumpToSettingsGroup('grpDepts',this)">🏢 หน่วยงาน</button>
+      <button onclick="jumpToSettingsGroup('grpSync',this)">🔄 เชื่อมข้อมูลบัญชี</button>
+      <button onclick="jumpToSettingsGroup('grpNav',this)">🧭 เมนูภายในระบบ</button>
+      <button onclick="jumpToSettingsGroup('grpAuctionPublic',this)">🔨 ประมูลขาย (สาธารณะ)</button>
+      <button onclick="jumpToSettingsGroup('grpLivePublic',this)">📡 Live ประมูล (สาธารณะ)</button>
+      <button onclick="jumpToSettingsGroup('grpAuctionContent',this)">🎯 เนื้อหา/ราคาประมูล</button>
+      <button onclick="jumpToSettingsGroup('grpMaintenance',this)">🧹 บำรุงรักษาข้อมูล</button>
     </div>
 
     <div class="settings-group" id="grpUsers">
