@@ -143,6 +143,7 @@ function ensureSheet_(ss, name, headers) {
 function doGet(e) {
   try {
     resetUsersRowsCache_();
+    resetDisposalDataCache_();
     const action = (e.parameter.action || '').trim();
     let result;
     switch (action) {
@@ -261,6 +262,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     resetUsersRowsCache_();
+    resetDisposalDataCache_();
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
     let result;
@@ -559,8 +561,8 @@ function getAssetListBundle_(q) {
   const lifecycleMeta = getAssetLifecycleMeta_();
   // ใช้บอก frontend ว่ารายการที่เคยถูก CC (AuctionCancelledAt) มีผู้เสนอราคารอบปัจจุบันเข้ามาแล้วหรือยัง — กันไม่ให้
   // สถานะ "ประมูลใหม่" ค้างแสดงตลอดไปทั้งที่มีคนยื่นประมูลใหม่แล้ว (ดู assetLifecycleBucket ฝั่ง frontend)
-  const biddedAssetIds = getBiddedAssetIdSet_();
   const allAssets = getAssetsRaw_();
+  const biddedAssetIds = getBiddedAssetIdSet_(allAssets);
   allAssets.forEach(r => {
     const id = String(r.AssetID);
     r.AssetStatus = disposed[id] || 'Active';
@@ -724,6 +726,80 @@ function setAssetsTag_(assetIds, tagValue) {
 const DISPOSED_STATUS_CACHE_KEY = 'disposedAssetStatus_v1';
 const DISPOSED_STATUS_CACHE_TTL_SEC = 60;
 
+// getDisposedAssetStatus_ และ getAssetLifecycleMeta_ อ่านชีตชุดเดียวกันเป๊ะ (Sales/SaleItems/WriteOffs/
+// WriteOffItems) แค่ดึงคนละมุมจากแถวเดียวกัน — ถ้า CacheService เย็นพร้อมกันทั้งคู่ (เช่น โหลดครั้งแรกของวัน หรือ
+// เลย TTL 60 วินาทีไปแล้ว ซึ่งเกิดบ่อยเพราะ getAssetListBundle_ เรียกทั้งคู่ติดกันทุกครั้งที่ Dashboard/รายการ
+// ทรัพย์สินโหลด) เดิมจะอ่านซ้ำ 8 ครั้ง (4+4) ทั้งที่ข้อมูลตั้งต้นเหมือนกันทุกประการ — computeDisposalData_ รวม
+// การอ่าน+คำนวณไว้จุดเดียว แล้วเก็บผลไว้ในตัวแปรต่อ "คำขอ" (เหมือน _usersRowsCache_ และล้างค่าที่ต้น doGet/doPost
+// เหมือนกัน) ให้เหลืออ่านแค่ 4 ครั้งจริงตอน cache เย็น ไม่กระทบพฤติกรรม CacheService เดิมเลย (TTL/invalidate
+// ทุกจุดเหมือนเดิมทุกประการ แค่กันคำนวณซ้ำภายในคำขอเดียวกัน)
+let _disposalDataCache_ = null;
+function resetDisposalDataCache_() {
+  _disposalDataCache_ = null;
+}
+function computeDisposalData_() {
+  if (_disposalDataCache_) return _disposalDataCache_;
+
+  const status = {};
+  const meta = { channelByAsset: {}, confirmedByAsset: {}, pendingSaleByAsset: {}, pendingWriteOffByAsset: {} };
+
+  const saleDocSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleDocValues = saleDocSh.getDataRange().getValues();
+  const saleDocIdx = indexMap_(saleDocValues.shift());
+  const approvedSaleDocs = {}, pendingSaleDocs = {};
+  saleDocValues.forEach(r => {
+    const saleId = String(r[saleDocIdx.SaleID]);
+    if (r[saleDocIdx.Status] === STATUS.APPROVED) {
+      approvedSaleDocs[saleId] = {
+        channel: saleDocIdx.Channel !== undefined ? String(r[saleDocIdx.Channel]) : '',
+        confirmedAt: saleDocIdx.SaleConfirmedAt !== undefined ? r[saleDocIdx.SaleConfirmedAt] : ''
+      };
+    } else if (r[saleDocIdx.Status] === STATUS.PENDING) {
+      pendingSaleDocs[saleId] = true;
+    }
+  });
+  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const saleItemValues = saleItemSh.getDataRange().getValues();
+  const saleItemIdx = indexMap_(saleItemValues.shift());
+  saleItemValues.forEach(r => {
+    const saleId = String(r[saleItemIdx.SaleID]);
+    const assetId = String(r[saleItemIdx.AssetID]);
+    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    if (approvedSaleDocs[saleId]) {
+      status[assetId] = 'Sold';
+      meta.channelByAsset[assetId] = approvedSaleDocs[saleId].channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
+      if (approvedSaleDocs[saleId].confirmedAt) meta.confirmedByAsset[assetId] = true;
+    } else if (pendingSaleDocs[saleId]) {
+      meta.pendingSaleByAsset[assetId] = true;
+    }
+  });
+
+  const woDocSh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const woDocValues = woDocSh.getDataRange().getValues();
+  const woDocIdx = indexMap_(woDocValues.shift());
+  const approvedWoDocs = {}, pendingWoDocs = {};
+  woDocValues.forEach(r => {
+    const woId = String(r[woDocIdx.WriteOffID]);
+    if (r[woDocIdx.Status] === STATUS.APPROVED) approvedWoDocs[woId] = true;
+    else if (r[woDocIdx.Status] === STATUS.PENDING) pendingWoDocs[woId] = true;
+  });
+  const woItemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const woItemValues = woItemSh.getDataRange().getValues();
+  const woItemIdx = indexMap_(woItemValues.shift());
+  woItemValues.forEach(r => {
+    const woId = String(r[woItemIdx.WriteOffID]);
+    const assetId = String(r[woItemIdx.AssetID]);
+    const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    if (approvedWoDocs[woId]) status[assetId] = 'WrittenOff';
+    else if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[assetId] = true;
+  });
+
+  _disposalDataCache_ = { status: status, meta: meta };
+  return _disposalDataCache_;
+}
+
 function getDisposedAssetStatus_() {
   let cache;
   try {
@@ -732,9 +808,7 @@ function getDisposedAssetStatus_() {
     if (cached) return JSON.parse(cached);
   } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
 
-  const status = {};
-  markDisposedFromDocs_(status, SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', 'Sold');
-  markDisposedFromDocs_(status, SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', 'WrittenOff');
+  const status = computeDisposalData_().status;
 
   try {
     if (cache) cache.put(DISPOSED_STATUS_CACHE_KEY, JSON.stringify(status), DISPOSED_STATUS_CACHE_TTL_SEC);
@@ -744,6 +818,10 @@ function getDisposedAssetStatus_() {
 }
 
 function invalidateDisposedAssetStatusCache_() {
+  // ล้าง _disposalDataCache_ (ตัวแปรต่อคำขอ) ด้วยเสมอ ไม่ใช่แค่ CacheService — กันกรณีคำขอเดียวกันมีการแก้ไข
+  // ใบขาย/ใบตัดชำรุดแล้วอ่านสถานะซ้ำทีหลังในคำขอเดียวกัน (เช่น decideSale_/decideWriteOff_/adminRestoreAsset_)
+  // ถ้าไม่ล้างตัวนี้ด้วย จะยังเห็นข้อมูลเก่าที่แคชไว้ก่อนแก้ไข ทั้งที่ CacheService ถูกล้างไปแล้วก็ตาม
+  resetDisposalDataCache_();
   try {
     const cache = CacheService.getScriptCache();
     cache.remove(DISPOSED_STATUS_CACHE_KEY);
@@ -829,83 +907,13 @@ function getAssetLifecycleMeta_() {
     if (cached) return JSON.parse(cached);
   } catch (err) { /* แคชใช้ไม่ได้ก็ยังคำนวณสดต่อได้ปกติ */ }
 
-  const meta = { channelByAsset: {}, confirmedByAsset: {}, pendingSaleByAsset: {}, pendingWriteOffByAsset: {} };
-
-  const saleDocSh = getSS_().getSheetByName(SHEETS.SALES);
-  const saleDocValues = saleDocSh.getDataRange().getValues();
-  const saleDocIdx = indexMap_(saleDocValues.shift());
-  const approvedSaleDocs = {}, pendingSaleDocs = {};
-  saleDocValues.forEach(r => {
-    const saleId = String(r[saleDocIdx.SaleID]);
-    if (r[saleDocIdx.Status] === STATUS.APPROVED) {
-      approvedSaleDocs[saleId] = {
-        channel: saleDocIdx.Channel !== undefined ? String(r[saleDocIdx.Channel]) : '',
-        confirmedAt: saleDocIdx.SaleConfirmedAt !== undefined ? r[saleDocIdx.SaleConfirmedAt] : ''
-      };
-    } else if (r[saleDocIdx.Status] === STATUS.PENDING) {
-      pendingSaleDocs[saleId] = true;
-    }
-  });
-  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
-  const saleItemValues = saleItemSh.getDataRange().getValues();
-  const saleItemIdx = indexMap_(saleItemValues.shift());
-  saleItemValues.forEach(r => {
-    const saleId = String(r[saleItemIdx.SaleID]);
-    const assetId = String(r[saleItemIdx.AssetID]);
-    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
-    if (voided) return;
-    if (approvedSaleDocs[saleId]) {
-      meta.channelByAsset[assetId] = approvedSaleDocs[saleId].channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
-      if (approvedSaleDocs[saleId].confirmedAt) meta.confirmedByAsset[assetId] = true;
-    } else if (pendingSaleDocs[saleId]) {
-      meta.pendingSaleByAsset[assetId] = true;
-    }
-  });
-
-  const woDocSh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
-  const woDocValues = woDocSh.getDataRange().getValues();
-  const woDocIdx = indexMap_(woDocValues.shift());
-  const pendingWoDocs = {};
-  woDocValues.forEach(r => {
-    if (r[woDocIdx.Status] === STATUS.PENDING) pendingWoDocs[String(r[woDocIdx.WriteOffID])] = true;
-  });
-  const woItemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
-  const woItemValues = woItemSh.getDataRange().getValues();
-  const woItemIdx = indexMap_(woItemValues.shift());
-  woItemValues.forEach(r => {
-    const woId = String(r[woItemIdx.WriteOffID]);
-    const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
-    if (voided) return;
-    if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[String(r[woItemIdx.AssetID])] = true;
-  });
+  const meta = computeDisposalData_().meta;
 
   try {
     if (cache) cache.put(ASSET_LIFECYCLE_META_CACHE_KEY, JSON.stringify(meta), DISPOSED_STATUS_CACHE_TTL_SEC);
   } catch (err) { /* ข้อมูลใหญ่เกิน 100KB หรือแคชใช้ไม่ได้ — ไม่กระทบผลลัพธ์ที่คืนกลับ */ }
 
   return meta;
-}
-
-function markDisposedFromDocs_(status, docSheetName, itemSheetName, docIdField, label) {
-  const docSh = getSS_().getSheetByName(docSheetName);
-  const docValues = docSh.getDataRange().getValues();
-  const docHeaders = docValues.shift();
-  const docIdx = indexMap_(docHeaders);
-  const approvedDocIds = {};
-  docValues.forEach(r => {
-    if (r[docIdx.Status] === STATUS.APPROVED) approvedDocIds[String(r[docIdx[docIdField]])] = true;
-  });
-
-  const itemSh = getSS_().getSheetByName(itemSheetName);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemHeaders = itemValues.shift();
-  const itemIdx = indexMap_(itemHeaders);
-  itemValues.forEach(r => {
-    // แถวรายการเดี่ยวๆ ที่ Admin กด "คืนสถานะ" ไปแล้ว (Voided='TRUE') ไม่ถือว่าสิ้นสภาพอีกต่อไป
-    // แม้เอกสารหลักโดยรวมจะยังอนุมัติอยู่ (เอกสารมีทรัพย์สินอื่นที่ยังไม่ได้คืนสถานะ) — ดู voidApprovedDocsForAsset_
-    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
-    if (approvedDocIds[String(r[itemIdx[docIdField]])] && !voided) status[String(r[itemIdx.AssetID])] = label;
-  });
 }
 
 // เลขที่ออกและวันที่ของใบขาย/ใบตัดชำรุดที่อนุมัติแล้วซึ่งทำให้ทรัพย์สินแต่ละชิ้นสิ้นสภาพ
@@ -957,7 +965,7 @@ function getUsersRowsCached_() {
   if (!_usersRowsCache_) {
     const sh = getSS_().getSheetByName(SHEETS.USERS);
     const values = sh.getDataRange().getValues();
-    _usersRowsCache_ = { values: values, idx: indexMap_(values[0]) };
+    _usersRowsCache_ = { sh: sh, values: values, idx: indexMap_(values[0]) };
   }
   return _usersRowsCache_;
 }
@@ -1001,9 +1009,7 @@ function login_(body) {
   const password = String(body.password || '');
   if (!username || !password) return { ok: false, error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' };
 
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
       const role = normalizeRole_(values[i][idx.Role]);
@@ -1030,9 +1036,7 @@ function parseDepartments_(v) {
 function getRequestingUser_(pw) {
   const p = String(pw || '');
   if (!p) return null;
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Password]) === p) {
       const role = normalizeRole_(values[i][idx.Role]);
@@ -1067,9 +1071,7 @@ function heartbeat_(body) {
 // Admin ดูรายชื่อผู้ใช้ที่ออนไลน์อยู่ตอนนี้ — เทียบรายชื่อผู้ใช้ทั้งหมดในชีต Users กับหมุดที่ยังไม่หมดอายุใน CacheService
 function adminGetOnlineUsers_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   const usernames = [];
   for (let i = 1; i < values.length; i++) {
     const u = String(values[i][idx.Username] || '').trim();
@@ -1096,11 +1098,10 @@ function canManageDept_(user, dept) {
 
 function getUsers_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const headers = values.shift();
-  const idx = indexMap_(headers);
-  const users = values.filter(r => r[idx.Username]).map(r => ({
+  // ใช้ slice(1) แทน shift() เพราะ values ตอนนี้มาจากแคชที่ใช้ร่วมกับฟังก์ชันอื่นในคำขอเดียวกัน (getUsersRowsCached_)
+  // shift() จะไปตัดแถวหัวตารางออกจาก array ต้นฉบับที่แชร์กันอยู่จริง ทำให้ฟังก์ชันอื่นที่เรียกทีหลังในคำขอเดียวกันพัง
+  const { values, idx } = getUsersRowsCached_();
+  const users = values.slice(1).filter(r => r[idx.Username]).map(r => ({
     Username: r[idx.Username],
     Role: r[idx.Role],
     Departments: parseDepartments_(r[idx.Departments]),
@@ -1122,20 +1123,19 @@ function adminSaveUser_(body) {
   const canViewPrices = u.CanViewPrices ? 'true' : 'false';
   const canExportAuction = u.CanExportAuction ? 'true' : 'false';
 
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const headers = values[0];
-  const idx = indexMap_(headers);
+  const { sh, values, idx } = getUsersRowsCached_();
   let rowNum = -1;
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username) { rowNum = i + 1; break; }
   }
 
+  // ชีต Users กำลังจะถูกเขียน (เพิ่ม/แก้ผู้ใช้) — ล้างแคชทิ้งหลังจากนี้เสมอ กันไม่ให้ฟังก์ชันอื่นที่เรียกทีหลัง
+  // ในคำขอเดียวกันเห็นข้อมูลเก่าก่อนแก้ไข (ปกติไม่มีจุดไหนเรียกซ้ำหลังจากนี้อยู่แล้ว แต่ล้างไว้กันเหนียว)
   if (rowNum === -1) {
     if (!newPassword) return { ok: false, error: 'กรุณาระบุรหัสผ่านสำหรับผู้ใช้ใหม่' };
     // เขียนตามตำแหน่งคอลัมน์จริงในชีต (idx) แทนการอิงลำดับคงที่ เพื่อไม่ให้ค่าคลาดเคลื่อนคอลัมน์
     // ถ้าชีตยังไม่มีคอลัมน์ Departments/CanViewPrices (ยังไม่ได้รัน setup() ใหม่)
-    const newRow = headers.map(() => '');
+    const newRow = values[0].map(() => '');
     newRow[idx.Username] = username;
     newRow[idx.Password] = newPassword;
     newRow[idx.Role] = role;
@@ -1144,6 +1144,7 @@ function adminSaveUser_(body) {
     if (idx.CanExportAuction !== undefined) newRow[idx.CanExportAuction] = canExportAuction;
     newRow[idx.CreatedAt] = new Date();
     sh.appendRow(newRow);
+    resetUsersRowsCache_();
     logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
     return { ok: true, data: { created: true } };
   }
@@ -1152,6 +1153,7 @@ function adminSaveUser_(body) {
   if (idx.CanViewPrices !== undefined) sh.getRange(rowNum, idx.CanViewPrices + 1).setValue(canViewPrices);
   if (idx.CanExportAuction !== undefined) sh.getRange(rowNum, idx.CanExportAuction + 1).setValue(canExportAuction);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
+  resetUsersRowsCache_();
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
   return { ok: true, data: { created: false } };
 }
@@ -1160,12 +1162,11 @@ function adminDeleteUser_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const username = String(body.username || '').trim();
   if (!username) return { ok: false, error: 'กรุณาระบุชื่อผู้ใช้' };
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { sh, values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username) {
       sh.deleteRow(i + 1);
+      resetUsersRowsCache_();
       logActivity_('', 'ADMIN_DELETE_USER', 'admin', 'ลบผู้ใช้ ' + username);
       return { ok: true };
     }
@@ -1817,7 +1818,7 @@ function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
   const saleAuctionChannel = getSaleAuctionChannelMap_();
   const rows = getAssetsRaw_();
-  const biddedAssetIds = getBiddedAssetIdSet_();
+  const biddedAssetIds = getBiddedAssetIdSet_(rows);
   return rows
     .filter(r => {
       const status = disposed[String(r.AssetID)];
@@ -1939,9 +1940,11 @@ function getDirectSoldListing_() {
 // รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลที่ "ยังมีผล" อยู่อย่างน้อย 1 ราย (ดู getValidAuctionBidItems_ — ไม่นับรอบที่ถูก
 // CC/ยกเลิกไปแล้ว) ใช้ติดแท็ก "มีผู้ประมูลแล้ว" ในหน้าประมูลขายหลัก โดยไม่ต้องเปิดดูราคา/ชื่อผู้ยื่น
 // (ต่างจากแท็บ Employee Live ที่เห็นราคาสูงสุดได้)
-function getBiddedAssetIdSet_() {
+// assetsRaw (ถ้าระบุ) = ชุดข้อมูล getAssetsRaw_() ที่ผู้เรียกอ่านไว้แล้ว ส่งต่อให้ getValidAuctionBidItems_ ใช้ซ้ำ
+// กันไม่ให้อ่านชีต Assets ซ้ำสองรอบในคำขอเดียว (ดู getAssetListBundle_/getAuctionListing_) — ไม่ระบุ = อ่านเองตามเดิม
+function getBiddedAssetIdSet_(assetsRaw) {
   const set = new Set();
-  getValidAuctionBidItems_(getAuctionCurrentRound_()).forEach(it => set.add(it.assetId));
+  getValidAuctionBidItems_(getAuctionCurrentRound_(), assetsRaw).forEach(it => set.add(it.assetId));
   return set;
 }
 
@@ -2265,8 +2268,9 @@ function getAuctionBidPublicList_() {
 function buildAuctionWinnersList_(roundFilter) {
   const currentRound = getAuctionCurrentRound_();
   // ราคาทรัพย์สิน (ราคาซื้อ), ราคากลางประมูล และมูลค่าทางบัญชี ดึงจากชีต Assets ตามรหัสทรัพย์สิน เพื่อแนบไปกับผลประมูลได้
+  const assetsRaw = getAssetsRaw_();
   const assetById = {};
-  getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
+  assetsRaw.forEach(a => { assetById[String(a.AssetID)] = a; });
   // สถานะ Confirm/CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน — ไม่มีแถวในชีต Assets) เก็บแยกไว้ในชีต AuctionOffListing
   const offListingById = getAuctionOffListingMap_();
 
@@ -2274,7 +2278,7 @@ function buildAuctionWinnersList_(roundFilter) {
   // "รหัสสินค้า+รอบ" ก่อน (รายการเดียวกันที่ประมูลหลายรอบ แต่ละรอบถือเป็นผลแยกกันคนละแถว) แล้วค่อยหาราคาสูงสุด +
   // รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
   const byKey = {};
-  getValidAuctionBidItems_(roundFilter != null ? roundFilter : null).forEach(it => {
+  getValidAuctionBidItems_(roundFilter != null ? roundFilter : null, assetsRaw).forEach(it => {
     const key = it.assetId + '::' + it.round;
     if (!byKey[key]) byKey[key] = { assetId: it.assetId, round: it.round, assetName: it.assetName, bids: [] };
     byKey[key].bids.push({ price: it.price, bidderName: it.bidderName });
@@ -2326,7 +2330,8 @@ function buildAuctionWinnersList_(roundFilter) {
 // ของทรัพย์สินนั้น) จะไม่ถูกนับอีกต่อไป — แต่แถวข้อมูลจริงในชีต AuctionBidItems/AuctionBids ยังคงอยู่ครบ (เก็บประวัติไว้)
 // ใช้ร่วมกันทั้ง buildAuctionWinnersList_, getAuctionBidLiveSummary_ และ getBiddedAssetIdSet_ เพื่อให้ทุกหน้าที่เกี่ยวข้องตรงกัน
 // roundFilter (ถ้าระบุ) = กรองเฉพาะใบประมูลของรอบนั้น (ดู AUCTION ROUND ด้านบน) — ไม่ระบุ = คืนทุกรอบ (ใช้ตอนต้องการประวัติ)
-function getValidAuctionBidItems_(roundFilter) {
+// assetsRaw (ถ้าระบุ) = ชุดข้อมูล getAssetsRaw_() ที่ผู้เรียกอ่านไว้แล้ว (กันอ่านชีต Assets ซ้ำ) — ไม่ระบุ = อ่านเอง
+function getValidAuctionBidItems_(roundFilter, assetsRaw) {
   const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemHeaders = itemValues.shift();
@@ -2348,7 +2353,7 @@ function getValidAuctionBidItems_(roundFilter) {
   });
 
   const cancelledAtByAsset = {};
-  getAssetsRaw_().forEach(a => {
+  (assetsRaw || getAssetsRaw_()).forEach(a => {
     if (a.AuctionCancelledAt) cancelledAtByAsset[String(a.AssetID)] = new Date(a.AuctionCancelledAt).getTime();
   });
   // รวม CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน) ที่เก็บแยกไว้ในชีต AuctionOffListing ด้วย
