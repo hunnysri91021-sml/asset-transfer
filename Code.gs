@@ -957,7 +957,7 @@ function getUsersRowsCached_() {
   if (!_usersRowsCache_) {
     const sh = getSS_().getSheetByName(SHEETS.USERS);
     const values = sh.getDataRange().getValues();
-    _usersRowsCache_ = { values: values, idx: indexMap_(values[0]) };
+    _usersRowsCache_ = { sh: sh, values: values, idx: indexMap_(values[0]) };
   }
   return _usersRowsCache_;
 }
@@ -1001,9 +1001,7 @@ function login_(body) {
   const password = String(body.password || '');
   if (!username || !password) return { ok: false, error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' };
 
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
       const role = normalizeRole_(values[i][idx.Role]);
@@ -1030,9 +1028,7 @@ function parseDepartments_(v) {
 function getRequestingUser_(pw) {
   const p = String(pw || '');
   if (!p) return null;
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Password]) === p) {
       const role = normalizeRole_(values[i][idx.Role]);
@@ -1067,9 +1063,7 @@ function heartbeat_(body) {
 // Admin ดูรายชื่อผู้ใช้ที่ออนไลน์อยู่ตอนนี้ — เทียบรายชื่อผู้ใช้ทั้งหมดในชีต Users กับหมุดที่ยังไม่หมดอายุใน CacheService
 function adminGetOnlineUsers_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   const usernames = [];
   for (let i = 1; i < values.length; i++) {
     const u = String(values[i][idx.Username] || '').trim();
@@ -1096,11 +1090,10 @@ function canManageDept_(user, dept) {
 
 function getUsers_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const headers = values.shift();
-  const idx = indexMap_(headers);
-  const users = values.filter(r => r[idx.Username]).map(r => ({
+  // ใช้ slice(1) แทน shift() เพราะ values ตอนนี้มาจากแคชที่ใช้ร่วมกับฟังก์ชันอื่นในคำขอเดียวกัน (getUsersRowsCached_)
+  // shift() จะไปตัดแถวหัวตารางออกจาก array ต้นฉบับที่แชร์กันอยู่จริง ทำให้ฟังก์ชันอื่นที่เรียกทีหลังในคำขอเดียวกันพัง
+  const { values, idx } = getUsersRowsCached_();
+  const users = values.slice(1).filter(r => r[idx.Username]).map(r => ({
     Username: r[idx.Username],
     Role: r[idx.Role],
     Departments: parseDepartments_(r[idx.Departments]),
@@ -1122,20 +1115,19 @@ function adminSaveUser_(body) {
   const canViewPrices = u.CanViewPrices ? 'true' : 'false';
   const canExportAuction = u.CanExportAuction ? 'true' : 'false';
 
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const headers = values[0];
-  const idx = indexMap_(headers);
+  const { sh, values, idx } = getUsersRowsCached_();
   let rowNum = -1;
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username) { rowNum = i + 1; break; }
   }
 
+  // ชีต Users กำลังจะถูกเขียน (เพิ่ม/แก้ผู้ใช้) — ล้างแคชทิ้งหลังจากนี้เสมอ กันไม่ให้ฟังก์ชันอื่นที่เรียกทีหลัง
+  // ในคำขอเดียวกันเห็นข้อมูลเก่าก่อนแก้ไข (ปกติไม่มีจุดไหนเรียกซ้ำหลังจากนี้อยู่แล้ว แต่ล้างไว้กันเหนียว)
   if (rowNum === -1) {
     if (!newPassword) return { ok: false, error: 'กรุณาระบุรหัสผ่านสำหรับผู้ใช้ใหม่' };
     // เขียนตามตำแหน่งคอลัมน์จริงในชีต (idx) แทนการอิงลำดับคงที่ เพื่อไม่ให้ค่าคลาดเคลื่อนคอลัมน์
     // ถ้าชีตยังไม่มีคอลัมน์ Departments/CanViewPrices (ยังไม่ได้รัน setup() ใหม่)
-    const newRow = headers.map(() => '');
+    const newRow = values[0].map(() => '');
     newRow[idx.Username] = username;
     newRow[idx.Password] = newPassword;
     newRow[idx.Role] = role;
@@ -1144,6 +1136,7 @@ function adminSaveUser_(body) {
     if (idx.CanExportAuction !== undefined) newRow[idx.CanExportAuction] = canExportAuction;
     newRow[idx.CreatedAt] = new Date();
     sh.appendRow(newRow);
+    resetUsersRowsCache_();
     logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'เพิ่มผู้ใช้ ' + username);
     return { ok: true, data: { created: true } };
   }
@@ -1152,6 +1145,7 @@ function adminSaveUser_(body) {
   if (idx.CanViewPrices !== undefined) sh.getRange(rowNum, idx.CanViewPrices + 1).setValue(canViewPrices);
   if (idx.CanExportAuction !== undefined) sh.getRange(rowNum, idx.CanExportAuction + 1).setValue(canExportAuction);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
+  resetUsersRowsCache_();
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
   return { ok: true, data: { created: false } };
 }
@@ -1160,12 +1154,11 @@ function adminDeleteUser_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const username = String(body.username || '').trim();
   if (!username) return { ok: false, error: 'กรุณาระบุชื่อผู้ใช้' };
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { sh, values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username) {
       sh.deleteRow(i + 1);
+      resetUsersRowsCache_();
       logActivity_('', 'ADMIN_DELETE_USER', 'admin', 'ลบผู้ใช้ ' + username);
       return { ok: true };
     }
