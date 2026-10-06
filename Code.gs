@@ -1237,10 +1237,17 @@ function adminDeleteAsset_(body) {
 
 // คืนสถานะทรัพย์สินที่เคยขาย/ตัดชำรุด (อนุมัติแล้ว) กลับมาเป็น "ใช้งาน" — โดยยกเลิก (Voided)
 // ใบขาย/ใบตัดชำรุดที่เกี่ยวข้องทั้งหมด แทนการลบประวัติ เพื่อให้ยังตรวจสอบย้อนหลังได้
+// body.destination เลือกได้ 3 แบบว่าหลังยกเลิกแล้วให้ไปจบที่ไหน (ทีละรายการเท่านั้น ไม่รองรับคืนเป็นชุด):
+//   'active' (ค่าเริ่มต้น) — กลับเป็นใช้งานปกติเฉยๆ ไม่ทำอะไรต่อ (พฤติกรรมเดิม)
+//   'writeoff' — ตั้งใจย้ายไปเข้าคิวรอตัดชำรุดแทน (ให้พนักงานกรอกใบตัดชำรุดใหม่) ติดแท็ก "ชำรุด" ไว้ทันทีให้เห็นสถานะ
+//                ที่ Dashboard/รายการทรัพย์สินสอดคล้องกับปลายทางที่เลือก แม้ยังไม่มีใบตัดชำรุดจริงก็ตาม
+//   'transfer' — ตั้งใจย้ายไปเข้าคิวรอโอนย้ายแทน ยังติดแท็ก "ใช้งาน" ตามปกติ (โอนย้ายไม่มีแท็กของตัวเอง เพราะทรัพย์สิน
+//                ยังถือว่า "ใช้งาน" อยู่ แค่เปลี่ยนหน่วยงาน/ผู้ดูแล)
 function adminRestoreAsset_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const destination = ['active', 'writeoff', 'transfer'].indexOf(body.destination) !== -1 ? body.destination : 'active';
 
   const saleVoided = voidApprovedDocsForAsset_(SHEETS.SALES, SHEETS.SALE_ITEMS, 'SaleID', assetId);
   const writeOffVoided = voidApprovedDocsForAsset_(SHEETS.WRITEOFFS, SHEETS.WRITEOFF_ITEMS, 'WriteOffID', assetId);
@@ -1251,11 +1258,19 @@ function adminRestoreAsset_(body) {
 
   if (!voidedCount) return { ok: false, error: 'ไม่พบใบขาย/ใบตัดชำรุดที่อนุมัติแล้วของทรัพย์สินนี้' };
 
-  setAssetsTag_([assetId], 'ใช้งาน');
+  setAssetsTag_([assetId], destination === 'writeoff' ? 'ชำรุด' : 'ใช้งาน');
   clearAuctionSelection_(assetId);
   invalidateDisposedAssetStatusCache_();
-  logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะใช้งานทรัพย์สิน ' + assetId);
-  return { ok: true, data: { voidedCount } };
+
+  let queueError = '';
+  if (destination === 'writeoff' || destination === 'transfer') {
+    const queueRes = addToAssetQueue_({ assetId: assetId, addedBy: 'admin (คืนสถานะ)' }, destination === 'writeoff' ? QUEUE_PURPOSES.WRITEOFF : QUEUE_PURPOSES.TRANSFER);
+    if (!queueRes.ok) queueError = queueRes.error || '';
+  }
+
+  const destLabel = destination === 'writeoff' ? 'เข้าคิวรอตัดชำรุด' : destination === 'transfer' ? 'เข้าคิวรอโอนย้าย' : 'ใช้งานปกติ';
+  logActivity_('', 'ADMIN_RESTORE_ASSET', 'admin', 'คืนสถานะทรัพย์สิน ' + assetId + ' ไปที่ ' + destLabel + (queueError ? ' (เพิ่มเข้าคิวไม่สำเร็จ: ' + queueError + ')' : ''));
+  return { ok: true, data: { voidedCount, destination, queueError } };
 }
 
 // ล้างค่า "ส่งประมูล"/ราคากลางเดิมเมื่อคืนสถานะทรัพย์สินกลับเป็น "ใช้งาน" — ค่าที่เคยตั้งไว้ผูกกับรอบขาย/ตัดชำรุดที่ถูกยกเลิกไปแล้ว
