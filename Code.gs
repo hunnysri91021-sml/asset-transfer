@@ -561,8 +561,8 @@ function getAssetListBundle_(q) {
   const lifecycleMeta = getAssetLifecycleMeta_();
   // ใช้บอก frontend ว่ารายการที่เคยถูก CC (AuctionCancelledAt) มีผู้เสนอราคารอบปัจจุบันเข้ามาแล้วหรือยัง — กันไม่ให้
   // สถานะ "ประมูลใหม่" ค้างแสดงตลอดไปทั้งที่มีคนยื่นประมูลใหม่แล้ว (ดู assetLifecycleBucket ฝั่ง frontend)
-  const biddedAssetIds = getBiddedAssetIdSet_();
   const allAssets = getAssetsRaw_();
+  const biddedAssetIds = getBiddedAssetIdSet_(allAssets);
   allAssets.forEach(r => {
     const id = String(r.AssetID);
     r.AssetStatus = disposed[id] || 'Active';
@@ -1818,7 +1818,7 @@ function getAuctionListing_() {
   const disposed = getDisposedAssetStatus_();
   const saleAuctionChannel = getSaleAuctionChannelMap_();
   const rows = getAssetsRaw_();
-  const biddedAssetIds = getBiddedAssetIdSet_();
+  const biddedAssetIds = getBiddedAssetIdSet_(rows);
   return rows
     .filter(r => {
       const status = disposed[String(r.AssetID)];
@@ -1940,9 +1940,11 @@ function getDirectSoldListing_() {
 // รวบรวมรหัสทรัพย์สินที่มีผู้ยื่นประมูลที่ "ยังมีผล" อยู่อย่างน้อย 1 ราย (ดู getValidAuctionBidItems_ — ไม่นับรอบที่ถูก
 // CC/ยกเลิกไปแล้ว) ใช้ติดแท็ก "มีผู้ประมูลแล้ว" ในหน้าประมูลขายหลัก โดยไม่ต้องเปิดดูราคา/ชื่อผู้ยื่น
 // (ต่างจากแท็บ Employee Live ที่เห็นราคาสูงสุดได้)
-function getBiddedAssetIdSet_() {
+// assetsRaw (ถ้าระบุ) = ชุดข้อมูล getAssetsRaw_() ที่ผู้เรียกอ่านไว้แล้ว ส่งต่อให้ getValidAuctionBidItems_ ใช้ซ้ำ
+// กันไม่ให้อ่านชีต Assets ซ้ำสองรอบในคำขอเดียว (ดู getAssetListBundle_/getAuctionListing_) — ไม่ระบุ = อ่านเองตามเดิม
+function getBiddedAssetIdSet_(assetsRaw) {
   const set = new Set();
-  getValidAuctionBidItems_(getAuctionCurrentRound_()).forEach(it => set.add(it.assetId));
+  getValidAuctionBidItems_(getAuctionCurrentRound_(), assetsRaw).forEach(it => set.add(it.assetId));
   return set;
 }
 
@@ -2266,8 +2268,9 @@ function getAuctionBidPublicList_() {
 function buildAuctionWinnersList_(roundFilter) {
   const currentRound = getAuctionCurrentRound_();
   // ราคาทรัพย์สิน (ราคาซื้อ), ราคากลางประมูล และมูลค่าทางบัญชี ดึงจากชีต Assets ตามรหัสทรัพย์สิน เพื่อแนบไปกับผลประมูลได้
+  const assetsRaw = getAssetsRaw_();
   const assetById = {};
-  getAssetsRaw_().forEach(a => { assetById[String(a.AssetID)] = a; });
+  assetsRaw.forEach(a => { assetById[String(a.AssetID)] = a; });
   // สถานะ Confirm/CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน — ไม่มีแถวในชีต Assets) เก็บแยกไว้ในชีต AuctionOffListing
   const offListingById = getAuctionOffListingMap_();
 
@@ -2275,7 +2278,7 @@ function buildAuctionWinnersList_(roundFilter) {
   // "รหัสสินค้า+รอบ" ก่อน (รายการเดียวกันที่ประมูลหลายรอบ แต่ละรอบถือเป็นผลแยกกันคนละแถว) แล้วค่อยหาราคาสูงสุด +
   // รายชื่อผู้เสนอราคาสูงสุดทุกคนที่เสนอเท่ากัน (กรณีเสมอ)
   const byKey = {};
-  getValidAuctionBidItems_(roundFilter != null ? roundFilter : null).forEach(it => {
+  getValidAuctionBidItems_(roundFilter != null ? roundFilter : null, assetsRaw).forEach(it => {
     const key = it.assetId + '::' + it.round;
     if (!byKey[key]) byKey[key] = { assetId: it.assetId, round: it.round, assetName: it.assetName, bids: [] };
     byKey[key].bids.push({ price: it.price, bidderName: it.bidderName });
@@ -2327,7 +2330,8 @@ function buildAuctionWinnersList_(roundFilter) {
 // ของทรัพย์สินนั้น) จะไม่ถูกนับอีกต่อไป — แต่แถวข้อมูลจริงในชีต AuctionBidItems/AuctionBids ยังคงอยู่ครบ (เก็บประวัติไว้)
 // ใช้ร่วมกันทั้ง buildAuctionWinnersList_, getAuctionBidLiveSummary_ และ getBiddedAssetIdSet_ เพื่อให้ทุกหน้าที่เกี่ยวข้องตรงกัน
 // roundFilter (ถ้าระบุ) = กรองเฉพาะใบประมูลของรอบนั้น (ดู AUCTION ROUND ด้านบน) — ไม่ระบุ = คืนทุกรอบ (ใช้ตอนต้องการประวัติ)
-function getValidAuctionBidItems_(roundFilter) {
+// assetsRaw (ถ้าระบุ) = ชุดข้อมูล getAssetsRaw_() ที่ผู้เรียกอ่านไว้แล้ว (กันอ่านชีต Assets ซ้ำ) — ไม่ระบุ = อ่านเอง
+function getValidAuctionBidItems_(roundFilter, assetsRaw) {
   const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemHeaders = itemValues.shift();
@@ -2349,7 +2353,7 @@ function getValidAuctionBidItems_(roundFilter) {
   });
 
   const cancelledAtByAsset = {};
-  getAssetsRaw_().forEach(a => {
+  (assetsRaw || getAssetsRaw_()).forEach(a => {
     if (a.AuctionCancelledAt) cancelledAtByAsset[String(a.AssetID)] = new Date(a.AuctionCancelledAt).getTime();
   });
   // รวม CC ของรายการนอกฐาน/off-listing (ไม่มีทะเบียน) ที่เก็บแยกไว้ในชีต AuctionOffListing ด้วย
