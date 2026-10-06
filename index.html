@@ -260,18 +260,40 @@ let STATE = {
 };
 
 /* ================= API HELPERS ================= */
+// บัญชี Google แบบฟรีที่ใช้รันระบบนี้ บางครั้งการส่งข้อมูลกลับจาก Apps Script
+// (ผ่านชั้น exec -> redirect -> script.googleusercontent.com/macros/echo ของ Google เอง)
+// ช้า/หลุด timeout เป็นระยะ (นอกเหนือการควบคุมของโค้ดฝั่งนี้) — ลอง retry อัตโนมัติเงียบๆ
+// ให้ action ที่เป็นการ "อ่านข้อมูล" เท่านั้น (ปลอดภัย ไม่เสี่ยงบันทึกซ้ำ) ก่อนจะยอมแพ้จริง
+function fetchJsonWithRetry_(doFetch, attemptsLeft){
+  return doFetch().then(r => {
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).catch(err => {
+    if(attemptsLeft <= 0) throw err;
+    const delayMs = attemptsLeft === 2 ? 1000 : 2000;
+    return new Promise(resolve => setTimeout(resolve, delayMs))
+      .then(()=> fetchJsonWithRetry_(doFetch, attemptsLeft - 1));
+  });
+}
 function apiGet(params){
   const url = GAS_URL + '?' + new URLSearchParams(params).toString();
-  return fetch(url, { method:'GET' })
-    .then(r => r.json())
+  return fetchJsonWithRetry_(()=> fetch(url, { method:'GET' }), 2)
     .catch(err => ({ ok:false, error:'เชื่อมต่อ GAS ไม่สำเร็จ: '+err }));
 }
+// action ที่เป็นการเขียน/บันทึกข้อมูล (สร้าง/แก้ไข/ลบ/อนุมัติ/ส่งอีเมล ฯลฯ) ต้อง "ไม่" auto-retry
+// เพราะถ้าคำขอแรกจริงๆ แล้วไปถึง server และบันทึกสำเร็จ แต่แค่ผลตอบกลับหลุดระหว่างทาง
+// การยิงซ้ำอัตโนมัติอาจทำให้ข้อมูลซ้ำ (เช่น สร้างใบขาย/ส่งอีเมลซ้ำ) — ปล่อยให้ผู้ใช้กดซ้ำเองแทน
+const API_POST_RETRYABLE_ACTIONS = new Set([
+  'adminGetOnlineUsers', 'adminGetActivityLog', 'adminGetUsers', 'adminGetSettings',
+  'getSettingsBundle', 'adminGetAuctionCandidates', 'adminGetAuctionBidDocuments',
+  'adminGetAuctionWinners', 'adminGetAuctionWinnersPublicSettings', 'heartbeat'
+]);
 function apiPost(payload){
-  return fetch(GAS_URL, {
+  const attempts = API_POST_RETRYABLE_ACTIONS.has(payload.action) ? 2 : 0;
+  return fetchJsonWithRetry_(()=> fetch(GAS_URL, {
     method:'POST',
     body: JSON.stringify(payload) // text/plain by default -> avoids CORS preflight on GAS
-  }).then(r => r.json())
-    .catch(err => ({ ok:false, error:'เชื่อมต่อ GAS ไม่สำเร็จ: '+err }));
+  }), attempts).catch(err => ({ ok:false, error:'เชื่อมต่อ GAS ไม่สำเร็จ: '+err }));
 }
 
 function toast(msg, type){
