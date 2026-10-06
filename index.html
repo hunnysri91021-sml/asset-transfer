@@ -1513,49 +1513,69 @@ function renderAuction(root){
     }
     return `<div style="background:#eaf3ff;color:#1a3c6e;border:1px solid #b8d4f5;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:14px;">🔄 ขณะนี้เปิดรับประมูล รอบที่ ${info.currentRound} แล้ว${esc(when)}</div>`;
   }
+  function renderIntroContent(bracketsData, contentData, closedData, roundData, buttonsData){
+    priceBrackets = (bracketsData.brackets||[]).slice().sort((a,b)=>a.min-b.min);
+    const content = contentData || {};
+    const closedNotice = closedData || null;
+    const roundInfo = roundData || null;
+    // ผู้ที่ล็อกอินอยู่ (พนักงาน/Admin) เห็นปุ่มครบเสมอไม่ว่าตั้งค่าไว้อย่างไร — สวิตช์นี้คุมเฉพาะผู้เข้าชมสาธารณะที่ไม่ได้ล็อกอิน
+    const btns = (checkAuth() || !buttonsData) ? { showListing:true, showLive:true } : buttonsData;
+    const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
+      priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
+      `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
+    root.innerHTML = `
+      <div class="card">
+        ${closedNoticeBannerHtml(closedNotice)}
+        ${auctionRoundBannerHtml(roundInfo)}
+        <h2>${esc(content.title||'สรุปขั้นตอนการประมูลสินค้า')}</h2>
+        <h3>📦 รายการสินค้า</h3>
+        <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
+          <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>${esc(content.writeoffNote||'')}</td></tr>
+          <tr><td><span class="badge badge-pending">รอขาย (ประมูล)</span></td><td>${esc(content.saleNote||'')}</td></tr>
+        </table>
+        <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
+        ${bracketsHtml}
+        <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
+        <div style="white-space:pre-wrap;line-height:1.7;font-size:14px;">${esc(content.note||'')}</div>
+        <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
+          ${btns.showListing ? `<button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>` : ''}
+          ${btns.showLive ? `<button class="btn btn-secondary" id="btnAuctionGoLive">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>` : ''}
+          ${(!btns.showListing && !btns.showLive) ? `<span style="color:var(--muted);font-size:13px;">ยังไม่เปิดให้เข้าดูรายการสินค้า/Live ประมูลในขณะนี้</span>` : ''}
+        </div>
+      </div>
+    `;
+    const viewBtn = document.getElementById('btnAuctionViewProducts');
+    if(viewBtn) viewBtn.onclick = showListing;
+    const liveBtn = document.getElementById('btnAuctionGoLive');
+    if(liveBtn) liveBtn.onclick = goToAuctionLive;
+  }
+
+  // โหลดทุกอย่างที่หน้าแรกต้องใช้ผ่าน request รวมเดียว (getAuctionIntroBundle) แทนการยิง 5 request พร้อมกัน —
+  // เร็วขึ้นเพราะ Apps Script มี overhead คงที่ต่อการเรียกแต่ละครั้งไม่ว่าจะขนานกันหรือไม่ — ถ้ารวมไม่สำเร็จ
+  // (เช่น deploy เวอร์ชันเก่าที่ยังไม่มี action นี้) fallback ไปยิงแยกแบบเดิมได้ กันหน้าใช้งานไม่ได้เลย
   function showIntro(){
     root.innerHTML = `<div class="card"><div class="empty">กำลังโหลด...</div></div>`;
-    Promise.all([
-      apiGet({ action:'getAuctionPriceBrackets' }),
-      apiGet({ action:'getAuctionIntroContent' }),
-      apiGet({ action:'getAuctionClosedNotice' }),
-      apiGet({ action:'getAuctionRoundInfo' }),
-      apiGet({ action:'getAuctionIntroButtonsSettings' })
-    ]).then(([bracketsRes, contentRes, closedRes, roundRes, buttonsRes])=>{
-      priceBrackets = (bracketsRes.ok ? (bracketsRes.data.brackets||[]) : []).slice().sort((a,b)=>a.min-b.min);
-      const content = contentRes.ok ? contentRes.data : {};
-      const closedNotice = closedRes.ok ? closedRes.data : null;
-      const roundInfo = roundRes.ok ? roundRes.data : null;
-      // ผู้ที่ล็อกอินอยู่ (พนักงาน/Admin) เห็นปุ่มครบเสมอไม่ว่าตั้งค่าไว้อย่างไร — สวิตช์นี้คุมเฉพาะผู้เข้าชมสาธารณะที่ไม่ได้ล็อกอิน
-      const btns = (checkAuth() || !buttonsRes.ok) ? { showListing:true, showLive:true } : buttonsRes.data;
-      const bracketsHtml = priceBrackets.length ? `<div style="overflow-x:auto;"><table><tr><th>Rank</th><th>มูลค่าคงเหลือตามบัญชี</th><th>ราคาเริ่มต้นประมูล</th></tr>` +
-        priceBrackets.map((b,i)=>`<tr><td>${i+1}</td><td>${esc(b.label)}</td><td>${b.defaultPrice!=null?fmtMoney(b.defaultPrice)+' บาท':'-'}</td></tr>`).join('') +
-        `</table></div>` : '<div class="empty">ยังไม่ได้กำหนดช่วงราคา</div>';
-      root.innerHTML = `
-        <div class="card">
-          ${closedNoticeBannerHtml(closedNotice)}
-          ${auctionRoundBannerHtml(roundInfo)}
-          <h2>${esc(content.title||'สรุปขั้นตอนการประมูลสินค้า')}</h2>
-          <h3>📦 รายการสินค้า</h3>
-          <table><tr><th>ประเภท</th><th>รายละเอียด</th></tr>
-            <tr><td><span class="badge badge-pending">รอตัดชำรุด</span></td><td>${esc(content.writeoffNote||'')}</td></tr>
-            <tr><td><span class="badge badge-pending">รอขาย (ประมูล)</span></td><td>${esc(content.saleNote||'')}</td></tr>
-          </table>
-          <h3 style="margin-top:20px;">💰 เกณฑ์ราคาเริ่มต้นประมูล (ตาม Rank มูลค่าคงเหลือทางบัญชี)</h3>
-          ${bracketsHtml}
-          <h3 style="margin-top:20px;">📋 วิธีการเข้าร่วมประมูล และไทม์ไลน์</h3>
-          <div style="white-space:pre-wrap;line-height:1.7;font-size:14px;">${esc(content.note||'')}</div>
-          <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
-            ${btns.showListing ? `<button class="btn btn-primary" id="btnAuctionViewProducts">เข้าดูรายการสินค้า →</button>` : ''}
-            ${btns.showLive ? `<button class="btn btn-secondary" id="btnAuctionGoLive">🔴 Live ประมูล (ราคาสูงสุดล่าสุด)</button>` : ''}
-            ${(!btns.showListing && !btns.showLive) ? `<span style="color:var(--muted);font-size:13px;">ยังไม่เปิดให้เข้าดูรายการสินค้า/Live ประมูลในขณะนี้</span>` : ''}
-          </div>
-        </div>
-      `;
-      const viewBtn = document.getElementById('btnAuctionViewProducts');
-      if(viewBtn) viewBtn.onclick = showListing;
-      const liveBtn = document.getElementById('btnAuctionGoLive');
-      if(liveBtn) liveBtn.onclick = goToAuctionLive;
+    apiGet({ action:'getAuctionIntroBundle' }).then(bundleRes=>{
+      if(bundleRes.ok){
+        const d = bundleRes.data;
+        renderIntroContent(d.auctionPriceBrackets, d.auctionIntroContent, d.auctionClosedNotice, d.auctionRoundInfo, d.auctionIntroButtonsSettings);
+        return;
+      }
+      Promise.all([
+        apiGet({ action:'getAuctionPriceBrackets' }),
+        apiGet({ action:'getAuctionIntroContent' }),
+        apiGet({ action:'getAuctionClosedNotice' }),
+        apiGet({ action:'getAuctionRoundInfo' }),
+        apiGet({ action:'getAuctionIntroButtonsSettings' })
+      ]).then(([bracketsRes, contentRes, closedRes, roundRes, buttonsRes])=>{
+        renderIntroContent(
+          bracketsRes.ok ? bracketsRes.data : { brackets: [] },
+          contentRes.ok ? contentRes.data : {},
+          closedRes.ok ? closedRes.data : null,
+          roundRes.ok ? roundRes.data : null,
+          buttonsRes.ok ? buttonsRes.data : null
+        );
+      });
     });
   }
 
@@ -4901,17 +4921,37 @@ function renderSettings(root){
     </div>
   `;
 
-  loadDeptCodes().then(loadUsers);
-  loadSourceLink();
-  loadNavVisibility();
-  loadOnlineUsers();
-  loadAuctionBrackets();
-  loadAuctionIntroNote();
-  loadAuctionClosedNotice();
-  loadAuctionBidListPublic();
-  loadAuctionWinnersPublic();
-  loadAuctionWinnersPublicSettings();
-  loadAuctionIntroButtonsSettings();
+  // โหลดทุกอย่างที่หน้านี้ต้องใช้ผ่าน request รวมเดียว (getSettingsBundle) แทนการยิงแยกกัน ~13 request
+  // เร็วขึ้นมากเพราะแต่ละ request ไป Apps Script มี overhead คงที่ของตัวเอง — ถ้ารวมไม่สำเร็จ (เช่น เครือข่าย
+  // มีปัญหา) ยัง fallback ไปโหลดแยกทีละจุดเหมือนเดิมได้ กันหน้าใช้งานไม่ได้เลย
+  apiPost({ action:'getSettingsBundle', password: STATE.adminPassword }).then(bundleRes=>{
+    if(bundleRes.ok){
+      const d = bundleRes.data;
+      loadDeptCodes(d.deptCodes).then(()=> loadUsers(d.users));
+      loadSourceLink(d.settings);
+      loadNavVisibility(d.navVisibility);
+      loadOnlineUsers(d.onlineUsers);
+      loadAuctionBrackets(d.auctionPriceBrackets);
+      loadAuctionIntroNote(d.auctionIntroContent);
+      loadAuctionClosedNotice(d.auctionClosedNotice);
+      loadAuctionBidListPublic(d.auctionBidListPublicEnabled);
+      loadAuctionWinnersPublic(d.auctionWinnersPublicEnabled);
+      loadAuctionWinnersPublicSettings(d.auctionRoundInfo, d.auctionWinnersPublicSettings);
+      loadAuctionIntroButtonsSettings(d.auctionIntroButtonsSettings);
+    } else {
+      loadDeptCodes().then(loadUsers);
+      loadSourceLink();
+      loadNavVisibility();
+      loadOnlineUsers();
+      loadAuctionBrackets();
+      loadAuctionIntroNote();
+      loadAuctionClosedNotice();
+      loadAuctionBidListPublic();
+      loadAuctionWinnersPublic();
+      loadAuctionWinnersPublicSettings();
+      loadAuctionIntroButtonsSettings();
+    }
+  });
 
   document.getElementById('btnDeptAddNew').onclick = addBlankDeptRow;
   document.getElementById('btnSaveSourceLink').onclick = saveSourceLink;
@@ -4930,16 +4970,20 @@ function renderSettings(root){
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
-  document.getElementById('btnRefreshOnlineUsers').onclick = loadOnlineUsers;
+  document.getElementById('btnRefreshOnlineUsers').onclick = ()=> loadOnlineUsers();
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
 
-  function loadOnlineUsers(){
+  function loadOnlineUsers(preData){
     const host = document.getElementById('onlineUsersHost');
-    apiPost({ action:'adminGetOnlineUsers', password: STATE.adminPassword }).then(res=>{
-      if(!res.ok){ host.innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
-      const online = res.data.online || [];
+    const apply = (data)=>{
+      const online = data.online || [];
       if(!online.length){ host.innerHTML = '<span style="color:var(--muted);">ไม่มีผู้ใช้งานออนไลน์ในขณะนี้</span>'; return; }
       host.innerHTML = online.map(u=>`<span class="badge badge-approved" style="margin:2px 4px 2px 0;">🟢 ${esc(u)}</span>`).join('');
+    };
+    if(preData){ apply(preData); return; }
+    apiPost({ action:'adminGetOnlineUsers', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ host.innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      apply(res.data);
     });
   }
 
@@ -4963,7 +5007,8 @@ function renderSettings(root){
     });
   }
 
-  function loadDeptCodes(){
+  function loadDeptCodes(preData){
+    if(preData){ STATE.deptCodes = preData; renderDeptTable(); return Promise.resolve(); }
     return apiGet({action:'getDeptCodes'}).then(res=>{
       if(!res.ok){ document.getElementById('deptTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
       STATE.deptCodes = res.data;
@@ -5036,14 +5081,20 @@ function renderSettings(root){
     });
   };
 
-  function loadSourceLink(){
-    apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
-      if(!res.ok) return;
-      document.getElementById('sourceSheetUrl').value = res.data.sourceSheetUrl || '';
-      document.getElementById('accountingEmail').value = res.data.accountingEmail || '';
-      document.getElementById('gaEmail').value = res.data.gaEmail || '';
-      document.getElementById('auctionPublicEnabled').checked = !!res.data.auctionPublicEnabled;
-    });
+  function loadSourceLink(preData){
+    const apply = (data)=>{
+      document.getElementById('sourceSheetUrl').value = data.sourceSheetUrl || '';
+      document.getElementById('accountingEmail').value = data.accountingEmail || '';
+      document.getElementById('gaEmail').value = data.gaEmail || '';
+      document.getElementById('auctionPublicEnabled').checked = !!data.auctionPublicEnabled;
+    };
+    if(preData){ apply(preData); }
+    else {
+      apiPost({ action:'adminGetSettings', password: STATE.adminPassword }).then(res=>{
+        if(!res.ok) return;
+        apply(res.data);
+      });
+    }
     document.getElementById('auctionPublicLink').textContent = location.origin + location.pathname + '?view=auction';
   }
 
@@ -5058,11 +5109,15 @@ function renderSettings(root){
     });
   }
 
-  function loadNavVisibility(){
+  function loadNavVisibility(preData){
+    const apply = (data)=>{
+      document.getElementById('navShowAuction').checked = data.showAuction !== false;
+      document.getElementById('navShowAuctionLive').checked = data.showAuctionLive !== false;
+    };
+    if(preData){ apply(preData); return; }
     apiGet({ action:'getNavVisibilitySettings' }).then(res=>{
       if(!res.ok) return;
-      document.getElementById('navShowAuction').checked = res.data.showAuction !== false;
-      document.getElementById('navShowAuctionLive').checked = res.data.showAuctionLive !== false;
+      apply(res.data);
     });
   }
 
@@ -5082,11 +5137,15 @@ function renderSettings(root){
 
   let auctionBracketsDraft = [];
 
-  function loadAuctionBrackets(){
+  function loadAuctionBrackets(preData){
+    const apply = (data)=>{
+      auctionBracketsDraft = (data.brackets||[]).map(b=>Object.assign({}, b));
+      renderAuctionBracketsTable();
+    };
+    if(preData){ apply(preData); return; }
     apiGet({ action:'getAuctionPriceBrackets' }).then(res=>{
       if(!res.ok) return;
-      auctionBracketsDraft = (res.data.brackets||[]).map(b=>Object.assign({}, b));
-      renderAuctionBracketsTable();
+      apply(res.data);
     });
   }
 
@@ -5139,13 +5198,17 @@ function renderSettings(root){
     });
   }
 
-  function loadAuctionIntroNote(){
+  function loadAuctionIntroNote(preData){
+    const apply = (data)=>{
+      document.getElementById('auctionIntroTitle').value = data.title || '';
+      document.getElementById('auctionSaleNote').value = data.saleNote || '';
+      document.getElementById('auctionWriteoffNote').value = data.writeoffNote || '';
+      document.getElementById('auctionIntroNote').value = data.note || '';
+    };
+    if(preData){ apply(preData); return; }
     apiGet({ action:'getAuctionIntroContent' }).then(res=>{
       if(!res.ok) return;
-      document.getElementById('auctionIntroTitle').value = res.data.title || '';
-      document.getElementById('auctionSaleNote').value = res.data.saleNote || '';
-      document.getElementById('auctionWriteoffNote').value = res.data.writeoffNote || '';
-      document.getElementById('auctionIntroNote').value = res.data.note || '';
+      apply(res.data);
     });
   }
 
@@ -5163,13 +5226,17 @@ function renderSettings(root){
     });
   }
 
-  function loadAuctionClosedNotice(){
+  function loadAuctionClosedNotice(preData){
+    const apply = (data)=>{
+      document.getElementById('auctionClosedEnabled').checked = !!data.enabled;
+      document.getElementById('auctionClosedMessage').value = data.message || '';
+      document.getElementById('auctionClosedDate').value = data.date || '';
+      document.getElementById('auctionClosedTime').value = data.time || '';
+    };
+    if(preData){ apply(preData); return; }
     apiGet({ action:'getAuctionClosedNotice' }).then(res=>{
       if(!res.ok) return;
-      document.getElementById('auctionClosedEnabled').checked = !!res.data.enabled;
-      document.getElementById('auctionClosedMessage').value = res.data.message || '';
-      document.getElementById('auctionClosedDate').value = res.data.date || '';
-      document.getElementById('auctionClosedTime').value = res.data.time || '';
+      apply(res.data);
     });
   }
 
@@ -5187,7 +5254,8 @@ function renderSettings(root){
     });
   }
 
-  function loadAuctionBidListPublic(){
+  function loadAuctionBidListPublic(preData){
+    if(preData){ document.getElementById('auctionBidListPublicEnabled').checked = !!preData.enabled; return; }
     apiGet({ action:'getAuctionBidListPublicEnabled' }).then(res=>{
       if(!res.ok) return;
       document.getElementById('auctionBidListPublicEnabled').checked = !!res.data.enabled;
@@ -5205,26 +5273,31 @@ function renderSettings(root){
     });
   }
 
-  function loadAuctionWinnersPublic(){
+  function loadAuctionWinnersPublic(preData){
+    if(preData){ document.getElementById('auctionWinnersPublicEnabled').checked = !!preData.enabled; return; }
     apiGet({ action:'getAuctionWinnersPublicEnabled' }).then(res=>{
       if(!res.ok) return;
       document.getElementById('auctionWinnersPublicEnabled').checked = !!res.data.enabled;
     });
   }
 
-  function loadAuctionWinnersPublicSettings(){
-    Promise.all([
-      apiGet({ action:'getAuctionRoundInfo' }),
-      apiPost({ action:'adminGetAuctionWinnersPublicSettings', password: STATE.adminPassword })
-    ]).then(([roundRes, settingsRes])=>{
-      const currentRound = (roundRes.ok && roundRes.data && roundRes.data.currentRound) || 1;
+  function loadAuctionWinnersPublicSettings(preRound, preSettings){
+    const apply = (roundData, settingsData)=>{
+      const currentRound = (roundData && roundData.currentRound) || 1;
       const sel = document.getElementById('auctionPublicRoundSelect');
       let opts = '<option value="">ตามรอบปัจจุบันเสมอ (ไม่ปักหมุด)</option>';
       for(let r = currentRound; r >= 1; r--){ opts += `<option value="${r}">รอบที่ ${r}${r===currentRound?' (รอบปัจจุบัน)':''}</option>`; }
       sel.innerHTML = opts;
-      if(!settingsRes.ok) return;
-      sel.value = settingsRes.data.publicRound ? String(settingsRes.data.publicRound) : '';
-      document.getElementById('auctionPublicShowPrices').checked = settingsRes.data.showPrices !== false;
+      if(!settingsData) return;
+      sel.value = settingsData.publicRound ? String(settingsData.publicRound) : '';
+      document.getElementById('auctionPublicShowPrices').checked = settingsData.showPrices !== false;
+    };
+    if(preRound && preSettings){ apply(preRound, preSettings); return; }
+    Promise.all([
+      apiGet({ action:'getAuctionRoundInfo' }),
+      apiPost({ action:'adminGetAuctionWinnersPublicSettings', password: STATE.adminPassword })
+    ]).then(([roundRes, settingsRes])=>{
+      apply(roundRes.ok ? roundRes.data : null, settingsRes.ok ? settingsRes.data : null);
     });
   }
 
@@ -5240,12 +5313,16 @@ function renderSettings(root){
     });
   }
 
-  function loadAuctionIntroButtonsSettings(){
+  function loadAuctionIntroButtonsSettings(preData){
+    const apply = (data)=>{
+      document.getElementById('introShowListing').checked = data.showListing !== false;
+      document.getElementById('introShowLive').checked = data.showLive !== false;
+      document.getElementById('liveShowRefPrice').checked = data.showLiveRefPrice !== false;
+    };
+    if(preData){ apply(preData); return; }
     apiGet({ action:'getAuctionIntroButtonsSettings' }).then(res=>{
       if(!res.ok) return;
-      document.getElementById('introShowListing').checked = res.data.showListing !== false;
-      document.getElementById('introShowLive').checked = res.data.showLive !== false;
-      document.getElementById('liveShowRefPrice').checked = res.data.showLiveRefPrice !== false;
+      apply(res.data);
     });
   }
 
@@ -5314,7 +5391,8 @@ function renderSettings(root){
 
   let userList = [];
 
-  function loadUsers(){
+  function loadUsers(preData){
+    if(preData){ userList = preData; renderUsersTable(); return; }
     apiPost({ action:'adminGetUsers', password: STATE.adminPassword }).then(res=>{
       if(!res.ok){ document.getElementById('userTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+res.error; return; }
       userList = res.data;
