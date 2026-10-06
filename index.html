@@ -3321,6 +3321,12 @@ function renderCreate(root){
       </div>
       <div class="row">
         <div>
+          <label>อีเมลผู้รับโอน (ถ้ามี — ใช้แจ้งเมื่อใบโอนย้ายอนุมัติแล้ว)</label>
+          <input type="email" id="cToSignEmail" placeholder="recipient@company.com" value="${esc(h.toSignEmail||'')}">
+        </div>
+      </div>
+      <div class="row">
+        <div>
           <label>ชื่อผู้ขอ (ผู้บันทึกรายการ)</label>
           <input type="text" id="cCreatedBy" value="${esc(h.createdBy||STATE.username||'')}">
         </div>
@@ -3374,6 +3380,7 @@ function renderCreate(root){
     const toDept = document.getElementById('cToDept').value;
     const fromSign = document.getElementById('cFromSign').value;
     const toSign = document.getElementById('cToSign').value;
+    const toSignEmail = document.getElementById('cToSignEmail').value.trim();
 
     // sync per-item dept/signer with header selections in case changed after adding
     STATE.draftItems.forEach(it=>{
@@ -3387,7 +3394,7 @@ function renderCreate(root){
       subject: document.getElementById('cSubject').value,
       subjectOther: document.getElementById('cSubjectOther').value,
       purpose: document.getElementById('cPurpose').value,
-      fromDept, toDept, fromSign, toSign,
+      fromDept, toDept, fromSign, toSign, toSignEmail,
       createdBy: document.getElementById('cCreatedBy').value,
       createdByEmail: document.getElementById('cCreatedByEmail').value,
       approverName: document.getElementById('cApproverName').value,
@@ -3565,6 +3572,7 @@ function doSubmitTransfer(){
     fromDept: h.fromDept, toDept: h.toDept,
     createdBy: h.createdBy, createdByEmail: h.createdByEmail,
     approverName: h.approverName, approverEmail: h.approverEmail,
+    toSignEmail: h.toSignEmail,
     items: STATE.draftItems
   };
   const btn = document.getElementById('btnPreviewConfirm');

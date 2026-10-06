@@ -53,7 +53,7 @@ const HEADERS = {
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
-  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
+  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
@@ -3200,28 +3200,34 @@ function createTransfer_(body) {
   const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
   // ล็อกช่วงออกเลขที่เอกสาร + บันทึกแถวหลัก กันเลขที่ซ้ำเมื่อมีคนสร้างเอกสารพร้อมกันหลายคน
+  // เขียนตามตำแหน่งคอลัมน์จริงในชีต (headers/idx) แทนการอิง array literal ตามลำดับคงที่ใน
+  // HEADERS.TRANSFERS เพื่อไม่ให้ค่าคลาดเคลื่อนคอลัมน์ถ้าชีตจริงมีลำดับต่างจากค่าคงที่ (เช่น
+  // เพิ่งเพิ่มคอลัมน์ ToSignEmail แล้วชีตที่ deploy อยู่ยังไม่ได้รัน setup() ใหม่)
   const runningNo = withLock_(() => {
     const rn = getNextRunningNo_(fromDeptCode, SHEETS.TRANSFERS, dept && dept.StartSeqTransfer);
     const tSheet = getSS_().getSheetByName(SHEETS.TRANSFERS);
-    tSheet.appendRow([
-      transferId,
-      rn,
-      now,
-      body.subject || 'โอนย้าย',
-      body.subjectOther || '',
-      body.purpose || '',
-      body.fromDept || '',
-      fromDeptCode,
-      body.toDept || '',
-      status,
-      body.approverName || '',
-      body.approverEmail || '',
-      token,
-      skipApproval ? now : '',
-      skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
-      body.createdBy || '',
-      body.createdByEmail || ''
-    ]);
+    const headers = tSheet.getRange(1, 1, 1, tSheet.getLastColumn()).getValues()[0];
+    const idx = indexMap_(headers);
+    const newRow = headers.map(() => '');
+    newRow[idx.TransferID] = transferId;
+    newRow[idx.RunningNo] = rn;
+    newRow[idx.CreatedAt] = now;
+    newRow[idx.Subject] = body.subject || 'โอนย้าย';
+    newRow[idx.SubjectOther] = body.subjectOther || '';
+    newRow[idx.Purpose] = body.purpose || '';
+    newRow[idx.FromDept] = body.fromDept || '';
+    newRow[idx.FromDeptCode] = fromDeptCode;
+    newRow[idx.ToDept] = body.toDept || '';
+    newRow[idx.Status] = status;
+    newRow[idx.ApproverName] = body.approverName || '';
+    newRow[idx.ApproverEmail] = body.approverEmail || '';
+    newRow[idx.ApprovalToken] = token;
+    newRow[idx.ApprovedAt] = skipApproval ? now : '';
+    newRow[idx.ApproverComment] = skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '';
+    newRow[idx.CreatedBy] = body.createdBy || '';
+    newRow[idx.CreatedByEmail] = body.createdByEmail || '';
+    if (idx.ToSignEmail !== undefined) newRow[idx.ToSignEmail] = body.toSignEmail || '';
+    tSheet.appendRow(newRow);
     return rn;
   });
 
@@ -3245,7 +3251,9 @@ function createTransfer_(body) {
   let emailResult = { ok: true };
   if (skipApproval) {
     applyTransferToAssets_(transferId);
-    exportDocToSharePointSafe_('transfer', getTransferFull_(transferId));
+    const fullDoc = getTransferFull_(transferId);
+    exportDocToSharePointSafe_('transfer', fullDoc);
+    sendRecipientNotification_(fullDoc, fullDoc.Items);
     logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo);
@@ -3331,7 +3339,9 @@ function decideTransfer_(body) {
 
   if (decision === STATUS.APPROVED) {
     applyTransferToAssets_(transferId);
-    exportDocToSharePointSafe_('transfer', getTransferFull_(transferId));
+    const fullDoc = getTransferFull_(transferId);
+    exportDocToSharePointSafe_('transfer', fullDoc);
+    sendRecipientNotification_(fullDoc, fullDoc.Items);
   }
 
   logActivity_(transferId, decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
@@ -3899,6 +3909,41 @@ function sendDecisionNotification_(transferObj, decision, comment) {
     });
   } catch (err) {
     Logger.log('sendDecisionNotification_ error: ' + err);
+  }
+}
+
+// แจ้ง "ผู้รับโอน" (ToSignEmail) ว่าใบโอนย้ายอนุมัติแล้ว — ส่งเฉพาะตอนอนุมัติเท่านั้น (ทั้งเส้นทางอนุมัติ
+// อัตโนมัติและอนุมัติผ่านอีเมล) ถ้าไม่ได้กรอกอีเมลผู้รับโอนไว้ตอนสร้างเอกสารก็แค่ข้ามเงียบๆ ไม่ error
+// (ฟิลด์นี้ไม่บังคับกรอก) เหมือน sendDecisionNotification_ คือ best-effort ไม่กระทบผลลัพธ์หลักของ
+// การอนุมัติแม้ส่งอีเมลไม่สำเร็จ
+function sendRecipientNotification_(transferObj, items) {
+  try {
+    if (!transferObj.ToSignEmail) return;
+    const itemsHtml = (items || []).map((it, i) => (
+      '<tr>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.AssetID) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(it.AssetName) + '</td>' +
+      '</tr>'
+    )).join('');
+    const html =
+      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
+      '<h2 style="color:#1a3c6e;">' + CONFIG.COMPANY_NAME + '</h2>' +
+      '<h3>ใบโอนย้ายทรัพย์สิน เลขที่ ' + transferObj.RunningNo + '</h3>' +
+      '<p style="font-size:15px;">ใบโอนย้ายทรัพย์สินที่ท่านเป็นผู้รับโอน ได้รับการอนุมัติเรียบร้อยแล้ว</p>' +
+      '<p><b>จาก:</b> ' + escapeHtml_(transferObj.FromDept) + ' &nbsp; <b>ไปยัง:</b> ' + escapeHtml_(transferObj.ToDept) + '</p>' +
+      '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
+      '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th></tr>' +
+      itemsHtml +
+      '</table>' +
+      '</div>';
+    MailApp.sendEmail({
+      to: transferObj.ToSignEmail,
+      subject: '[โอนย้ายถึงท่าน] ใบโอนย้ายทรัพย์สิน ' + transferObj.RunningNo + ' — ' + CONFIG.COMPANY_NAME,
+      htmlBody: html
+    });
+  } catch (err) {
+    Logger.log('sendRecipientNotification_ error: ' + err);
   }
 }
 
