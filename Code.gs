@@ -206,6 +206,9 @@ function doGet(e) {
       case 'getAuctionRoundInfo':
         result = { ok: true, data: getAuctionRoundInfo_() };
         break;
+      case 'getAuctionIntroBundle':
+        result = getAuctionIntroBundle_();
+        break;
       case 'getDeptCodes':
         result = { ok: true, data: getDeptCodes_() };
         break;
@@ -331,6 +334,9 @@ function doPost(e) {
         break;
       case 'adminGetSettings':
         result = adminGetSettings_(body);
+        break;
+      case 'getSettingsBundle':
+        result = getSettingsBundle_(body);
         break;
       case 'adminSaveSourceSheetLink':
         result = adminSaveSourceSheetLink_(body);
@@ -1535,6 +1541,23 @@ function adminSaveAuctionIntroButtonsSettings_(body) {
   logActivity_('', 'ADMIN_SET_AUCTION_INTRO_BUTTONS', 'admin',
     'ตั้งค่าปุ่มหน้าแรกประมูลขาย: เข้าดูรายการสินค้า=' + (showListing ? 'แสดง' : 'ซ่อน') + ', Live ประมูล=' + (showLive ? 'แสดง' : 'ซ่อน') + ', ราคากลางใน Live=' + (showLiveRefPrice ? 'แสดง' : 'ซ่อน'));
   return { ok: true };
+}
+
+// รวมข้อมูลทั้งหมดที่หน้าแรกของ "ประมูลขาย" สาธารณะต้องใช้ตอนโหลดครั้งแรกไว้ใน request เดียว (เดิมยิงแยกกัน
+// 5 request พร้อมกันผ่าน Promise.all — เร็วกว่าเรียกทีละรอบ แต่ยังช้ากว่ารวมเป็น request เดียว เพราะ Apps Script
+// มี overhead คงที่ต่อการเรียกแต่ละครั้งไม่ว่าจะขนานกันหรือไม่) ไม่ต้องใช้รหัสผ่าน เพราะทุกส่วนเปิดอ่านได้แบบ
+// สาธารณะอยู่แล้วทีละตัว (ดูคอมเมนต์ของแต่ละฟังก์ชัน) — action เดิมของแต่ละตัวยังคงอยู่ตามปกติ
+function getAuctionIntroBundle_() {
+  return {
+    ok: true,
+    data: {
+      auctionPriceBrackets: { brackets: getAuctionPriceBrackets_() },
+      auctionIntroContent: getAuctionIntroContent_(),
+      auctionClosedNotice: getAuctionClosedNotice_(),
+      auctionRoundInfo: getAuctionRoundInfo_(),
+      auctionIntroButtonsSettings: getAuctionIntroButtonsSettings_()
+    }
+  };
 }
 
 // ประกาศ "ปิดประมูลแล้ว" ที่ Admin เปิด/ปิดเองได้ที่หน้าตั้งค่า แสดงเป็นข้อความเด่นบนหน้า "ประมูลขาย" สาธารณะ
@@ -2755,6 +2778,42 @@ function adminGetSettings_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const notifyEmails = getNotifyEmails_();
   return { ok: true, data: { sourceSheetUrl: getSourceSheetUrl_(), accountingEmail: notifyEmails.accounting, gaEmail: notifyEmails.ga, auctionPublicEnabled: getAuctionPublicEnabled_() } };
+}
+
+// รวมข้อมูลตั้งค่าทั้งหมดที่หน้า "ตั้งค่า" ต้องใช้ตอนโหลดครั้งแรกไว้ใน request เดียว — เดิมหน้านี้ยิง ~13
+// request แยกกัน (getDeptCodes, adminGetUsers, adminGetSettings, getNavVisibilitySettings, adminGetOnlineUsers,
+// getAuctionPriceBrackets, getAuctionIntroContent, getAuctionClosedNotice, getAuctionBidListPublicEnabled,
+// getAuctionWinnersPublicEnabled, getAuctionRoundInfo, adminGetAuctionWinnersPublicSettings,
+// getAuctionIntroButtonsSettings) ตอนโหลดหน้า ทำให้ช้าเพราะแต่ละ request มี overhead ของตัวเอง (เปิด/ตรวจสอบสิทธิ์)
+// ซึ่งกินเวลามากกว่าการคำนวณจริงฝั่ง backend เสียอีก — ฟังก์ชันนี้เรียกฟังก์ชันเดิมทุกตัวซ้ำ (ไม่เขียน logic ใหม่
+// กันพฤติกรรมคลาดเคลื่อน) แค่รวมผลลัพธ์ไว้ใน response เดียว action เดิมของแต่ละตัวยังคงอยู่ตามปกติ (ใช้ตอนโหลด
+// ซ้ำหลังบันทึกค่าแต่ละจุด ไม่ต้องโหลดทั้งหน้าใหม่)
+function getSettingsBundle_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+
+  const usersRes = getUsers_(body);
+  const settingsRes = adminGetSettings_(body);
+  const onlineRes = adminGetOnlineUsers_(body);
+  const winnersPublicSettingsRes = adminGetAuctionWinnersPublicSettings_(body);
+
+  return {
+    ok: true,
+    data: {
+      deptCodes: getDeptCodes_(),
+      users: usersRes.ok ? usersRes.data : [],
+      settings: settingsRes.ok ? settingsRes.data : {},
+      navVisibility: getNavVisibilitySettings_(),
+      onlineUsers: onlineRes.ok ? onlineRes.data : { online: [] },
+      auctionPriceBrackets: { brackets: getAuctionPriceBrackets_() },
+      auctionIntroContent: getAuctionIntroContent_(),
+      auctionClosedNotice: getAuctionClosedNotice_(),
+      auctionBidListPublicEnabled: { enabled: getAuctionBidListPublicEnabled_() },
+      auctionWinnersPublicEnabled: { enabled: getAuctionWinnersPublicEnabled_() },
+      auctionRoundInfo: getAuctionRoundInfo_(),
+      auctionWinnersPublicSettings: winnersPublicSettingsRes.ok ? winnersPublicSettingsRes.data : {},
+      auctionIntroButtonsSettings: getAuctionIntroButtonsSettings_()
+    }
+  };
 }
 
 function adminSaveSourceSheetLink_(body) {
