@@ -142,6 +142,7 @@ function ensureSheet_(ss, name, headers) {
 // ============================================================
 function doGet(e) {
   try {
+    resetUsersRowsCache_();
     const action = (e.parameter.action || '').trim();
     let result;
     switch (action) {
@@ -259,6 +260,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
+    resetUsersRowsCache_();
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
     let result;
@@ -941,13 +943,30 @@ function markDisposalMetaFromDocs_(meta, docSheetName, itemSheetName, docIdField
 // ============================================================
 // ADMIN — แก้ไขข้อมูลทรัพย์สินหลัก (ชีต Assets ที่ทีมบัญชี upload เข้ามา)
 // ============================================================
+// อ่านชีต Users ครั้งเดียวต่อ 1 คำขอ (request) แล้วเก็บไว้ในตัวแปรนี้ — เพราะ checkAdminPassword_/
+// isValidUserPassword_ ถูกเรียกบ่อยมาก (43+ จุดทั่วไฟล์) และบางจุด เช่น getSettingsBundle_ เรียกฟังก์ชันย่อยหลาย
+// ตัวในคำขอเดียว แต่ละตัวเช็ครหัสผ่านเอง ถ้าไม่แคชไว้จะอ่านทั้งชีต Users ซ้ำหลายรอบโดยไม่จำเป็นในคำขอเดียวกัน
+// ตัวแปรนี้ถูกล้างค่าทิ้งที่ต้น doGet/doPost ทุกครั้ง (ดู resetUsersRowsCache_) เพื่อไม่ให้ข้อมูลเก่าข้ามคำขอ
+// ค้างอยู่ แม้ Apps Script จะ reuse execution context เดิมของคอนเทนเนอร์ที่ "อุ่น" อยู่ก็ตาม — จึงไม่มีความเสี่ยง
+// เรื่องรหัสผ่าน/สิทธิ์เก่าค้าง ต่างจาก CacheService ที่มี TTL ข้ามคำขอจริง
+let _usersRowsCache_ = null;
+function resetUsersRowsCache_() {
+  _usersRowsCache_ = null;
+}
+function getUsersRowsCached_() {
+  if (!_usersRowsCache_) {
+    const sh = getSS_().getSheetByName(SHEETS.USERS);
+    const values = sh.getDataRange().getValues();
+    _usersRowsCache_ = { values: values, idx: indexMap_(values[0]) };
+  }
+  return _usersRowsCache_;
+}
+
 // รหัสผ่าน admin ต้องตรงกับผู้ใช้ที่มีสิทธิ์ admin ในชีต Users เท่านั้น (ไม่มีรหัสผ่านกลางสำรองอีกต่อไป)
 function checkAdminPassword_(pw) {
   const p = String(pw || '');
   if (!p) return false;
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Password]) === p && String(values[i][idx.Role]) === 'admin') return true;
   }
@@ -960,9 +979,7 @@ function checkAdminPassword_(pw) {
 function isValidUserPassword_(pw) {
   const p = String(pw || '');
   if (!p) return false;
-  const sh = getSS_().getSheetByName(SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
+  const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Password]) === p) return true;
   }
