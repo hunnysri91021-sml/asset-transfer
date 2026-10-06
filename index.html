@@ -2867,7 +2867,7 @@ function renderAuctionSelection(root){
     const rows = filteredCandidates();
     document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th><th class="no-print">คืนสถานะไปที่</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -2880,7 +2880,14 @@ function renderAuctionSelection(root){
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
         <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}"></td>
-        <td class="no-print"><button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button></td>
+        <td class="no-print" style="white-space:nowrap;">
+          <select class="aselRestoreDest" data-id="${esc(a.AssetID)}" style="width:auto;display:inline-block;margin-right:4px;">
+            <option value="active">ใช้งานปกติ</option>
+            <option value="writeoff">รายการชำรุด</option>
+            <option value="transfer">โอนย้าย</option>
+          </select>
+          <button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button>
+        </td>
       </tr>`;
     });
     html += '</table></div>';
@@ -2900,7 +2907,10 @@ function renderAuctionSelection(root){
       };
     });
     host.querySelectorAll('.aselRestoreBtn').forEach(btn=>{
-      btn.onclick = ()=> restoreAsset(btn.dataset.id, btn);
+      btn.onclick = ()=>{
+        const sel = host.querySelector(`.aselRestoreDest[data-id="${CSS.escape(btn.dataset.id)}"]`);
+        restoreAsset(btn.dataset.id, btn, sel ? sel.value : 'active');
+      };
     });
   }
 
@@ -2987,15 +2997,20 @@ function renderAuctionSelection(root){
     });
   }
 
-  // คืนสถานะทรัพย์สินกลับเป็น "ใช้งาน" (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว) — ใช้ action เดียวกับหน้ารายการทรัพย์สิน
-  // ทรัพย์สินจะหายไปจากทั้ง 3 ตารางในหน้านี้ทันที และไปแสดงเป็น "ใช้งาน" ตามประเภทของมันที่หน้ารายการทรัพย์สินแทน
-  function restoreAsset(assetId, btn){
-    if(!confirm('ยืนยันคืนสถานะใช้งานทรัพย์สิน '+assetId+' ? (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว กลับไปเป็นสถานะใช้งานปกติ)')) return;
+  // คืนสถานะทรัพย์สิน (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว) — เลือกปลายทางได้ทีละรายการ: 'active' กลับเป็นใช้งานปกติ
+  // เฉยๆ (เดิม), 'writeoff' ติดแท็ก "ชำรุด" ทันทีแล้วเข้าคิวรอตัดชำรุดใหม่ให้พนักงานกรอกใบตัดชำรุด, 'transfer' เข้าคิว
+  // รอโอนย้ายแทน (ยังติดแท็ก "ใช้งาน" เพราะโอนย้ายไม่มีแท็กของตัวเอง) — ใช้ action เดียวกับหน้ารายการทรัพย์สิน
+  // ทรัพย์สินจะหายไปจากทั้ง 3 ตารางในหน้านี้ทันที และไปแสดงตามปลายทางที่เลือกที่หน้ารายการทรัพย์สินแทน
+  const RESTORE_DEST_LABEL = { active: 'ใช้งานปกติ', writeoff: 'คิวรอตัดชำรุด', transfer: 'คิวรอโอนย้าย' };
+  function restoreAsset(assetId, btn, destination){
+    destination = destination || 'active';
+    const destLabel = RESTORE_DEST_LABEL[destination] || RESTORE_DEST_LABEL.active;
+    if(!confirm('ยืนยันคืนสถานะทรัพย์สิน '+assetId+' ? (ยกเลิกใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว แล้วไปที่ "'+destLabel+'")')) return;
     if(btn) btn.disabled = true;
-    apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId }).then(res=>{
+    apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId, destination }).then(res=>{
       if(btn) btn.disabled = false;
       if(!res.ok){ toast(res.error||'คืนสถานะไม่สำเร็จ','err'); return; }
-      toast('คืนสถานะใช้งานสำเร็จ','ok');
+      toast('คืนสถานะ '+assetId+' ไปที่ "'+destLabel+'" สำเร็จ'+(res.data&&res.data.queueError?' (แต่เพิ่มเข้าคิวไม่สำเร็จ: '+res.data.queueError+')':''), res.data&&res.data.queueError?'err':'ok');
       load();
     });
   }
