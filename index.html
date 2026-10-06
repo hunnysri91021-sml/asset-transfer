@@ -2809,7 +2809,7 @@ function renderAuctionSelection(root){
 
     <div class="card">
       <h2>รายการที่ส่งประมูลแล้ว</h2>
-      <p style="color:var(--muted);font-size:13px;">รายการที่กำลังแสดงอยู่ในหน้า "ประมูลขาย" สาธารณะ — กด "ถอนออกจากประมูล" ได้หากต้องการนำกลับไปคัดเลือกใหม่ ส่วนรายการที่ขายแล้ว กด "ยกเลิกขายแล้ว" เพื่อกลับไปเป็น "รอประมูล" ได้เช่นกัน</p>
+      <p style="color:var(--muted);font-size:13px;">รายการที่กำลังแสดงอยู่ในหน้า "ประมูลขาย" สาธารณะและยังรอผลอยู่ — กด "ถอนออกจากประมูล" ได้หากต้องการนำกลับไปคัดเลือกใหม่ (รายการที่ขายได้แล้วจะย้ายไปอยู่ในการ์ด "ประวัติทรัพย์สินที่ขายแล้ว" ด้านล่างแทน)</p>
       <div class="toolbar no-print">
         <input type="text" id="aselSentSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
       </div>
@@ -2819,7 +2819,7 @@ function renderAuctionSelection(root){
 
     <div class="card">
       <h2>ประวัติทรัพย์สินที่ขายแล้ว</h2>
-      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ขายอนุมัติแล้วทั้งหมด (ไม่ต้องคัดเลือกส่งประมูลอีก) — แสดงไว้เพื่อดูประวัติ</p>
+      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ขายแล้วทั้งหมด ทั้งขายตรงและขายผ่านการประมูล (ไม่ต้องคัดเลือกส่งประมูลอีก) — แสดงไว้เพื่อดูประวัติ รายการที่ขายผ่านประมูลกด "ยกเลิกขายแล้ว" เพื่อกลับไปเป็น "รอประมูล" ได้เช่นกัน</p>
       <div class="toolbar no-print">
         <input type="text" id="aselHistSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
       </div>
@@ -2934,10 +2934,13 @@ function renderAuctionSelection(root){
     });
   }
 
+  // เฉพาะรายการที่ "ยังรอผล" อยู่จริง (ส่งประมูลแล้วแต่ยังไม่มีคนประมูลได้) — รายการที่ขายได้แล้ว (AuctionSold)
+  // ย้ายไปแสดงที่การ์ด "ประวัติทรัพย์สินที่ขายแล้ว" ด้านล่างแทน กันไม่ให้รายการที่ปิดการขายไปแล้วจากรอบก่อนๆ
+  // ค้างปนอยู่กับรายการที่กำลังเปิดประมูลอยู่จริงในรอบปัจจุบัน
   function renderSentTable(){
     const host = document.getElementById('aselSentTableHost');
     const qq = (document.getElementById('aselSentSearch').value||'').trim().toLowerCase();
-    const rows = activeCandidates().filter(a => a.SendToAuction &&
+    const rows = activeCandidates().filter(a => a.SendToAuction && !a.AuctionSold &&
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselSentCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่ส่งประมูล</div>'; return; }
@@ -2953,12 +2956,8 @@ function renderAuctionSelection(root){
         <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
-        <td>${a.AuctionSold
-          ? `<span class="badge badge-approved">ขายแล้ว</span><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(a.AuctionBuyer||'')} · ${a.AuctionSoldPrice?fmtMoneyOrHidden(a.AuctionSoldPrice):''}</div>`
-          : `<span class="badge badge-pending">รอประมูล</span>`}</td>
-        <td class="no-print">${a.AuctionSold
-          ? `<button class="btn btn-secondary btn-sm aselUndoSoldBtn" data-id="${esc(a.AssetID)}">ยกเลิกขายแล้ว</button>`
-          : `<button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button>`}</td>
+        <td><span class="badge badge-pending">รอประมูล</span></td>
+        <td class="no-print"><button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button></td>
       </tr>`;
     });
     html += '</table></div>';
@@ -2967,19 +2966,18 @@ function renderAuctionSelection(root){
     host.querySelectorAll('.aselRetractBtn').forEach(btn=>{
       btn.onclick = ()=> saveSelection(btn.dataset.id, false);
     });
-    host.querySelectorAll('.aselUndoSoldBtn').forEach(btn=>{
-      btn.onclick = ()=> undoAuctionSold(btn.dataset.id, btn);
-    });
   }
 
+  // รวมทั้งรายการขายตรง (Sold, ไม่ใช่ช่องทางประมูล) และรายการที่ขายผ่านการประมูลสำเร็จแล้ว (AuctionSold) —
+  // ไม่ว่าจะปิดการขายไปตั้งแต่รอบไหนก็ยังอยู่ที่นี่ถาวร ไม่ย้อนกลับไปปนกับ "รายการที่ส่งประมูลแล้ว" อีก
   function renderHistoryTable(){
     const host = document.getElementById('aselHistTableHost');
     const qq = (document.getElementById('aselHistSearch').value||'').trim().toLowerCase();
-    const rows = candidates.filter(a => a.AssetStatus==='Sold' && a.SaleChannel!=='ประมูล' &&
+    const rows = candidates.filter(a => (a.AuctionSold || (a.AssetStatus==='Sold' && a.SaleChannel!=='ประมูล')) &&
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselHistCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>เคยส่งประมูล</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง/ผลการขาย</th><th>เคยส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -2989,12 +2987,19 @@ function renderAuctionSelection(root){
         <td>${a.DocCreatedAt ? fmtDate(a.DocCreatedAt) : '-'}</td>
         <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
-        <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
+        <td class="money">${a.AuctionSold
+          ? `<span class="badge badge-approved">ขายแล้ว (ประมูล)</span><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(a.AuctionBuyer||'')} · ${a.AuctionSoldPrice?fmtMoneyOrHidden(a.AuctionSoldPrice):''}</div>`
+          : (a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-')}</td>
         <td><span class="badge ${a.SendToAuction?'badge-approved':'badge-pending'}">${a.SendToAuction?'เคยส่ง':'ไม่เคยส่ง'}</span></td>
+        <td class="no-print">${a.AuctionSold ? `<button class="btn btn-secondary btn-sm aselUndoSoldBtn" data-id="${esc(a.AssetID)}">ยกเลิกขายแล้ว</button>` : '-'}</td>
       </tr>`;
     });
     html += '</table></div>';
     host.innerHTML = html;
+
+    host.querySelectorAll('.aselUndoSoldBtn').forEach(btn=>{
+      btn.onclick = ()=> undoAuctionSold(btn.dataset.id, btn);
+    });
   }
 
   // โหลดข้อมูลใหม่จาก server เสมอหลังบันทึกสำเร็จ (แทนการแก้ไข candidates ในเครื่องแล้วเรนเดอร์ซ้ำ)
