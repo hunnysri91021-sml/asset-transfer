@@ -3335,13 +3335,16 @@ function getApprovalView_(transferId, token) {
   return { ok: true, data: obj };
 }
 
+// token = ลิงก์ที่ส่งให้ผู้อนุมัติทางอีเมล (วิธีปกติ) — หรือ Admin ส่ง password แทนได้ (isAdminOverride)
+// เผื่อกรณีหาอีเมล/ลิงก์เดิมไม่เจอ หรืออยากให้ Admin ยกเลิกเอกสารที่ค้างรออนุมัติได้เองโดยตรงจากในระบบ
 function decideTransfer_(body) {
   const transferId = body.transferId;
   const token = body.token;
   const decision = body.decision; // 'Approved' | 'Rejected'
   const found = findTransferRow_(transferId);
   if (!found) return { ok: false, error: 'ไม่พบใบโอนย้ายนี้' };
-  if (String(found.obj.ApprovalToken) !== String(token)) {
+  const isAdminOverride = checkAdminPassword_(body.password);
+  if (!isAdminOverride && String(found.obj.ApprovalToken) !== String(token)) {
     return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
   }
   if (found.obj.Status !== STATUS.PENDING) {
@@ -3356,7 +3359,7 @@ function decideTransfer_(body) {
   const rowNum = found.rowNum;
   sh.getRange(rowNum, idx.Status + 1).setValue(decision);
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
-  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
   if (decision === STATUS.APPROVED) {
     applyTransferToAssets_(transferId);
@@ -3365,7 +3368,7 @@ function decideTransfer_(body) {
     sendRecipientNotification_(fullDoc, fullDoc.Items);
   }
 
-  logActivity_(transferId, decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
+  logActivity_(transferId, decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
   sendDecisionNotification_(found.obj, decision, body.comment || '');
 
@@ -3591,13 +3594,16 @@ function getSaleApprovalView_(saleId, token) {
   return { ok: true, data: obj };
 }
 
+// token = ลิงก์ที่ส่งให้ผู้อนุมัติทางอีเมล (วิธีปกติ) — หรือ Admin ส่ง password แทนได้ (isAdminOverride)
+// เผื่อกรณีหาอีเมล/ลิงก์เดิมไม่เจอ หรืออยากให้ Admin ยกเลิกเอกสารที่ค้างรออนุมัติได้เองโดยตรงจากในระบบ
 function decideSale_(body) {
   const saleId = body.saleId;
   const token = body.token;
   const decision = body.decision; // 'Approved' | 'Rejected'
   const found = findSaleRow_(saleId);
   if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
-  if (String(found.obj.ApprovalToken) !== String(token)) {
+  const isAdminOverride = checkAdminPassword_(body.password);
+  if (!isAdminOverride && String(found.obj.ApprovalToken) !== String(token)) {
     return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
   }
   if (found.obj.Status !== STATUS.PENDING) {
@@ -3612,7 +3618,7 @@ function decideSale_(body) {
   const rowNum = found.rowNum;
   sh.getRange(rowNum, idx.Status + 1).setValue(decision);
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
-  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
   if (decision === STATUS.APPROVED) {
     const soldAssetIds = getSaleItems_(saleId).map(it => it.AssetID).filter(Boolean);
@@ -3622,7 +3628,7 @@ function decideSale_(body) {
     exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
   }
 
-  logActivity_(saleId, 'SALE_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
+  logActivity_(saleId, 'SALE_' + decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
   sendSaleDecisionNotification_(found.obj, decision, body.comment || '');
 
@@ -3808,13 +3814,16 @@ function getWriteOffApprovalView_(writeOffId, token) {
   return { ok: true, data: obj };
 }
 
+// token = ลิงก์ที่ส่งให้ผู้อนุมัติทางอีเมล (วิธีปกติ) — หรือ Admin ส่ง password แทนได้ (isAdminOverride)
+// เผื่อกรณีหาอีเมล/ลิงก์เดิมไม่เจอ หรืออยากให้ Admin ยกเลิกเอกสารที่ค้างรออนุมัติได้เองโดยตรงจากในระบบ
 function decideWriteOff_(body) {
   const writeOffId = body.writeOffId;
   const token = body.token;
   const decision = body.decision; // 'Approved' | 'Rejected'
   const found = findWriteOffRow_(writeOffId);
   if (!found) return { ok: false, error: 'ไม่พบใบตัดชำรุดนี้' };
-  if (String(found.obj.ApprovalToken) !== String(token)) {
+  const isAdminOverride = checkAdminPassword_(body.password);
+  if (!isAdminOverride && String(found.obj.ApprovalToken) !== String(token)) {
     return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
   }
   if (found.obj.Status !== STATUS.PENDING) {
@@ -3829,7 +3838,7 @@ function decideWriteOff_(body) {
   const rowNum = found.rowNum;
   sh.getRange(rowNum, idx.Status + 1).setValue(decision);
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
-  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
   if (decision === STATUS.APPROVED) {
     const writtenOffAssetIds = getWriteOffItems_(writeOffId).map(it => it.AssetID).filter(Boolean);
@@ -3839,7 +3848,7 @@ function decideWriteOff_(body) {
     exportDocToSharePointSafe_('writeoff', getWriteOffFull_(writeOffId));
   }
 
-  logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), found.obj.ApproverName || found.obj.ApproverEmail, body.comment || '');
+  logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
   sendWriteOffDecisionNotification_(found.obj, decision, body.comment || '');
 
