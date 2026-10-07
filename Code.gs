@@ -3370,7 +3370,7 @@ function decideTransfer_(body) {
 
   logActivity_(transferId, decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendDecisionNotification_(found.obj, decision, body.comment || '');
+  sendDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
 
   return { ok: true, data: { transferId, status: decision } };
 }
@@ -3630,7 +3630,7 @@ function decideSale_(body) {
 
   logActivity_(saleId, 'SALE_' + decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendSaleDecisionNotification_(found.obj, decision, body.comment || '');
+  sendSaleDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
 
   return { ok: true, data: { saleId, status: decision } };
 }
@@ -3850,7 +3850,7 @@ function decideWriteOff_(body) {
 
   logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendWriteOffDecisionNotification_(found.obj, decision, body.comment || '');
+  sendWriteOffDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
 
   return { ok: true, data: { writeOffId, status: decision } };
 }
@@ -3924,17 +3924,18 @@ function sendApprovalEmail_(transferId, runningNo, body, items, token) {
   }
 }
 
-function sendDecisionNotification_(transferObj, decision, comment) {
+function sendDecisionNotification_(transferObj, decision, comment, isAdminOverride) {
   try {
     if (!transferObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
+    const byLabel = isAdminOverride ? 'Admin (ดำเนินการแทนผู้อนุมัติ)' : (transferObj.ApproverName || transferObj.ApproverEmail);
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
       '<h3>ใบโอนย้ายทรัพย์สิน เลขที่ ' + transferObj.RunningNo + '</h3>' +
       '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
       (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + escapeHtml_(transferObj.ApproverName || transferObj.ApproverEmail) + '</p>' +
+      '<p>โดย: ' + escapeHtml_(byLabel) + '</p>' +
       '</div>';
     MailApp.sendEmail({
       to: transferObj.CreatedByEmail,
@@ -4022,17 +4023,18 @@ function sendSaleApprovalEmail_(saleId, runningNo, body, items, token) {
   }
 }
 
-function sendSaleDecisionNotification_(saleObj, decision, comment) {
+function sendSaleDecisionNotification_(saleObj, decision, comment, isAdminOverride) {
   try {
     if (!saleObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? (saleObj.Channel === 'ประมูล' ? 'รอประมูล' : 'รอขาย (รอ Admin ยืนยันขายแล้ว)') : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
+    const byLabel = isAdminOverride ? 'Admin (ดำเนินการแทนผู้อนุมัติ)' : (saleObj.ApproverName || saleObj.ApproverEmail);
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
       '<h3>ใบขายออกทรัพย์สิน เลขที่ ' + saleObj.RunningNo + '</h3>' +
       '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
       (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + escapeHtml_(saleObj.ApproverName || saleObj.ApproverEmail) + '</p>' +
+      '<p>โดย: ' + escapeHtml_(byLabel) + '</p>' +
       '</div>';
     MailApp.sendEmail({
       to: saleObj.CreatedByEmail,
@@ -4084,17 +4086,18 @@ function sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token) {
   }
 }
 
-function sendWriteOffDecisionNotification_(writeOffObj, decision, comment) {
+function sendWriteOffDecisionNotification_(writeOffObj, decision, comment, isAdminOverride) {
   try {
     if (!writeOffObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
+    const byLabel = isAdminOverride ? 'Admin (ดำเนินการแทนผู้อนุมัติ)' : (writeOffObj.ApproverName || writeOffObj.ApproverEmail);
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
       '<h3>ใบตัดชำรุดทรัพย์สิน เลขที่ ' + writeOffObj.RunningNo + '</h3>' +
       '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
       (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + escapeHtml_(writeOffObj.ApproverName || writeOffObj.ApproverEmail) + '</p>' +
+      '<p>โดย: ' + escapeHtml_(byLabel) + '</p>' +
       '</div>';
     MailApp.sendEmail({
       to: writeOffObj.CreatedByEmail,
