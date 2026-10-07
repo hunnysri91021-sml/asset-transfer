@@ -3652,7 +3652,8 @@ function renderSaleList(root){
       <div class="toolbar no-print">
         <input type="text" id="saleQSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <span id="saleQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
-        <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueue">สร้างใบขายออกจากรายการที่เลือก</button>
+        <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueue">สร้างใบขายจากรายการที่เลือก</button>
+        <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueueAuction">สร้างใบประมูลจากรายการที่เลือก</button>
         <button class="btn btn-secondary btn-sm" id="btnSaleQueueRefresh">↻ รีเฟรช</button>
       </div>
       <div id="saleQueueTableHost"><div class="empty">กำลังโหลด...</div></div>
@@ -3686,7 +3687,8 @@ function renderSaleList(root){
   document.getElementById('fSaleFrom').onchange = renderSaleListTable;
   document.getElementById('fSaleTo').onchange = renderSaleListTable;
   document.getElementById('btnSaleExport').onclick = exportSaleList;
-  document.getElementById('btnCreateFromSaleQueue').onclick = createSaleFromQueue;
+  document.getElementById('btnCreateFromSaleQueue').onclick = ()=> createSaleFromQueue('ขาย');
+  document.getElementById('btnCreateFromSaleQueueAuction').onclick = ()=> createSaleFromQueue('ประมูล');
   document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
   document.getElementById('saleQSearch').oninput = renderSaleQueueTable;
   loadSales();
@@ -3819,14 +3821,14 @@ function renderSaleList(root){
     if(el) el.textContent = 'เลือกไว้ '+STATE.selectedSaleQueueAssetIds.length+' รายการ';
   }
 
-  function createSaleFromQueue(){
+  function createSaleFromQueue(channel){
     const selected = STATE.saleQueue.filter(q => STATE.selectedSaleQueueAssetIds.indexOf(q.AssetID)!==-1 && (q.AssetStatus||'Active')==='Active');
     if(!selected.length){ toast('กรุณาเลือกรายการจากคิวอย่างน้อย 1 รายการ','err'); return; }
     STATE.draftSaleItems = selected.map(q => ({
       assetId: q.AssetID, assetName: q.AssetName, images: q.DisplayImage ? [q.DisplayImage] : [],
       scrapPrice: q.ScrapPrice||'', auctionPrice:'', salePrice: q.MinSalePrice||'', remark:''
     }));
-    STATE.view = 'saleCreate';
+    STATE.view = channel === 'ประมูล' ? 'saleCreateAuction' : 'saleCreate';
     render();
   }
 
