@@ -188,7 +188,8 @@
       <button data-view="create" class="navItemTransfer">+ สร้างใบโอนย้าย</button>
       <div class="nav-group-label" id="navGroupSale">ขายออก</div>
       <button data-view="saleList" class="navItemSale">รายการขายออก</button>
-      <button data-view="saleCreate" class="navItemSale">+ บันทึกขายออก</button>
+      <button data-view="saleCreate" class="navItemSale">+ บันทึกขาย</button>
+      <button data-view="saleCreateAuction" class="navItemSale">+ บันทึกประมูล</button>
       <button data-view="auctionSoldAssets" class="navItemSale">ทรัพย์สินที่ขายแล้ว</button>
       <div class="nav-group-label" id="navGroupWriteOff">ตัดชำรุด</div>
       <button data-view="writeOffList" class="navItemWriteOff">รายการตัดชำรุด</button>
@@ -665,7 +666,8 @@ const VIEW_TITLES = {
   create: 'สร้างใบโอนย้าย',
   print: 'ใบโอนย้ายทรัพย์สิน',
   saleList: 'รายการขายออก',
-  saleCreate: 'บันทึกขายออก',
+  saleCreate: 'บันทึกขาย',
+  saleCreateAuction: 'บันทึกประมูล',
   salePrint: 'ใบขายออกทรัพย์สิน',
   auctionSoldAssets: 'ทรัพย์สินที่ขายแล้ว',
   writeOffList: 'รายการตัดชำรุด',
@@ -742,10 +744,10 @@ function render(){
   // ทำให้อีกเงื่อนไขหนึ่งถูกเขียนทับจนไม่มีผล ไม่ว่าจะรันก่อนหรือหลังก็ตาม)
   const CATEGORY_NAV = {
     Transfer: { groupId: 'navGroupTransfer', itemClass: 'navItemTransfer', views: ['list', 'create'] },
-    Sale: { groupId: 'navGroupSale', itemClass: 'navItemSale', views: ['saleList', 'saleCreate', 'auctionSoldAssets'] },
+    Sale: { groupId: 'navGroupSale', itemClass: 'navItemSale', views: ['saleList', 'saleCreate', 'saleCreateAuction', 'auctionSoldAssets'] },
     WriteOff: { groupId: 'navGroupWriteOff', itemClass: 'navItemWriteOff', views: ['writeOffList', 'writeOffCreate'] }
   };
-  const CREATE_BTN_CATEGORY = { create: 'Transfer', saleCreate: 'Sale', writeOffCreate: 'WriteOff' };
+  const CREATE_BTN_CATEGORY = { create: 'Transfer', saleCreate: 'Sale', saleCreateAuction: 'Sale', writeOffCreate: 'WriteOff' };
   const canRestrictCategories = STATE.role !== 'admin' && STATE.role !== 'executive';
   const categoryHidden = {};
   Object.keys(CATEGORY_NAV).forEach(cat=>{
@@ -756,7 +758,7 @@ function render(){
     const hidden = isViewOnly() || categoryHidden[CREATE_BTN_CATEGORY[v]];
     if(btn) btn.style.display = hidden ? 'none' : '';
   });
-  if(isViewOnly() && ['create','saleCreate','writeOffCreate'].indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
+  if(isViewOnly() && ['create','saleCreate','saleCreateAuction','writeOffCreate'].indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
   // กลุ่มเมนู + ปุ่มที่เหลือ (รายการ/ดูอย่างเดียว ไม่ใช่ปุ่มสร้าง) ซ่อนตามหมวดที่ถูกปิดเท่านั้น
   // (ผู้บริหารยังดูรายการได้เสมอ ไม่ถูกจำกัดด้วย isViewOnly — ปุ่มสร้างถูกจัดการแยกไปแล้วด้านบน ข้ามไปกันเซ็ตซ้ำผิดเงื่อนไข)
   Object.keys(CATEGORY_NAV).forEach(cat=>{
@@ -780,7 +782,8 @@ function render(){
   else if(STATE.view === 'list') renderList(root);
   else if(STATE.view === 'create') renderCreate(root);
   else if(STATE.view === 'saleList') renderSaleList(root);
-  else if(STATE.view === 'saleCreate') renderSaleCreate(root);
+  else if(STATE.view === 'saleCreate') renderSaleCreate(root, 'ขาย');
+  else if(STATE.view === 'saleCreateAuction') renderSaleCreate(root, 'ประมูล');
   else if(STATE.view === 'salePrint') renderSalePrint(root);
   else if(STATE.view === 'writeOffList') renderWriteOffList(root);
   else if(STATE.view === 'writeOffCreate') renderWriteOffCreate(root);
@@ -3917,19 +3920,22 @@ window.openSalePrint = function(id){
 };
 
 /* ================= SALE CREATE VIEW ================= */
-function renderSaleCreate(root){
-  STATE.draftSaleItems = STATE.draftSaleItems && STATE.view==='saleCreate' ? STATE.draftSaleItems : [];
+// forcedChannel: 'ขาย' หรือ 'ประมูล' — มาจากเมนู "+ บันทึกขาย"/"+ บันทึกประมูล" ที่แยกกันแล้ว (เดิมเป็น
+// หน้าเดียวมีปุ่มสลับช่องทาง) ช่องทางจึงถูกกำหนดตายตัวตามเมนูที่เข้ามา ไม่ใช่ตัวเลือกที่สลับได้ในหน้าอีกต่อไป
+function renderSaleCreate(root, forcedChannel){
+  STATE.draftSaleItems = STATE.draftSaleItems && (STATE.view==='saleCreate' || STATE.view==='saleCreateAuction') ? STATE.draftSaleItems : [];
   if(STATE.saleCreateStep === 'preview'){ renderSaleCreatePreview(root); return; }
   const h = STATE.saleHeader || {};
+  const channelLabel = forcedChannel==='ประมูล' ? 'ประมูล' : 'ขาย';
+  const channelNote = forcedChannel==='ประมูล'
+    ? 'เมื่ออนุมัติแล้วรายการนี้จะไปเป็นตัวเลือกในหน้า "คัดเลือกรายการประมูล" ให้ Admin ส่งขึ้นหน้าประมูลขายสาธารณะได้ (เหมือนทรัพย์สินตัดชำรุด)'
+    : 'ขายตรง ไม่เข้าสู่ระบบประมูล';
   root.innerHTML = `
     <div class="card">
-      <h2>บันทึกขายออกทรัพย์สิน</h2>
+      <h2>บันทึก${channelLabel==='ประมูล' ? 'ขายออก (ประมูล)' : 'ขายออก'}ทรัพย์สิน</h2>
       <label>ช่องทางจำหน่าย</label>
-      <div class="toolbar" style="margin-bottom:10px;">
-        <button type="button" class="btn btn-sm" id="sChannelSale" data-channel="ขาย">ขาย</button>
-        <button type="button" class="btn btn-sm" id="sChannelAuction" data-channel="ประมูล">ประมูล</button>
-      </div>
-      <p style="color:var(--muted);font-size:12px;margin:-6px 0 12px;">"ประมูล" = เมื่ออนุมัติแล้วรายการนี้จะไปเป็นตัวเลือกในหน้า "คัดเลือกรายการประมูล" ให้ Admin ส่งขึ้นหน้าประมูลขายสาธารณะได้ (เหมือนทรัพย์สินตัดชำรุด) — "ขาย" = ขายตรง ไม่เข้าสู่ระบบประมูล</p>
+      <p style="margin:0 0 10px;"><span class="badge badge-approved" style="font-size:13px;">${esc(channelLabel)}</span></p>
+      <p style="color:var(--muted);font-size:12px;margin:-6px 0 12px;">${esc(channelNote)}</p>
       <div class="row">
         <div>
           <label>หน่วยงานเจ้าของทรัพย์สิน</label>
@@ -3988,14 +3994,7 @@ function renderSaleCreate(root){
   loadAssetsForSearch();
   renderSaleItems();
 
-  let saleChannel = h.channel === 'ประมูล' ? 'ประมูล' : 'ขาย';
-  function renderChannelButtons(){
-    document.getElementById('sChannelSale').className = 'btn btn-sm ' + (saleChannel==='ขาย' ? 'btn-primary' : 'btn-secondary');
-    document.getElementById('sChannelAuction').className = 'btn btn-sm ' + (saleChannel==='ประมูล' ? 'btn-primary' : 'btn-secondary');
-  }
-  renderChannelButtons();
-  document.getElementById('sChannelSale').onclick = ()=>{ saleChannel='ขาย'; renderChannelButtons(); };
-  document.getElementById('sChannelAuction').onclick = ()=>{ saleChannel='ประมูล'; renderChannelButtons(); };
+  const saleChannel = forcedChannel === 'ประมูล' ? 'ประมูล' : 'ขาย';
 
   document.getElementById('btnSubmitSale').onclick = goToSalePreview;
 
