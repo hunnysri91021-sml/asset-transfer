@@ -734,29 +734,42 @@ function render(){
   if(navAuctionLiveBtn) navAuctionLiveBtn.style.display = hideAuctionLiveNav ? 'none' : '';
   if(STATE.view==='auction' && hideAuctionNav) STATE.view = 'dashboard';
   if(STATE.view==='auctionLive' && hideAuctionLiveNav) STATE.view = 'dashboard';
-  // Admin ปิดการใช้งาน "ทั้งหมวด" โอนย้าย/ขายออก/ตัดชำรุดเป็นรายคนได้ที่หน้าตั้งค่า > ผู้ใช้งาน
-  // (STATE.disabledCategories มาจาก login_) — ซ่อนทั้งกลุ่มเมนู + กันเข้าหน้าทาง URL ตรงๆ เหมือนกับ
-  // สวิตช์ auction นาวิเกชันด้านบน — admin/ผู้บริหารไม่ถูกจำกัดเลย (ดู checkCategoryEnabled_ ฝั่ง backend)
+  // ซ่อนปุ่ม "+ สร้าง..." (create/saleCreate/writeOffCreate) ถ้าเข้าเงื่อนไขใดเงื่อนไขหนึ่งต่อไปนี้:
+  // (1) ผู้บริหาร — ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ (isViewOnly())
+  // (2) Admin ปิดการใช้งาน "ทั้งหมวด" โอนย้าย/ขายออก/ตัดชำรุดไว้สำหรับ user คนนี้ที่หน้าตั้งค่า > ผู้ใช้งาน
+  //     (STATE.disabledCategories มาจาก login_ — admin/ผู้บริหารไม่ถูกจำกัดเลย ดู checkCategoryEnabled_ ฝั่ง backend)
+  // คำนวณรวมทั้ง 2 เงื่อนไขในที่เดียวกันคราวเดียว กันบั๊กที่เคยเกิด (2 บล็อกแยกกันเซ็ต display ทับกันเอง
+  // ทำให้อีกเงื่อนไขหนึ่งถูกเขียนทับจนไม่มีผล ไม่ว่าจะรันก่อนหรือหลังก็ตาม)
   const CATEGORY_NAV = {
     Transfer: { groupId: 'navGroupTransfer', itemClass: 'navItemTransfer', views: ['list', 'create'] },
     Sale: { groupId: 'navGroupSale', itemClass: 'navItemSale', views: ['saleList', 'saleCreate', 'auctionSoldAssets'] },
     WriteOff: { groupId: 'navGroupWriteOff', itemClass: 'navItemWriteOff', views: ['writeOffList', 'writeOffCreate'] }
   };
+  const CREATE_BTN_CATEGORY = { create: 'Transfer', saleCreate: 'Sale', writeOffCreate: 'WriteOff' };
   const canRestrictCategories = STATE.role !== 'admin' && STATE.role !== 'executive';
+  const categoryHidden = {};
   Object.keys(CATEGORY_NAV).forEach(cat=>{
-    const info = CATEGORY_NAV[cat];
-    const hidden = canRestrictCategories && (STATE.disabledCategories||[]).indexOf(cat) !== -1;
-    const groupEl = document.getElementById(info.groupId);
-    if(groupEl) groupEl.style.display = hidden ? 'none' : '';
-    document.querySelectorAll('.'+info.itemClass).forEach(b=> b.style.display = hidden ? 'none' : '');
-    if(hidden && info.views.indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
+    categoryHidden[cat] = canRestrictCategories && (STATE.disabledCategories||[]).indexOf(cat) !== -1;
   });
-  // ผู้บริหาร: ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ — ซ่อนปุ่มเมนู "+ สร้าง..." และกันไม่ให้เข้าหน้าสร้างเอกสารตรงๆ
-  ['create','saleCreate','writeOffCreate'].forEach(v=>{
+  Object.keys(CREATE_BTN_CATEGORY).forEach(v=>{
     const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
-    if(btn) btn.style.display = isViewOnly() ? 'none' : '';
+    const hidden = isViewOnly() || categoryHidden[CREATE_BTN_CATEGORY[v]];
+    if(btn) btn.style.display = hidden ? 'none' : '';
   });
   if(isViewOnly() && ['create','saleCreate','writeOffCreate'].indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
+  // กลุ่มเมนู + ปุ่มที่เหลือ (รายการ/ดูอย่างเดียว ไม่ใช่ปุ่มสร้าง) ซ่อนตามหมวดที่ถูกปิดเท่านั้น
+  // (ผู้บริหารยังดูรายการได้เสมอ ไม่ถูกจำกัดด้วย isViewOnly — ปุ่มสร้างถูกจัดการแยกไปแล้วด้านบน ข้ามไปกันเซ็ตซ้ำผิดเงื่อนไข)
+  Object.keys(CATEGORY_NAV).forEach(cat=>{
+    const info = CATEGORY_NAV[cat];
+    const hidden = categoryHidden[cat];
+    const groupEl = document.getElementById(info.groupId);
+    if(groupEl) groupEl.style.display = hidden ? 'none' : '';
+    document.querySelectorAll('.'+info.itemClass).forEach(b=>{
+      if(CREATE_BTN_CATEGORY[b.dataset.view]) return;
+      b.style.display = hidden ? 'none' : '';
+    });
+    if(hidden && info.views.indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
+  });
   [...document.querySelectorAll('#mainNav button')].forEach(b=>b.classList.toggle('active', b.dataset.view===STATE.view));
 
   if(STATE.view === 'assetList') renderAssetList(root);
