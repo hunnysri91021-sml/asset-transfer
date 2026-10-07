@@ -183,16 +183,16 @@
       <button data-view="auction" id="navAuction">ประมูลขาย</button>
       <button data-view="auctionLive" id="navAuctionLive">Live ประมูล</button>
       <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
-      <div class="nav-group-label">โอนย้าย</div>
-      <button data-view="list">รายการใบโอนย้าย</button>
-      <button data-view="create">+ สร้างใบโอนย้าย</button>
-      <div class="nav-group-label">ขายออก</div>
-      <button data-view="saleList">รายการขายออก</button>
-      <button data-view="saleCreate">+ บันทึกขายออก</button>
-      <button data-view="auctionSoldAssets">ทรัพย์สินที่ขายแล้ว</button>
-      <div class="nav-group-label">ตัดชำรุด</div>
-      <button data-view="writeOffList">รายการตัดชำรุด</button>
-      <button data-view="writeOffCreate">+ บันทึกตัดชำรุด</button>
+      <div class="nav-group-label" id="navGroupTransfer">โอนย้าย</div>
+      <button data-view="list" class="navItemTransfer">รายการใบโอนย้าย</button>
+      <button data-view="create" class="navItemTransfer">+ สร้างใบโอนย้าย</button>
+      <div class="nav-group-label" id="navGroupSale">ขายออก</div>
+      <button data-view="saleList" class="navItemSale">รายการขายออก</button>
+      <button data-view="saleCreate" class="navItemSale">+ บันทึกขายออก</button>
+      <button data-view="auctionSoldAssets" class="navItemSale">ทรัพย์สินที่ขายแล้ว</button>
+      <div class="nav-group-label" id="navGroupWriteOff">ตัดชำรุด</div>
+      <button data-view="writeOffList" class="navItemWriteOff">รายการตัดชำรุด</button>
+      <button data-view="writeOffCreate" class="navItemWriteOff">+ บันทึกตัดชำรุด</button>
       <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
       <button data-view="activityLog" id="navActivityLog">ประวัติการใช้งาน</button>
       <button data-view="settings">ตั้งค่า</button>
@@ -255,6 +255,7 @@ let STATE = {
   myDepartments: [],
   canViewPrices: false,
   canExportAuction: false,
+  disabledCategories: [],
   assetListTab: 'all',
   auctionLiveTab: 'live'
 };
@@ -508,6 +509,7 @@ function checkAuth(){
       STATE.myDepartments = obj.departments || [];
       STATE.canViewPrices = !!obj.canViewPrices;
       STATE.canExportAuction = !!obj.canExportAuction;
+      STATE.disabledCategories = obj.disabledCategories || [];
       return true;
     }
   }catch(e){}
@@ -551,7 +553,8 @@ function renderLogin(){
       STATE.myDepartments = res.data.departments || [];
       STATE.canViewPrices = !!res.data.canViewPrices;
       STATE.canExportAuction = !!res.data.canExportAuction;
-      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [], canViewPrices: !!res.data.canViewPrices, canExportAuction: !!res.data.canExportAuction }));
+      STATE.disabledCategories = res.data.disabledCategories || [];
+      sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: res.data.role, username: res.data.username, departments: res.data.departments || [], canViewPrices: !!res.data.canViewPrices, canExportAuction: !!res.data.canExportAuction, disabledCategories: res.data.disabledCategories || [] }));
       STATE.view = 'dashboard';
       enterApp();
     });
@@ -566,6 +569,7 @@ function logout(){
   STATE.username = null;
   STATE.myDepartments = [];
   STATE.canViewPrices = false;
+  STATE.disabledCategories = [];
   STATE.view = 'dashboard';
   enterApp();
 }
@@ -730,6 +734,23 @@ function render(){
   if(navAuctionLiveBtn) navAuctionLiveBtn.style.display = hideAuctionLiveNav ? 'none' : '';
   if(STATE.view==='auction' && hideAuctionNav) STATE.view = 'dashboard';
   if(STATE.view==='auctionLive' && hideAuctionLiveNav) STATE.view = 'dashboard';
+  // Admin ปิดการใช้งาน "ทั้งหมวด" โอนย้าย/ขายออก/ตัดชำรุดเป็นรายคนได้ที่หน้าตั้งค่า > ผู้ใช้งาน
+  // (STATE.disabledCategories มาจาก login_) — ซ่อนทั้งกลุ่มเมนู + กันเข้าหน้าทาง URL ตรงๆ เหมือนกับ
+  // สวิตช์ auction นาวิเกชันด้านบน — admin/ผู้บริหารไม่ถูกจำกัดเลย (ดู checkCategoryEnabled_ ฝั่ง backend)
+  const CATEGORY_NAV = {
+    Transfer: { groupId: 'navGroupTransfer', itemClass: 'navItemTransfer', views: ['list', 'create'] },
+    Sale: { groupId: 'navGroupSale', itemClass: 'navItemSale', views: ['saleList', 'saleCreate', 'auctionSoldAssets'] },
+    WriteOff: { groupId: 'navGroupWriteOff', itemClass: 'navItemWriteOff', views: ['writeOffList', 'writeOffCreate'] }
+  };
+  const canRestrictCategories = STATE.role !== 'admin' && STATE.role !== 'executive';
+  Object.keys(CATEGORY_NAV).forEach(cat=>{
+    const info = CATEGORY_NAV[cat];
+    const hidden = canRestrictCategories && (STATE.disabledCategories||[]).indexOf(cat) !== -1;
+    const groupEl = document.getElementById(info.groupId);
+    if(groupEl) groupEl.style.display = hidden ? 'none' : '';
+    document.querySelectorAll('.'+info.itemClass).forEach(b=> b.style.display = hidden ? 'none' : '');
+    if(hidden && info.views.indexOf(STATE.view)!==-1) STATE.view = 'dashboard';
+  });
   // ผู้บริหาร: ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ — ซ่อนปุ่มเมนู "+ สร้าง..." และกันไม่ให้เข้าหน้าสร้างเอกสารตรงๆ
   ['create','saleCreate','writeOffCreate'].forEach(v=>{
     const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
@@ -1084,7 +1105,11 @@ function renderAssetList(root){
                 + `<button class="btn btn-red btn-sm" data-clearqueueid="${esc(a.AssetID)}">ล้างคิวซ้ำ</button>`;
             }
             // เลือกได้เพียงคิวเดียวต่อทรัพย์สิน — ถ้าอยู่ในคิวประเภทอื่นแล้ว ไม่แสดงปุ่มเพิ่มคิวประเภทอื่นให้เลือกซ้ำ
+            // (ไม่แสดงปุ่มเลยถ้า Admin ปิดการใช้งานหมวดนั้นไว้สำหรับ user คนนี้ — ดู STATE.disabledCategories)
+            const purposeCategory = { transfer:'Transfer', sale:'Sale', writeoff:'WriteOff' };
+            const canRestrict = STATE.role!=='admin' && STATE.role!=='executive';
             const btn = (purpose, label, queuedLabel) => {
+              if (canRestrict && (STATE.disabledCategories||[]).indexOf(purposeCategory[purpose])!==-1) return '';
               if (queued.indexOf(purpose)!==-1) return `<span class="badge badge-pending">${queuedLabel}</span>`;
               if (queued.length) return '';
               return `<button class="btn btn-secondary btn-sm" data-queueid="${esc(a.AssetID)}" data-queuepurpose="${purpose}">${label}</button>`;
@@ -5425,6 +5450,11 @@ function renderSettings(root){
   }
 
   let userList = [];
+  const DISABLED_CATEGORY_OPTIONS = [
+    { key:'Transfer', label:'โอนย้าย' },
+    { key:'Sale', label:'ขายออก' },
+    { key:'WriteOff', label:'ตัดชำรุด' }
+  ];
 
   function loadUsers(preData){
     if(preData){ userList = preData; renderUsersTable(); return; }
@@ -5466,6 +5496,13 @@ function renderSettings(root){
           <input type="checkbox" data-ufield="CanExportAuction" data-ui="${i}" ${isAdmin ? 'checked disabled' : (u.CanExportAuction?'checked':'')}>
           ${isAdmin ? '<div style="font-size:11px;color:var(--muted);">Export ได้เสมอ</div>' : ''}
         </td>
+        <td>
+          ${seesAllNoEdit ? '<div style="font-size:11px;color:var(--muted);">ไม่ถูกจำกัด</div>' : DISABLED_CATEGORY_OPTIONS.map(c=>`
+            <label style="display:block;font-size:12px;white-space:nowrap;">
+              <input type="checkbox" data-ufield="DisabledCategories" data-ucat="${c.key}" data-ui="${i}" ${(u.DisabledCategories||[]).indexOf(c.key)!==-1?'checked':''}>
+              ปิด${c.label}
+            </label>`).join('')}
+        </td>
         <td class="no-print" style="white-space:nowrap;">
           <button class="btn btn-secondary btn-sm" onclick="saveUserRow(${i})">บันทึก</button>
           <button class="btn btn-red btn-sm" onclick="deleteUserRow(${i})">ลบ</button>
@@ -5474,8 +5511,8 @@ function renderSettings(root){
     }).join('');
     document.getElementById('userTableHost').innerHTML = `
       <div style="overflow-x:auto;"><table>
-        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th>ดูราคาซาก/มูลค่าตามบัญชีได้</th><th>Export หน้าประมูลขายได้</th><th class="no-print">จัดการ</th></tr>
-        ${rowsHtml || '<tr><td colspan="7" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
+        <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>หน่วยงานที่ดูแล</th><th>รหัสผ่าน</th><th>ดูราคาซาก/มูลค่าตามบัญชีได้</th><th>Export หน้าประมูลขายได้</th><th>ปิดการใช้งานหมวด</th><th class="no-print">จัดการ</th></tr>
+        ${rowsHtml || '<tr><td colspan="8" class="empty">ยังไม่มีผู้ใช้ — ต้องเพิ่มผู้ใช้ระดับ Admin อย่างน้อย 1 คน ไม่เช่นนั้นจะเข้าระบบไม่ได้เลย</td></tr>'}
       </table></div>
     `;
   }
@@ -5487,7 +5524,7 @@ function renderSettings(root){
   };
 
   function addBlankUserRow(){
-    userList.push({ Username:'', Role:'user', Departments:[], CanViewPrices:false, CanExportAuction:false, __isNew:true });
+    userList.push({ Username:'', Role:'user', Departments:[], CanViewPrices:false, CanExportAuction:false, DisabledCategories:[], __isNew:true });
     renderUsersTable();
   }
 
@@ -5499,14 +5536,16 @@ function renderSettings(root){
     const pwEl = document.querySelector(`[data-ufield="Password"][data-ui="${i}"]`);
     const canViewPricesEl = document.querySelector(`[data-ufield="CanViewPrices"][data-ui="${i}"]`);
     const canExportAuctionEl = document.querySelector(`[data-ufield="CanExportAuction"][data-ui="${i}"]`);
+    const disabledCategoryEls = document.querySelectorAll(`[data-ufield="DisabledCategories"][data-ui="${i}"]`);
     u.Username = usernameEl.value.trim();
     u.Role = roleEl.value;
     u.Departments = Array.from(deptEl.selectedOptions).map(o=>o.value);
     u.CanViewPrices = canViewPricesEl.checked;
     u.CanExportAuction = canExportAuctionEl.checked;
+    u.DisabledCategories = Array.from(disabledCategoryEls).filter(el=>el.checked).map(el=>el.dataset.ucat);
     const password = pwEl.value;
     if(!u.Username){ toast('กรุณาระบุชื่อผู้ใช้','err'); return; }
-    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, CanViewPrices: u.CanViewPrices, CanExportAuction: u.CanExportAuction, Password: password } }).then(res=>{
+    apiPost({ action:'adminSaveUser', password: STATE.adminPassword, user: { Username: u.Username, Role: u.Role, Departments: u.Departments, CanViewPrices: u.CanViewPrices, CanExportAuction: u.CanExportAuction, DisabledCategories: u.DisabledCategories, Password: password } }).then(res=>{
       if(!res.ok){ toast(res.error||'บันทึกผู้ใช้ไม่สำเร็จ','err'); return; }
       toast('บันทึกผู้ใช้สำเร็จ','ok');
       loadUsers();

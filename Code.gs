@@ -51,7 +51,7 @@ const SHEETS = {
 const HEADERS = {
   ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
-  USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction'],
+  USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction', 'DisabledCategories'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
@@ -1019,7 +1019,8 @@ function login_(body) {
         role,
         departments: parseDepartments_(values[i][idx.Departments]),
         canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true',
-        canExportAuction: role === 'admin' || (idx.CanExportAuction !== undefined && String(values[i][idx.CanExportAuction]).toLowerCase() === 'true')
+        canExportAuction: role === 'admin' || (idx.CanExportAuction !== undefined && String(values[i][idx.CanExportAuction]).toLowerCase() === 'true'),
+        disabledCategories: parseDepartments_(idx.DisabledCategories !== undefined ? values[i][idx.DisabledCategories] : '')
       } };
     }
   }
@@ -1030,6 +1031,19 @@ function login_(body) {
 
 function parseDepartments_(v) {
   return String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// ตรวจว่า user (เฉพาะ role='user' — Admin/ผู้บริหารไม่ถูกจำกัดเลย) ถูก Admin ปิดการใช้งาน "ทั้งหมวด"
+// โอนย้าย/ขายออก/ตัดชำรุดไว้หรือไม่ (เก็บใน Users.DisabledCategories คั่นด้วยคอมมา ค่าที่ใช้ตรงกับ
+// QUEUE_PURPOSES: 'Transfer'/'Sale'/'WriteOff') ใช้คุม "บันทึกเอกสาร" เท่านั้น (createTransfer_/
+// createSale_/createWriteOff_) เพราะเป็นจุดเดียวในหมวดนี้ที่ระบบรู้ตัวผู้เรียกจริง (เช็ครหัสผ่านอยู่
+// แล้ว) ส่วนการดูรายการ/เพิ่มลบคิวของหมวดนี้ไม่มีการเช็ครหัสผ่านมาตั้งแต่เดิม จึงบล็อกที่ backend ไม่ได้
+// เต็มรูปแบบ — ฝั่ง frontend ซ่อนเมนู/ปุ่มที่เกี่ยวข้องไว้แทนเพื่อกันการใช้งานปกติ
+function checkCategoryEnabled_(user, category, categoryLabel) {
+  if (user && user.role === 'user' && (user.disabledCategories || []).indexOf(category) !== -1) {
+    return { ok: false, error: 'บัญชีผู้ใช้นี้ถูกปิดการใช้งานหมวด' + categoryLabel + ' กรุณาติดต่อ Admin' };
+  }
+  return null;
 }
 
 // ค้นหาผู้ใช้จากรหัสผ่านที่ส่งมา (ไม่ต้องรู้ username ล่วงหน้า) เพื่อตรวจสอบสิทธิ์ role/หน่วยงานที่แก้ไขได้
@@ -1044,7 +1058,8 @@ function getRequestingUser_(pw) {
         username: values[i][idx.Username],
         role,
         departments: parseDepartments_(values[i][idx.Departments]),
-        canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true'
+        canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true',
+        disabledCategories: parseDepartments_(idx.DisabledCategories !== undefined ? values[i][idx.DisabledCategories] : '')
       };
     }
   }
@@ -1107,6 +1122,7 @@ function getUsers_(body) {
     Departments: parseDepartments_(r[idx.Departments]),
     CanViewPrices: String(r[idx.CanViewPrices]).toLowerCase() === 'true',
     CanExportAuction: idx.CanExportAuction !== undefined && String(r[idx.CanExportAuction]).toLowerCase() === 'true',
+    DisabledCategories: parseDepartments_(idx.DisabledCategories !== undefined ? r[idx.DisabledCategories] : ''),
     CreatedAt: r[idx.CreatedAt] instanceof Date ? r[idx.CreatedAt].toISOString() : r[idx.CreatedAt]
   }));
   return { ok: true, data: users };
@@ -1122,6 +1138,7 @@ function adminSaveUser_(body) {
   const departments = Array.isArray(u.Departments) ? u.Departments.map(d => String(d).trim()).filter(Boolean).join(',') : '';
   const canViewPrices = u.CanViewPrices ? 'true' : 'false';
   const canExportAuction = u.CanExportAuction ? 'true' : 'false';
+  const disabledCategories = Array.isArray(u.DisabledCategories) ? u.DisabledCategories.map(d => String(d).trim()).filter(Boolean).join(',') : '';
 
   const { sh, values, idx } = getUsersRowsCached_();
   let rowNum = -1;
@@ -1142,6 +1159,7 @@ function adminSaveUser_(body) {
     if (idx.Departments !== undefined) newRow[idx.Departments] = departments;
     if (idx.CanViewPrices !== undefined) newRow[idx.CanViewPrices] = canViewPrices;
     if (idx.CanExportAuction !== undefined) newRow[idx.CanExportAuction] = canExportAuction;
+    if (idx.DisabledCategories !== undefined) newRow[idx.DisabledCategories] = disabledCategories;
     newRow[idx.CreatedAt] = new Date();
     sh.appendRow(newRow);
     resetUsersRowsCache_();
@@ -1152,6 +1170,7 @@ function adminSaveUser_(body) {
   if (idx.Departments !== undefined) sh.getRange(rowNum, idx.Departments + 1).setValue(departments);
   if (idx.CanViewPrices !== undefined) sh.getRange(rowNum, idx.CanViewPrices + 1).setValue(canViewPrices);
   if (idx.CanExportAuction !== undefined) sh.getRange(rowNum, idx.CanExportAuction + 1).setValue(canExportAuction);
+  if (idx.DisabledCategories !== undefined) sh.getRange(rowNum, idx.DisabledCategories + 1).setValue(disabledCategories);
   if (newPassword) sh.getRange(rowNum, idx.Password + 1).setValue(newPassword);
   resetUsersRowsCache_();
   logActivity_('', 'ADMIN_SAVE_USER', 'admin', 'แก้ไขผู้ใช้ ' + username);
@@ -3187,6 +3206,8 @@ function createTransfer_(body) {
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  const categoryErr = checkCategoryEnabled_(user, QUEUE_PURPOSES.TRANSFER, 'โอนย้าย');
+  if (categoryErr) return categoryErr;
   if (!canManageDept_(user, body.fromDept)) return { ok: false, error: 'ไม่มีสิทธิ์สร้างใบโอนย้ายให้หน่วยงานนี้' };
 
   const dept = getDeptByName_(body.fromDept);
@@ -3476,6 +3497,8 @@ function createSale_(body) {
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  const categoryErr = checkCategoryEnabled_(user, QUEUE_PURPOSES.SALE, 'ขายออก');
+  if (categoryErr) return categoryErr;
   if (!canManageDept_(user, body.fromDept)) return { ok: false, error: 'ไม่มีสิทธิ์สร้างใบขายออกให้หน่วยงานนี้' };
 
   const dept = getDeptByName_(body.fromDept);
@@ -3699,6 +3722,8 @@ function createWriteOff_(body) {
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  const categoryErr = checkCategoryEnabled_(user, QUEUE_PURPOSES.WRITEOFF, 'ตัดชำรุด');
+  if (categoryErr) return categoryErr;
   if (!canManageDept_(user, body.fromDept)) return { ok: false, error: 'ไม่มีสิทธิ์สร้างใบตัดชำรุดให้หน่วยงานนี้' };
 
   const dept = getDeptByName_(body.fromDept);
