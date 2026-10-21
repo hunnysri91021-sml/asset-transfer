@@ -3452,6 +3452,16 @@ function decideTransfer_(body) {
 
   sendDecisionNotification_(obj, decision, body.comment || '', isAdminOverride);
 
+  if (isAdminOverride) {
+    // obj คือสถานะ "ก่อน" ที่ Admin จะเขียนผล — FromDecision/ToDecision ที่ยังว่างตรงนี้คือฝ่ายที่ยังค้างพิจารณาอยู่จริง
+    if (hasDualApproval) {
+      if (!obj.FromDecision) sendAdminOverrideNoticeToApprover_('ใบโอนย้ายทรัพย์สิน', obj.RunningNo, decision, obj.ApproverEmail, 'ฝ่ายโอน');
+      if (!obj.ToDecision) sendAdminOverrideNoticeToApprover_('ใบโอนย้ายทรัพย์สิน', obj.RunningNo, decision, obj.ToApproverEmail, 'ฝ่ายรับโอน');
+    } else {
+      sendAdminOverrideNoticeToApprover_('ใบโอนย้ายทรัพย์สิน', obj.RunningNo, decision, obj.ApproverEmail, null);
+    }
+  }
+
   return { ok: true, data: { transferId, status: decision } };
 }
 
@@ -3712,6 +3722,10 @@ function decideSale_(body) {
 
   sendSaleDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
 
+  if (isAdminOverride) {
+    sendAdminOverrideNoticeToApprover_('ใบขายออกทรัพย์สิน', found.obj.RunningNo, decision, found.obj.ApproverEmail, null);
+  }
+
   return { ok: true, data: { saleId, status: decision } };
 }
 
@@ -3932,6 +3946,10 @@ function decideWriteOff_(body) {
 
   sendWriteOffDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
 
+  if (isAdminOverride) {
+    sendAdminOverrideNoticeToApprover_('ใบตัดชำรุดทรัพย์สิน', found.obj.RunningNo, decision, found.obj.ApproverEmail, null);
+  }
+
   return { ok: true, data: { writeOffId, status: decision } };
 }
 
@@ -4003,6 +4021,29 @@ function sendApprovalEmail_(transferId, runningNo, body, items, token, recipient
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
+  }
+}
+
+// Admin ใช้รหัสผ่าน Admin อนุมัติ/ไม่อนุมัติแทนผู้อนุมัติที่ยังค้างพิจารณาได้ (ทุกประเภทเอกสาร:
+// โอนย้าย/ขายออก-ประมูล/ตัดชำรุด) — เมื่อ override แบบนี้ ต้องแจ้งอีเมลไปยังผู้อนุมัติที่ยังค้างอยู่
+// (คนที่ยังไม่ได้กดอนุมัติ/ไม่อนุมัติเอง) ว่า Admin ได้ดำเนินการแทนแล้ว ไม่ต้องกดอะไรอีก — best-effort
+// เหมือนฟังก์ชันแจ้งเตือนอื่นๆ ไม่กระทบผลลัพธ์หลักแม้ส่งอีเมลไม่สำเร็จ
+function sendAdminOverrideNoticeToApprover_(docTypeLabel, runningNo, decision, approverEmail, roleLabel) {
+  try {
+    if (!approverEmail) return;
+    const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
+    const html =
+      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
+      '<h3>' + escapeHtml_(docTypeLabel) + ' เลขที่ ' + runningNo + '</h3>' +
+      '<p style="font-size:15px;">Admin ได้ดำเนินการพิจารณา' + (roleLabel ? 'ในส่วนของ' + escapeHtml_(roleLabel) + ' ' : '') + 'แทนท่านแล้ว (ผล: <b>' + statusThai + '</b>) ท่านไม่ต้องดำเนินการใดๆ เพิ่มเติม</p>' +
+      '</div>';
+    MailApp.sendEmail({
+      to: approverEmail,
+      subject: '[Admin ดำเนินการแทน] ' + docTypeLabel + ' ' + runningNo,
+      htmlBody: html
+    });
+  } catch (err) {
+    Logger.log('sendAdminOverrideNoticeToApprover_ error: ' + err);
   }
 }
 
