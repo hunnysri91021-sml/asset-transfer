@@ -5785,8 +5785,11 @@ function buildDocHtml(t, withToolbar){
 
         <div style="margin-top:26px;font-size:13px;">
           <b>รับทราบโดย</b><br>
-          1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span><br>
+          1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span>
+          ${(t.ToApproverEmail ? t.FromDecision === 'Approved' : (t.Status === 'Approved' && t.ApproverEmail)) ? ' &nbsp; <span style="color:#1a7d3c;">(อนุมัติจากอีเมล: ' + esc(t.ApproverEmail) + ')</span>' : ''}
+          <br>
           2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่ <span class="dateline"></span>
+          ${(t.ToApproverEmail && t.ToDecision === 'Approved') ? ' &nbsp; <span style="color:#1a7d3c;">(อนุมัติจากอีเมล: ' + esc(t.ToApproverEmail) + ')</span>' : ''}
         </div>
 
         ${t.Status !== 'Draft' ? `
