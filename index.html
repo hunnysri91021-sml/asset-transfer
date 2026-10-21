@@ -3397,14 +3397,25 @@ function renderCreate(root){
       </div>
       <div class="row">
         <div>
-          <label>ชื่อผู้อนุมัติ (ผู้บริหาร)</label>
+          <label>ชื่อผู้บริหารฝ่ายโอน (ต้นทาง)</label>
           <input type="text" id="cApproverName" placeholder="เช่น คุณสมชาย ผู้จัดการฝ่าย" value="${esc(h.approverName||'')}">
         </div>
         <div>
-          <label>อีเมลผู้อนุมัติ *</label>
+          <label>อีเมลผู้บริหารฝ่ายโอน *</label>
           <input type="email" id="cApproverEmail" placeholder="approver@company.com" value="${esc(h.approverEmail||'')}">
         </div>
       </div>
+      <div class="row">
+        <div>
+          <label>ชื่อผู้บริหารฝ่ายรับโอน (ปลายทาง)</label>
+          <input type="text" id="cToApproverName" placeholder="เช่น คุณสมหญิง ผู้จัดการฝ่าย" value="${esc(h.toApproverName||'')}">
+        </div>
+        <div>
+          <label>อีเมลผู้บริหารฝ่ายรับโอน *</label>
+          <input type="email" id="cToApproverEmail" placeholder="approver@company.com" value="${esc(h.toApproverEmail||'')}">
+        </div>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin:-6px 0 0;">ใบโอนย้ายนี้ต้องได้รับอนุมัติจากผู้บริหารทั้ง 2 ฝ่าย (ฝ่ายโอน + ฝ่ายรับโอน) จึงจะมีผล — ระบบจะส่งอีเมลขออนุมัติแยกไปหาทั้งคู่</p>
     </div>
 
     <div class="card">
@@ -3436,7 +3447,9 @@ function renderCreate(root){
     if(!STATE.draftItems.length){ toast('กรุณาเพิ่มรายการทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
     const fromDept = document.getElementById('cFromDept').value;
     const approverEmail = document.getElementById('cApproverEmail').value.trim();
-    if(!deptSkipsApproval(fromDept) && !approverEmail){ toast('กรุณาระบุอีเมลผู้อนุมัติ','err'); return; }
+    const toApproverEmail = document.getElementById('cToApproverEmail').value.trim();
+    if(!deptSkipsApproval(fromDept) && !approverEmail){ toast('กรุณาระบุอีเมลผู้บริหารฝ่ายโอน','err'); return; }
+    if(!deptSkipsApproval(fromDept) && !toApproverEmail){ toast('กรุณาระบุอีเมลผู้บริหารฝ่ายรับโอน','err'); return; }
     const toDept = document.getElementById('cToDept').value;
     const fromSign = document.getElementById('cFromSign').value;
     const toSign = document.getElementById('cToSign').value;
@@ -3458,7 +3471,9 @@ function renderCreate(root){
       createdBy: document.getElementById('cCreatedBy').value,
       createdByEmail: document.getElementById('cCreatedByEmail').value,
       approverName: document.getElementById('cApproverName').value,
-      approverEmail
+      approverEmail,
+      toApproverName: document.getElementById('cToApproverName').value,
+      toApproverEmail
     };
     STATE.createStep = 'preview';
     render();
@@ -3480,6 +3495,13 @@ function renderCreate(root){
         if(d){
           if(d.ApproverName) document.getElementById('cApproverName').value = d.ApproverName;
           if(d.ApproverEmail) document.getElementById('cApproverEmail').value = d.ApproverEmail;
+        }
+      });
+      document.getElementById('cToDept').addEventListener('change', ()=>{
+        const d = STATE.deptCodes.find(x=>x.DeptName===document.getElementById('cToDept').value);
+        if(d){
+          if(d.ApproverName) document.getElementById('cToApproverName').value = d.ApproverName;
+          if(d.ApproverEmail) document.getElementById('cToApproverEmail').value = d.ApproverEmail;
         }
       });
     });
@@ -3632,6 +3654,7 @@ function doSubmitTransfer(){
     fromDept: h.fromDept, toDept: h.toDept,
     createdBy: h.createdBy, createdByEmail: h.createdByEmail,
     approverName: h.approverName, approverEmail: h.approverEmail,
+    toApproverName: h.toApproverName, toApproverEmail: h.toApproverEmail,
     toSignEmail: h.toSignEmail,
     items: STATE.draftItems
   };
@@ -5711,10 +5734,25 @@ function buildDocHtml(t, withToolbar){
 
         ${t.Status !== 'Draft' ? `
         <div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">
-          <b>สถานะการอนุมัติ:</b> ${statusBadge(t.Status)} &nbsp;
+          <b>สถานะการอนุมัติ:</b> ${statusBadge(t.Status)}
+          ${t.ToApprovalToken || t.ToApproverName || t.ToApproverEmail ? `
+          <div style="margin-top:8px;">
+            <b>ฝ่ายโอน:</b> ${esc(t.ApproverName||t.ApproverEmail||'-')}
+            ${t.FromDecision ? ' — '+esc(t.FromDecision==='Approved'?'อนุมัติ':'ไม่อนุมัติ') : ' — รอการพิจารณา'}
+            ${t.FromDecidedAt ? ' เมื่อ '+fmtDate(t.FromDecidedAt) : ''}
+          </div>
+          <div style="margin-top:4px;">
+            <b>ฝ่ายรับโอน:</b> ${esc(t.ToApproverName||t.ToApproverEmail||'-')}
+            ${t.ToDecision ? ' — '+esc(t.ToDecision==='Approved'?'อนุมัติ':'ไม่อนุมัติ') : ' — รอการพิจารณา'}
+            ${t.ToDecidedAt ? ' เมื่อ '+fmtDate(t.ToDecidedAt) : ''}
+          </div>
+          ${t.ApproverComment ? '<br><b>ความเห็นฝ่ายโอน:</b> '+esc(t.ApproverComment) : ''}
+          ${t.ToApproverComment ? '<br><b>ความเห็นฝ่ายรับโอน:</b> '+esc(t.ToApproverComment) : ''}
+          ` : `&nbsp;
           ${t.ApproverName || t.ApproverEmail ? 'โดย '+esc(t.ApproverName||t.ApproverEmail) : ''}
           ${t.ApprovedAt ? ' เมื่อ '+fmtDate(t.ApprovedAt) : ''}
           ${t.ApproverComment ? '<br><b>ความเห็น:</b> '+esc(t.ApproverComment) : ''}
+          `}
         </div>` : ''}
       </div>
     </div>
@@ -5881,10 +5919,22 @@ function renderApprove(){
     const t = res.data;
     STATE.currentTransfer = t;
     let actionHtml = '';
-    if(t.Status === 'PendingApproval'){
+    const myDecisionDone = t.MyDecision === 'Approved' || t.MyDecision === 'Rejected';
+    if(t.Status === 'PendingApproval' && myDecisionDone){
+      actionHtml = `
+        <div class="card no-print">
+          <div class="empty">
+            คุณได้พิจารณาแล้ว (ผล: ${esc(t.MyDecision === 'Approved' ? 'อนุมัติ' : 'ไม่อนุมัติ')})
+            ${t.OtherDecision ? `<br>ผล${esc(t.OtherRoleLabel||'')}: ${esc(t.OtherDecision === 'Approved' ? 'อนุมัติ' : 'ไม่อนุมัติ')}` :
+              `<br>กำลังรอผลการพิจารณาจาก${esc(t.OtherRoleLabel||'อีกฝ่าย')}${t.OtherApproverLabel ? ': '+esc(t.OtherApproverLabel) : ''}`}
+          </div>
+        </div>`;
+    } else if(t.Status === 'PendingApproval'){
+      const roleNote = t.MyRole ? `<p style="color:var(--muted);font-size:12.5px;margin:0 0 10px;">ท่านเป็นผู้อนุมัติ${esc(t.MyRole==='from' ? 'ฝ่ายโอน' : t.MyRole==='to' ? 'ฝ่ายรับโอน' : '')}${t.OtherDecision ? ' — '+esc(t.OtherRoleLabel||'อีกฝ่าย')+'ได้พิจารณาแล้ว (ผล: '+esc(t.OtherDecision==='Approved'?'อนุมัติ':'ไม่อนุมัติ')+')' : ''}</p>` : '';
       actionHtml = `
         <div class="card no-print">
           <h2>พิจารณาอนุมัติ</h2>
+          ${roleNote}
           <label>ความเห็น (ถ้ามี)</label>
           <textarea id="approveComment" placeholder="ระบุความเห็นเพิ่มเติม..."></textarea>
           <div style="margin-top:14px;display:flex;gap:10px;">
@@ -5897,7 +5947,7 @@ function renderApprove(){
     }
     root.innerHTML = buildDocHtml(t, false) + actionHtml;
 
-    if(t.Status === 'PendingApproval'){
+    if(t.Status === 'PendingApproval' && !myDecisionDone){
       document.getElementById('btnApprove').onclick = ()=>decide('Approved');
       document.getElementById('btnReject').onclick = ()=>decide('Rejected');
     }
@@ -5909,7 +5959,11 @@ function renderApprove(){
     apiPost({ action:'decideTransfer', transferId: STATE.approveCtx.id, token: STATE.approveCtx.token, decision, comment })
       .then(res=>{
         if(!res.ok){ toast(res.error||'ดำเนินการไม่สำเร็จ','err'); return; }
-        toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
+        if(res.data && res.data.partial){
+          toast('บันทึกผลฝั่งคุณแล้ว รอผลการพิจารณาจากอีกฝ่าย','ok');
+        } else {
+          toast('บันทึกผลการพิจารณาเรียบร้อย','ok');
+        }
         renderApprove();
       });
   }
