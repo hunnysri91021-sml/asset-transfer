@@ -3291,7 +3291,8 @@ function renderList(root){
           <button class="btn btn-secondary btn-sm" onclick="openPrint('${t.TransferID}')">ดู/พิมพ์</button>
           ${t.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('transfer','${t.TransferID}',this)">📧 ${t.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${t.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${t.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(t.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
-          ${STATE.role==='admin' && t.Status==='PendingApproval' ? `<button class="btn btn-red btn-sm" onclick="cancelPendingTransfer('${t.TransferID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
+          ${STATE.role==='admin' && t.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingTransfer('${t.TransferID}',this)">✓ อนุมัติ (Admin)</button>
+          <button class="btn btn-red btn-sm" onclick="cancelPendingTransfer('${t.TransferID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
         </td>
       </tr>`;
     });
@@ -3299,9 +3300,26 @@ function renderList(root){
     host.innerHTML = html;
   }
 
-  // Admin ยกเลิกใบโอนย้ายที่ยังรออนุมัติอยู่ได้เองโดยตรง (ไม่ต้องรอผู้อนุมัติกดลิงก์ในอีเมล) — เทียบเท่า
-  // การกด "ไม่อนุมัติ" จากลิงก์อีเมล ใช้ action เดียวกัน (decideTransfer) แค่ backend ยอมรับรหัสผ่าน
-  // Admin แทน token ได้ (ดู isAdminOverride ใน decideTransfer_ ฝั่ง Code.gs)
+  // Admin อนุมัติ/ยกเลิกใบโอนย้ายที่ยังรออนุมัติอยู่ได้เองโดยตรง (ไม่ต้องรอผู้อนุมัติกดลิงก์ในอีเมล) — เทียบเท่า
+  // การกด "อนุมัติ"/"ไม่อนุมัติ" จากลิงก์อีเมล ใช้ action เดียวกัน (decideTransfer) แค่ backend ยอมรับรหัสผ่าน
+  // Admin แทน token ได้ (ดู isAdminOverride ใน decideTransfer_ ฝั่ง Code.gs) — สำหรับใบที่ต้องอนุมัติ 2 ฝ่าย
+  // Admin override จะ finalize ทันทีไม่ต้องรออีกฝ่าย และระบบจะส่งอีเมลแจ้งฝ่ายที่ยังไม่ได้พิจารณาว่า Admin
+  // ดำเนินการแทนแล้ว (ดู sendAdminOverrideNoticeToApprover_)
+  window.approvePendingTransfer = function(transferId, btn){
+    const comment = prompt('ความเห็น Admin (ไม่บังคับ)') || '';
+    if(comment === null) return;
+    if(!confirm('ยืนยันอนุมัติใบโอนย้ายนี้แทนผู้อนุมัติ? (ย้อนกลับไม่ได้)')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'decideTransfer', password: STATE.adminPassword, transferId, decision:'Approved', comment }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'อนุมัติไม่สำเร็จ','err'); return; }
+      toast('อนุมัติใบโอนย้ายสำเร็จ','ok');
+      const t = STATE.transfers.find(x=>x.TransferID===transferId);
+      if(t) t.Status = 'Approved';
+      renderListTable();
+    });
+  };
+
   window.cancelPendingTransfer = function(transferId, btn){
     const comment = prompt('เหตุผลที่ Admin ยกเลิกใบโอนย้ายนี้ (ไม่บังคับ)') || '';
     if(comment === null) return;
@@ -3924,7 +3942,8 @@ function renderSaleList(root){
           <button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button>
           ${saleBucketOf(s)==='AwaitingSale' ? `<button class="btn btn-primary btn-sm" onclick="confirmSale('${s.SaleID}',this)">✔ ยืนยันขายแล้ว</button>` : ''}
           ${saleBucketOf(s)==='Sold' ? `<button class="btn btn-secondary btn-sm" onclick="unconfirmSale('${s.SaleID}',this)">↩ ยกเลิกการยืนยัน</button>` : ''}
-          ${STATE.role==='admin' && s.Status==='PendingApproval' ? `<button class="btn btn-red btn-sm" onclick="cancelPendingSale('${s.SaleID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
+          ${STATE.role==='admin' && s.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingSale('${s.SaleID}',this)">✓ อนุมัติ (Admin)</button>
+          <button class="btn btn-red btn-sm" onclick="cancelPendingSale('${s.SaleID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
           ${s.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('sale','${s.SaleID}',this)">📧 ${s.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${s.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${s.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(s.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
         </td>
@@ -3963,9 +3982,25 @@ function renderSaleList(root){
     });
   };
 
-  // Admin ยกเลิกใบขายออกที่ยังรออนุมัติอยู่ได้เองโดยตรง (ไม่ต้องรอผู้อนุมัติกดลิงก์ในอีเมล) — เทียบเท่า
-  // การกด "ไม่อนุมัติ" จากลิงก์อีเมล ใช้ action เดียวกัน (decideSale) แค่ backend ยอมรับรหัสผ่าน Admin
+  // Admin อนุมัติ/ยกเลิกใบขายออกที่ยังรออนุมัติอยู่ได้เองโดยตรง (ไม่ต้องรอผู้อนุมัติกดลิงก์ในอีเมล) — เทียบเท่า
+  // การกด "อนุมัติ"/"ไม่อนุมัติ" จากลิงก์อีเมล ใช้ action เดียวกัน (decideSale) แค่ backend ยอมรับรหัสผ่าน Admin
   // แทน token ได้ (ดู checkCategoryEnabled_/isAdminOverride ใน decideSale_ ฝั่ง Code.gs)
+  window.approvePendingSale = function(saleId, btn){
+    const comment = prompt('ความเห็น Admin (ไม่บังคับ)') || '';
+    if(comment === null) return;
+    if(!confirm('ยืนยันอนุมัติใบขายออกนี้แทนผู้อนุมัติ? (ย้อนกลับไม่ได้)')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'decideSale', password: STATE.adminPassword, saleId, decision:'Approved', comment }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'อนุมัติไม่สำเร็จ','err'); return; }
+      toast('อนุมัติใบขายออกสำเร็จ','ok');
+      const s = allSales.find(x=>x.SaleID===saleId);
+      if(s) s.Status = 'Approved';
+      renderSaleKanban();
+      renderSaleListTable();
+    });
+  };
+
   window.cancelPendingSale = function(saleId, btn){
     const comment = prompt('เหตุผลที่ Admin ยกเลิกใบขายออกนี้ (ไม่บังคับ)') || '';
     if(comment === null) return;
@@ -4507,7 +4542,8 @@ function renderWriteOffList(root){
           <button class="btn btn-secondary btn-sm" onclick="openWriteOffPrint('${w.WriteOffID}')">ดู/พิมพ์</button>
           ${w.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('writeoff','${w.WriteOffID}',this)">📧 ${w.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${w.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${w.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(w.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
-          ${STATE.role==='admin' && w.Status==='PendingApproval' ? `<button class="btn btn-red btn-sm" onclick="cancelPendingWriteOff('${w.WriteOffID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
+          ${STATE.role==='admin' && w.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingWriteOff('${w.WriteOffID}',this)">✓ อนุมัติ (Admin)</button>
+          <button class="btn btn-red btn-sm" onclick="cancelPendingWriteOff('${w.WriteOffID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
         </td>
       </tr>`;
     });
@@ -4515,9 +4551,24 @@ function renderWriteOffList(root){
     host.innerHTML = html;
   }
 
-  // Admin ยกเลิกใบตัดชำรุดที่ยังรออนุมัติอยู่ได้เองโดยตรง (ไม่ต้องรอผู้อนุมัติกดลิงก์ในอีเมล) — เทียบเท่า
-  // การกด "ไม่อนุมัติ" จากลิงก์อีเมล ใช้ action เดียวกัน (decideWriteOff) แค่ backend ยอมรับรหัสผ่าน
+  // Admin อนุมัติ/ยกเลิกใบตัดชำรุดที่ยังรออนุมัติอยู่ได้เองโดยตรง (ไม่ต้องรอผู้อนุมัติกดลิงก์ในอีเมล) — เทียบเท่า
+  // การกด "อนุมัติ"/"ไม่อนุมัติ" จากลิงก์อีเมล ใช้ action เดียวกัน (decideWriteOff) แค่ backend ยอมรับรหัสผ่าน
   // Admin แทน token ได้ (ดู isAdminOverride ใน decideWriteOff_ ฝั่ง Code.gs)
+  window.approvePendingWriteOff = function(writeOffId, btn){
+    const comment = prompt('ความเห็น Admin (ไม่บังคับ)') || '';
+    if(comment === null) return;
+    if(!confirm('ยืนยันอนุมัติใบตัดชำรุดนี้แทนผู้อนุมัติ? (ย้อนกลับไม่ได้)')) return;
+    if(btn) btn.disabled = true;
+    apiPost({ action:'decideWriteOff', password: STATE.adminPassword, writeOffId, decision:'Approved', comment }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'อนุมัติไม่สำเร็จ','err'); return; }
+      toast('อนุมัติใบตัดชำรุดสำเร็จ','ok');
+      const w = STATE.writeOffs.find(x=>x.WriteOffID===writeOffId);
+      if(w) w.Status = 'Approved';
+      renderWoListTable();
+    });
+  };
+
   window.cancelPendingWriteOff = function(writeOffId, btn){
     const comment = prompt('เหตุผลที่ Admin ยกเลิกใบตัดชำรุดนี้ (ไม่บังคับ)') || '';
     if(comment === null) return;
