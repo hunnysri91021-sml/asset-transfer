@@ -58,7 +58,7 @@ const HEADERS = {
   // คอลัมน์ To* ที่เพิ่มใหม่คือผู้อนุมัติ "ฝ่ายรับโอน" (ToDept) ส่วน FromDecision/FromDecidedAt
   // คือการติดตามผลตัดสินใจของฝ่ายโอน (ชุดเดิม) แยกจาก ApprovedAt ซึ่งเป็นเวลาที่เอกสาร "จบ" จริง
   // (ทั้ง 2 ฝ่ายอนุมัติครบ หรือถูกปฏิเสธ)
-  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail', 'ToApproverName', 'ToApproverEmail', 'ToApprovalToken', 'ToApproverComment', 'FromDecision', 'FromDecidedAt', 'ToDecision', 'ToDecidedAt'],
+  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail', 'ToApproverName', 'ToApproverEmail', 'ToApprovalToken', 'ToApproverComment', 'FromDecision', 'FromDecidedAt', 'ToDecision', 'ToDecidedAt', 'FromSignEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
@@ -3257,6 +3257,7 @@ function createTransfer_(body) {
     newRow[idx.CreatedBy] = body.createdBy || '';
     newRow[idx.CreatedByEmail] = body.createdByEmail || '';
     if (idx.ToSignEmail !== undefined) newRow[idx.ToSignEmail] = body.toSignEmail || '';
+    if (idx.FromSignEmail !== undefined) newRow[idx.FromSignEmail] = body.fromSignEmail || '';
     if (idx.ToApproverName !== undefined) newRow[idx.ToApproverName] = body.toApproverName || '';
     if (idx.ToApproverEmail !== undefined) newRow[idx.ToApproverEmail] = body.toApproverEmail || '';
     if (idx.ToApprovalToken !== undefined) newRow[idx.ToApprovalToken] = toToken;
@@ -4034,13 +4035,18 @@ function sendDecisionNotification_(transferObj, decision, comment, isAdminOverri
   }
 }
 
-// แจ้ง "ผู้รับโอน" (ToSignEmail) ว่าใบโอนย้ายอนุมัติแล้ว — ส่งเฉพาะตอนอนุมัติเท่านั้น (ทั้งเส้นทางอนุมัติ
-// อัตโนมัติและอนุมัติผ่านอีเมล) ถ้าไม่ได้กรอกอีเมลผู้รับโอนไว้ตอนสร้างเอกสารก็แค่ข้ามเงียบๆ ไม่ error
-// (ฟิลด์นี้ไม่บังคับกรอก) เหมือน sendDecisionNotification_ คือ best-effort ไม่กระทบผลลัพธ์หลักของ
-// การอนุมัติแม้ส่งอีเมลไม่สำเร็จ
+// แจ้ง "ผู้โอน" (FromSignEmail) และ "ผู้รับโอน" (ToSignEmail) ว่าใบโอนย้ายอนุมัติแล้ว — ส่งเฉพาะตอนอนุมัติ
+// finalize จริงเท่านั้น (ทั้งเส้นทางอนุมัติอัตโนมัติ, อนุมัติฝ่ายเดียวของเอกสารเก่า, และอนุมัติครบ 2 ฝ่าย
+// ของเอกสารที่ต้องอนุมัติคู่) ทั้งสองอีเมลไม่บังคับกรอก — ถ้าฝ่ายใดไม่ได้กรอกไว้ก็ข้ามเงียบๆ ไม่ error เฉพาะ
+// ฝ่ายนั้น เหมือน sendDecisionNotification_ คือ best-effort ไม่กระทบผลลัพธ์หลักของการอนุมัติแม้ส่งอีเมลไม่สำเร็จ
 function sendRecipientNotification_(transferObj, items) {
+  sendTransferPartyNotification_(transferObj, items, transferObj.FromSignEmail, 'ผู้โอน');
+  sendTransferPartyNotification_(transferObj, items, transferObj.ToSignEmail, 'ผู้รับโอน');
+}
+
+function sendTransferPartyNotification_(transferObj, items, recipientEmail, roleLabel) {
   try {
-    if (!transferObj.ToSignEmail) return;
+    if (!recipientEmail) return;
     const itemsHtml = (items || []).map((it, i) => (
       '<tr>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
@@ -4052,7 +4058,7 @@ function sendRecipientNotification_(transferObj, items) {
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
       '<h2 style="color:#1a3c6e;">' + CONFIG.COMPANY_NAME + '</h2>' +
       '<h3>ใบโอนย้ายทรัพย์สิน เลขที่ ' + transferObj.RunningNo + '</h3>' +
-      '<p style="font-size:15px;">ใบโอนย้ายทรัพย์สินที่ท่านเป็นผู้รับโอน ได้รับการอนุมัติเรียบร้อยแล้ว</p>' +
+      '<p style="font-size:15px;">ใบโอนย้ายทรัพย์สินที่ท่านเป็น' + escapeHtml_(roleLabel) + ' ได้รับการอนุมัติเรียบร้อยแล้ว</p>' +
       '<p><b>จาก:</b> ' + escapeHtml_(transferObj.FromDept) + ' &nbsp; <b>ไปยัง:</b> ' + escapeHtml_(transferObj.ToDept) + '</p>' +
       '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
       '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th></tr>' +
@@ -4060,12 +4066,12 @@ function sendRecipientNotification_(transferObj, items) {
       '</table>' +
       '</div>';
     MailApp.sendEmail({
-      to: transferObj.ToSignEmail,
+      to: recipientEmail,
       subject: '[โอนย้ายถึงท่าน] ใบโอนย้ายทรัพย์สิน ' + transferObj.RunningNo + ' — ' + CONFIG.COMPANY_NAME,
       htmlBody: html
     });
   } catch (err) {
-    Logger.log('sendRecipientNotification_ error: ' + err);
+    Logger.log('sendTransferPartyNotification_ error: ' + err);
   }
 }
 
