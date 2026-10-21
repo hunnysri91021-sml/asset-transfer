@@ -53,7 +53,12 @@ const HEADERS = {
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction', 'DisabledCategories'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
-  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail'],
+  // หมายเหตุ: ApproverName/ApproverEmail/ApprovalToken เดิม (ตั้งแต่ก่อนมีฟีเจอร์อนุมัติ 2 ฝ่าย)
+  // ผูกกับ "ฝ่ายโอน" (FromDept) มาตั้งแต่แรกอยู่แล้ว (ฝั่ง frontend auto-fill จาก cFromDept) —
+  // คอลัมน์ To* ที่เพิ่มใหม่คือผู้อนุมัติ "ฝ่ายรับโอน" (ToDept) ส่วน FromDecision/FromDecidedAt
+  // คือการติดตามผลตัดสินใจของฝ่ายโอน (ชุดเดิม) แยกจาก ApprovedAt ซึ่งเป็นเวลาที่เอกสาร "จบ" จริง
+  // (ทั้ง 2 ฝ่ายอนุมัติครบ หรือถูกปฏิเสธ)
+  TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail', 'ToApproverName', 'ToApproverEmail', 'ToApprovalToken', 'ToApproverComment', 'FromDecision', 'FromDecidedAt', 'ToDecision', 'ToDecidedAt'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
   SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
@@ -3212,11 +3217,15 @@ function createTransfer_(body) {
 
   const dept = getDeptByName_(body.fromDept);
   const skipApproval = !!(dept && dept.SkipApprovalEmail);
-  if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้อนุมัติ' };
+  // ต้องได้รับอนุมัติจากทั้ง 2 ฝ่าย (ฝ่ายโอน + ฝ่ายรับโอน) เอกสารจึงจะมีผล — บังคับกรอกอีเมลทั้งคู่
+  // (ApproverEmail เดิม = ฝ่ายโอน ตามที่ frontend auto-fill จาก fromDept มาแต่แรกอยู่แล้ว)
+  if (!skipApproval && !body.approverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้บริหารฝ่ายโอน' };
+  if (!skipApproval && !body.toApproverEmail) return { ok: false, error: 'ต้องระบุอีเมลผู้บริหารฝ่ายรับโอน' };
 
   const fromDeptCode = getCodeForDept_(body.fromDept) || 'GEN';
   const transferId = Utilities.getUuid();
   const token = Utilities.getUuid();
+  const toToken = Utilities.getUuid();
   const now = new Date();
   const status = skipApproval ? STATUS.APPROVED : STATUS.PENDING;
 
@@ -3248,6 +3257,9 @@ function createTransfer_(body) {
     newRow[idx.CreatedBy] = body.createdBy || '';
     newRow[idx.CreatedByEmail] = body.createdByEmail || '';
     if (idx.ToSignEmail !== undefined) newRow[idx.ToSignEmail] = body.toSignEmail || '';
+    if (idx.ToApproverName !== undefined) newRow[idx.ToApproverName] = body.toApproverName || '';
+    if (idx.ToApproverEmail !== undefined) newRow[idx.ToApproverEmail] = body.toApproverEmail || '';
+    if (idx.ToApprovalToken !== undefined) newRow[idx.ToApprovalToken] = toToken;
     tSheet.appendRow(newRow);
     return rn;
   });
@@ -3278,7 +3290,13 @@ function createTransfer_(body) {
     logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo + ' (อนุมัติอัตโนมัติ)');
   } else {
     logActivity_(transferId, 'CREATE', body.createdBy || 'unknown', 'สร้างใบโอนย้าย ' + runningNo);
-    emailResult = sendApprovalEmail_(transferId, runningNo, body, items, token);
+    // ต้องส่งขออนุมัติทั้ง 2 ฝ่ายแยกคนละอีเมล/ลิงก์ — เอกสารมีผลก็ต่อเมื่อทั้งคู่อนุมัติ (ดู decideTransfer_)
+    const fromEmailResult = sendApprovalEmail_(transferId, runningNo, body, items, token, body.approverEmail, 'ฝ่ายโอน (' + body.fromDept + ')');
+    const toEmailResult = sendApprovalEmail_(transferId, runningNo, body, items, toToken, body.toApproverEmail, 'ฝ่ายรับโอน (' + body.toDept + ')');
+    emailResult = {
+      ok: toEmailResult.ok && fromEmailResult.ok,
+      error: [toEmailResult.error, fromEmailResult.error].filter(Boolean).join('; ') || null
+    };
   }
 
   return { ok: true, data: { transferId, runningNo, emailSent: emailResult.ok, emailError: emailResult.error || null, autoApproved: skipApproval } };
@@ -3322,44 +3340,105 @@ function getNextRunningNo_(code, sheetName, startSeq) {
 // ============================================================
 // APPROVAL
 // ============================================================
+// ใบโอนย้ายต้องได้รับอนุมัติจากทั้ง 2 ฝ่าย (ฝ่ายโอน ผ่าน ApprovalToken เดิม + ฝ่ายรับโอน ผ่าน
+// ToApprovalToken ที่เพิ่มใหม่) จึงจะมีผล — เอกสารเก่าที่สร้างก่อนฟีเจอร์นี้ (ToApprovalToken ว่าง)
+// ยังคงพฤติกรรมเดิมคือรับอนุมัติฝ่ายเดียว (ผ่าน ApprovalToken) จบทันที ไม่ต้องรอฝ่ายรับโอน
 function getApprovalView_(transferId, token) {
   const found = findTransferRow_(transferId);
   if (!found) return { ok: false, error: 'ไม่พบใบโอนย้ายนี้' };
-  if (String(found.obj.ApprovalToken) !== String(token)) {
-    return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
-  }
+  const obj = found.obj;
+  const hasDualApproval = !!obj.ToApprovalToken;
+  let myRole = null;
+  if (String(obj.ApprovalToken) === String(token)) myRole = 'from';
+  else if (hasDualApproval && String(obj.ToApprovalToken) === String(token)) myRole = 'to';
+  if (!myRole) return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
+
   const items = getTransferItems_(transferId);
-  const obj = Object.assign({}, found.obj);
-  delete obj.ApprovalToken;
-  obj.Items = items;
-  return { ok: true, data: obj };
+  const view = Object.assign({}, obj);
+  delete view.ApprovalToken;
+  delete view.ToApprovalToken;
+  view.Items = items;
+  view.MyRole = myRole;
+  if (hasDualApproval) {
+    view.MyDecision = myRole === 'from' ? (obj.FromDecision || '') : (obj.ToDecision || '');
+    view.OtherDecision = myRole === 'from' ? (obj.ToDecision || '') : (obj.FromDecision || '');
+    view.OtherApproverLabel = myRole === 'from' ? (obj.ToApproverName || obj.ToApproverEmail) : (obj.ApproverName || obj.ApproverEmail);
+    view.OtherRoleLabel = myRole === 'from' ? 'ฝ่ายรับโอน' : 'ฝ่ายโอน';
+  }
+  return { ok: true, data: view };
 }
 
 // token = ลิงก์ที่ส่งให้ผู้อนุมัติทางอีเมล (วิธีปกติ) — หรือ Admin ส่ง password แทนได้ (isAdminOverride)
 // เผื่อกรณีหาอีเมล/ลิงก์เดิมไม่เจอ หรืออยากให้ Admin ยกเลิกเอกสารที่ค้างรออนุมัติได้เองโดยตรงจากในระบบ
+// สำหรับเอกสารที่ต้องอนุมัติ 2 ฝ่าย (hasDualApproval): decision='Approved' จากฝ่ายใดฝ่ายหนึ่งจะยังไม่
+// finalize เอกสารจนกว่าอีกฝ่ายจะอนุมัติด้วย — แต่ decision='Rejected' จากฝ่ายใดฝ่ายหนึ่งจบเอกสารทันที
+// ไม่ต้องรออีกฝ่าย (ปฏิเสธแล้วไม่มีประโยชน์จะรอ) ส่วน Admin override จบเอกสารทันทีเสมอไม่ว่ากรณีใด
 function decideTransfer_(body) {
   const transferId = body.transferId;
   const token = body.token;
   const decision = body.decision; // 'Approved' | 'Rejected'
   const found = findTransferRow_(transferId);
   if (!found) return { ok: false, error: 'ไม่พบใบโอนย้ายนี้' };
+  const obj = found.obj;
   const isAdminOverride = checkAdminPassword_(body.password);
-  if (!isAdminOverride && String(found.obj.ApprovalToken) !== String(token)) {
-    return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
+  const hasDualApproval = !!obj.ToApprovalToken;
+
+  let myRole = null;
+  if (!isAdminOverride) {
+    if (String(obj.ApprovalToken) === String(token)) myRole = 'from';
+    else if (hasDualApproval && String(obj.ToApprovalToken) === String(token)) myRole = 'to';
+    if (!myRole) return { ok: false, error: 'ลิงก์ไม่ถูกต้องหรือหมดอายุ' };
   }
-  if (found.obj.Status !== STATUS.PENDING) {
-    return { ok: false, error: 'ใบโอนย้ายนี้ถูกดำเนินการไปแล้ว (สถานะปัจจุบัน: ' + found.obj.Status + ')' };
+
+  if (obj.Status !== STATUS.PENDING) {
+    return { ok: false, error: 'ใบโอนย้ายนี้ถูกดำเนินการไปแล้ว (สถานะปัจจุบัน: ' + obj.Status + ')' };
   }
   if (decision !== STATUS.APPROVED && decision !== STATUS.REJECTED) {
     return { ok: false, error: 'decision ไม่ถูกต้อง' };
+  }
+  if (!isAdminOverride && hasDualApproval) {
+    const myExistingDecision = myRole === 'from' ? obj.FromDecision : obj.ToDecision;
+    if (myExistingDecision) return { ok: false, error: 'ท่านได้พิจารณาเอกสารนี้ไปแล้ว (' + myExistingDecision + ')' };
   }
 
   const sh = getSS_().getSheetByName(SHEETS.TRANSFERS);
   const idx = found.idx;
   const rowNum = found.rowNum;
+
+  function recordMySide(d) {
+    if (myRole === 'from') {
+      if (idx.FromDecision !== undefined) sh.getRange(rowNum, idx.FromDecision + 1).setValue(d);
+      if (idx.FromDecidedAt !== undefined) sh.getRange(rowNum, idx.FromDecidedAt + 1).setValue(new Date());
+      sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || '');
+    } else {
+      if (idx.ToDecision !== undefined) sh.getRange(rowNum, idx.ToDecision + 1).setValue(d);
+      if (idx.ToDecidedAt !== undefined) sh.getRange(rowNum, idx.ToDecidedAt + 1).setValue(new Date());
+      if (idx.ToApproverComment !== undefined) sh.getRange(rowNum, idx.ToApproverComment + 1).setValue(body.comment || '');
+    }
+  }
+
+  let finalize = true;
+  if (!isAdminOverride && hasDualApproval) {
+    recordMySide(decision);
+    if (decision === STATUS.APPROVED) {
+      const otherDecision = myRole === 'from' ? obj.ToDecision : obj.FromDecision;
+      finalize = (otherDecision === STATUS.APPROVED);
+    }
+  } else {
+    sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
+  }
+
+  if (!finalize) {
+    logActivity_(transferId, 'TRANSFER_PARTIAL_APPROVE', myRole === 'from' ? (obj.ApproverName || obj.ApproverEmail) : (obj.ToApproverName || obj.ToApproverEmail), 'อนุมัติฝั่ง' + (myRole === 'from' ? 'โอน' : 'รับโอน') + 'แล้ว รออีกฝ่ายอนุมัติเพิ่ม');
+    return { ok: true, data: { transferId, status: STATUS.PENDING, partial: true, myRole } };
+  }
+
   sh.getRange(rowNum, idx.Status + 1).setValue(decision);
   sh.getRange(rowNum, idx.ApprovedAt + 1).setValue(new Date());
-  sh.getRange(rowNum, idx.ApproverComment + 1).setValue(body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
+  if (isAdminOverride && hasDualApproval) {
+    if (idx.FromDecision !== undefined) sh.getRange(rowNum, idx.FromDecision + 1).setValue(decision);
+    if (idx.ToDecision !== undefined) sh.getRange(rowNum, idx.ToDecision + 1).setValue(decision);
+  }
 
   if (decision === STATUS.APPROVED) {
     applyTransferToAssets_(transferId);
@@ -3368,9 +3447,9 @@ function decideTransfer_(body) {
     sendRecipientNotification_(fullDoc, fullDoc.Items);
   }
 
-  logActivity_(transferId, decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
+  logActivity_(transferId, decision.toUpperCase(), isAdminOverride ? 'admin' : (myRole === 'from' ? (obj.ApproverName || obj.ApproverEmail) : (obj.ToApproverName || obj.ToApproverEmail)), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
+  sendDecisionNotification_(obj, decision, body.comment || '', isAdminOverride);
 
   return { ok: true, data: { transferId, status: decision } };
 }
@@ -3884,7 +3963,9 @@ function getOrCreateFolder_(name) {
 // ============================================================
 // EMAIL
 // ============================================================
-function sendApprovalEmail_(transferId, runningNo, body, items, token) {
+// recipientEmail/roleLabel: ต้องส่งขออนุมัติแยกทั้ง 2 ฝ่าย (ฝ่ายโอน/ฝ่ายรับโอน) คนละอีเมล คนละ token
+// — เอกสารมีผลก็ต่อเมื่อทั้งคู่อนุมัติ (ดู decideTransfer_) roleLabel บอกผู้รับว่าตัวเองเป็นฝ่ายไหน
+function sendApprovalEmail_(transferId, runningNo, body, items, token, recipientEmail, roleLabel) {
   try {
     const approveUrl = CONFIG.FRONTEND_URL + '?view=approve&id=' + encodeURIComponent(transferId) + '&token=' + encodeURIComponent(token);
     const itemsHtml = items.map((it, i) => (
@@ -3908,13 +3989,13 @@ function sendApprovalEmail_(transferId, runningNo, body, items, token) {
       '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รูป</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">หมายเหตุ</th></tr>' +
       itemsHtml +
       '</table>' +
-      '<p style="margin-top:20px;">กรุณาตรวจสอบรายละเอียดฉบับเต็มและพิจารณาอนุมัติที่ลิงก์ด้านล่าง:</p>' +
+      '<p style="margin-top:20px;">ท่านเป็นผู้อนุมัติ' + escapeHtml_(roleLabel || '') + ' — เอกสารนี้ต้องได้รับอนุมัติจากทั้ง 2 ฝ่าย (ฝ่ายโอน + ฝ่ายรับโอน) จึงจะมีผล กรุณาตรวจสอบรายละเอียดฉบับเต็มและพิจารณาอนุมัติที่ลิงก์ด้านล่าง:</p>' +
       '<p><a href="' + approveUrl + '" style="background:#1a3c6e;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;">เปิดใบโอนย้ายเพื่อพิจารณาอนุมัติ</a></p>' +
       '<p style="color:#888;font-size:12px;">ผู้ขอ: ' + escapeHtml_(body.createdBy || '-') + '</p>' +
       '</div>';
 
     MailApp.sendEmail({
-      to: body.approverEmail,
+      to: recipientEmail,
       subject: '[ขออนุมัติ] ใบโอนย้ายทรัพย์สิน ' + runningNo + ' — ' + CONFIG.COMPANY_NAME,
       htmlBody: html
     });
@@ -3929,13 +4010,19 @@ function sendDecisionNotification_(transferObj, decision, comment, isAdminOverri
     if (!transferObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
-    const byLabel = isAdminOverride ? 'Admin (ดำเนินการแทนผู้อนุมัติ)' : (transferObj.ApproverName || transferObj.ApproverEmail);
+    const hasDualApproval = !!transferObj.ToApprovalToken;
+    // เอกสารที่ต้องอนุมัติ 2 ฝ่าย ให้แจ้งชื่อทั้งคู่ไปเลย (ไม่ใช่แค่ฝ่ายที่กดล่าสุด) ผู้ขอจะได้เห็นครบว่าใครอนุมัติบ้าง
+    const byLabel = isAdminOverride
+      ? 'Admin (ดำเนินการแทนผู้อนุมัติ)'
+      : (hasDualApproval
+        ? 'ฝ่ายโอน: ' + escapeHtml_(transferObj.ApproverName || transferObj.ApproverEmail || '-') + ' / ฝ่ายรับโอน: ' + escapeHtml_(transferObj.ToApproverName || transferObj.ToApproverEmail || '-')
+        : escapeHtml_(transferObj.ApproverName || transferObj.ApproverEmail));
     const html =
       '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
       '<h3>ใบโอนย้ายทรัพย์สิน เลขที่ ' + transferObj.RunningNo + '</h3>' +
       '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
-      (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + escapeHtml_(byLabel) + '</p>' +
+      (comment ? '<p><b>ความเห็น:</b> ' + escapeHtml_(comment) + '</p>' : '') +
+      '<p>โดย: ' + byLabel + '</p>' +
       '</div>';
     MailApp.sendEmail({
       to: transferObj.CreatedByEmail,
