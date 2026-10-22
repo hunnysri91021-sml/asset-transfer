@@ -3443,14 +3443,16 @@ function decideTransfer_(body) {
 
   if (decision === STATUS.APPROVED) {
     applyTransferToAssets_(transferId);
-    const fullDoc = getTransferFull_(transferId);
+  }
+  const fullDoc = getTransferFull_(transferId); // ดึงใหม่หลังเขียนผล ให้ Status/ApprovedAt/FromDecision/ToDecision เป็นค่าล่าสุดสำหรับอีเมล/PDF
+  if (decision === STATUS.APPROVED) {
     exportDocToSharePointSafe_('transfer', fullDoc);
     sendRecipientNotification_(fullDoc, fullDoc.Items);
   }
 
   logActivity_(transferId, decision.toUpperCase(), isAdminOverride ? 'admin' : (myRole === 'from' ? (obj.ApproverName || obj.ApproverEmail) : (obj.ToApproverName || obj.ToApproverEmail)), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendDecisionNotification_(obj, decision, body.comment || '', isAdminOverride);
+  sendDecisionNotification_(fullDoc, decision, body.comment || '', isAdminOverride);
 
   if (isAdminOverride) {
     // obj คือสถานะ "ก่อน" ที่ Admin จะเขียนผล — FromDecision/ToDecision ที่ยังว่างตรงนี้คือฝ่ายที่ยังค้างพิจารณาอยู่จริง
@@ -3720,7 +3722,7 @@ function decideSale_(body) {
 
   logActivity_(saleId, 'SALE_' + decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendSaleDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
+  sendSaleDecisionNotification_(getSaleFull_(saleId), decision, body.comment || '', isAdminOverride);
 
   if (isAdminOverride) {
     sendAdminOverrideNoticeToApprover_('ใบขายออกทรัพย์สิน', found.obj.RunningNo, decision, found.obj.ApproverEmail, null);
@@ -3944,7 +3946,7 @@ function decideWriteOff_(body) {
 
   logActivity_(writeOffId, 'WRITEOFF_' + decision.toUpperCase(), isAdminOverride ? 'admin' : (found.obj.ApproverName || found.obj.ApproverEmail), body.comment || (isAdminOverride ? 'ดำเนินการโดย Admin' : ''));
 
-  sendWriteOffDecisionNotification_(found.obj, decision, body.comment || '', isAdminOverride);
+  sendWriteOffDecisionNotification_(getWriteOffFull_(writeOffId), decision, body.comment || '', isAdminOverride);
 
   if (isAdminOverride) {
     sendAdminOverrideNoticeToApprover_('ใบตัดชำรุดทรัพย์สิน', found.obj.RunningNo, decision, found.obj.ApproverEmail, null);
@@ -4047,25 +4049,16 @@ function sendAdminOverrideNoticeToApprover_(docTypeLabel, runningNo, decision, a
   }
 }
 
+// ส่งอีเมลแจ้งผลการพิจารณาให้ผู้ขอ (CreatedByEmail) ในรูปแบบเดียวกับแบบฟอร์มใบโอนย้ายตัวเต็ม (เหมือน PDF ที่
+// ขึ้น SharePoint/พิมพ์ในระบบ) แทนข้อความสั้นๆ เดิม — transferObj ต้องเป็นค่าล่าสุดหลังเขียนผลแล้ว (มี Items)
+// ดู buildTransferPdfHtml_/pdfTransferApprovalFooter_ สำหรับโครงสร้างฟอร์ม
 function sendDecisionNotification_(transferObj, decision, comment, isAdminOverride) {
   try {
     if (!transferObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
-    const hasDualApproval = !!transferObj.ToApprovalToken;
-    // เอกสารที่ต้องอนุมัติ 2 ฝ่าย ให้แจ้งชื่อทั้งคู่ไปเลย (ไม่ใช่แค่ฝ่ายที่กดล่าสุด) ผู้ขอจะได้เห็นครบว่าใครอนุมัติบ้าง
-    const byLabel = isAdminOverride
-      ? 'Admin (ดำเนินการแทนผู้อนุมัติ)'
-      : (hasDualApproval
-        ? 'ฝ่ายโอน: ' + escapeHtml_(transferObj.ApproverName || transferObj.ApproverEmail || '-') + ' / ฝ่ายรับโอน: ' + escapeHtml_(transferObj.ToApproverName || transferObj.ToApproverEmail || '-')
-        : escapeHtml_(transferObj.ApproverName || transferObj.ApproverEmail));
-    const html =
-      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
-      '<h3>ใบโอนย้ายทรัพย์สิน เลขที่ ' + transferObj.RunningNo + '</h3>' +
-      '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
-      (comment ? '<p><b>ความเห็น:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + byLabel + '</p>' +
-      '</div>';
+    const banner = '<p style="font-size:16px;">ใบโอนย้ายทรัพย์สินนี้ได้รับการพิจารณาแล้ว สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>';
+    const html = buildTransferPdfHtml_(transferObj, isAdminOverride).replace('<body>', '<body>' + banner);
     MailApp.sendEmail({
       to: transferObj.CreatedByEmail,
       subject: '[' + statusThai + '] ใบโอนย้ายทรัพย์สิน ' + transferObj.RunningNo,
@@ -4157,19 +4150,15 @@ function sendSaleApprovalEmail_(saleId, runningNo, body, items, token) {
   }
 }
 
+// ส่งอีเมลแจ้งผลการพิจารณาให้ผู้ขอ (CreatedByEmail) ในรูปแบบเดียวกับแบบฟอร์มใบขายออกตัวเต็ม (เหมือน PDF ที่
+// ขึ้น SharePoint/พิมพ์ในระบบ) แทนข้อความสั้นๆ เดิม — saleObj ต้องเป็นค่าล่าสุดหลังเขียนผลแล้ว (มี Items)
 function sendSaleDecisionNotification_(saleObj, decision, comment, isAdminOverride) {
   try {
     if (!saleObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? (saleObj.Channel === 'ประมูล' ? 'รอประมูล' : 'รอขาย (รอ Admin ยืนยันขายแล้ว)') : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
-    const byLabel = isAdminOverride ? 'Admin (ดำเนินการแทนผู้อนุมัติ)' : (saleObj.ApproverName || saleObj.ApproverEmail);
-    const html =
-      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
-      '<h3>ใบขายออกทรัพย์สิน เลขที่ ' + saleObj.RunningNo + '</h3>' +
-      '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
-      (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + escapeHtml_(byLabel) + '</p>' +
-      '</div>';
+    const banner = '<p style="font-size:16px;">ใบขายออกทรัพย์สินนี้ได้รับการพิจารณาแล้ว สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>';
+    const html = buildSalePdfHtml_(saleObj, isAdminOverride).replace('<body>', '<body>' + banner);
     MailApp.sendEmail({
       to: saleObj.CreatedByEmail,
       subject: '[' + statusThai + '] ใบขายออกทรัพย์สิน ' + saleObj.RunningNo,
@@ -4220,19 +4209,15 @@ function sendWriteOffApprovalEmail_(writeOffId, runningNo, body, items, token) {
   }
 }
 
+// ส่งอีเมลแจ้งผลการพิจารณาให้ผู้ขอ (CreatedByEmail) ในรูปแบบเดียวกับแบบฟอร์มใบตัดชำรุดตัวเต็ม (เหมือน PDF
+// ที่ขึ้น SharePoint/พิมพ์ในระบบ) แทนข้อความสั้นๆ เดิม — writeOffObj ต้องเป็นค่าล่าสุดหลังเขียนผลแล้ว (มี Items)
 function sendWriteOffDecisionNotification_(writeOffObj, decision, comment, isAdminOverride) {
   try {
     if (!writeOffObj.CreatedByEmail) return;
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
-    const byLabel = isAdminOverride ? 'Admin (ดำเนินการแทนผู้อนุมัติ)' : (writeOffObj.ApproverName || writeOffObj.ApproverEmail);
-    const html =
-      '<div style="font-family:Sarabun,Arial,sans-serif;max-width:600px;margin:auto;">' +
-      '<h3>ใบตัดชำรุดทรัพย์สิน เลขที่ ' + writeOffObj.RunningNo + '</h3>' +
-      '<p style="font-size:16px;">สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>' +
-      (comment ? '<p><b>ความเห็นผู้อนุมัติ:</b> ' + escapeHtml_(comment) + '</p>' : '') +
-      '<p>โดย: ' + escapeHtml_(byLabel) + '</p>' +
-      '</div>';
+    const banner = '<p style="font-size:16px;">ใบตัดชำรุดทรัพย์สินนี้ได้รับการพิจารณาแล้ว สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>';
+    const html = buildWriteOffPdfHtml_(writeOffObj, isAdminOverride).replace('<body>', '<body>' + banner);
     MailApp.sendEmail({
       to: writeOffObj.CreatedByEmail,
       subject: '[' + statusThai + '] ใบตัดชำรุดทรัพย์สิน ' + writeOffObj.RunningNo,
@@ -4411,18 +4396,45 @@ function pdfSignBlock_(leftLabel, leftName, rightLabel, rightName) {
     '</tr></table>';
 }
 
-function pdfApprovalFooter_(obj, isSale, approvedLabelOverride) {
+function pdfApprovalFooter_(obj, isSale, approvedLabelOverride, isAdminOverride) {
   if (obj.Status === 'Draft') return '';
   let html = '<div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">' +
     '<b>สถานะการอนุมัติ:</b> ' + pdfStatusBadge_(obj.Status, isSale, approvedLabelOverride) + '&nbsp; ';
-  if (obj.ApproverName || obj.ApproverEmail) html += 'โดย ' + escapeHtml_(obj.ApproverName || obj.ApproverEmail);
+  if (isAdminOverride) html += 'โดย Admin (ดำเนินการแทนผู้อนุมัติ)';
+  else if (obj.ApproverName || obj.ApproverEmail) html += 'โดย ' + escapeHtml_(obj.ApproverName || obj.ApproverEmail);
   if (obj.ApprovedAt) html += ' เมื่อ ' + fmtDateServer_(obj.ApprovedAt);
   if (obj.ApproverComment) html += '<br><b>ความเห็น:</b> ' + escapeHtml_(obj.ApproverComment);
   html += '</div>';
   return html;
 }
 
-function buildTransferPdfHtml_(t) {
+// เหมือน pdfApprovalFooter_ แต่สำหรับใบโอนย้ายที่ต้องอนุมัติ 2 ฝ่าย (มี ToApproverName/ToApproverEmail) —
+// แสดงผลการพิจารณาของทั้งฝ่ายโอนและฝ่ายรับโอนแยกกัน เอกสารเก่าที่ไม่มีฝ่ายรับโอน (ToApprover* ว่าง) ยัง
+// แสดงแบบอนุมัติฝ่ายเดียวเหมือนเดิมผ่าน pdfApprovalFooter_
+function pdfTransferApprovalFooter_(t, isAdminOverride) {
+  if (t.Status === 'Draft') return '';
+  const hasDualApproval = !!(t.ToApproverName || t.ToApproverEmail);
+  if (!hasDualApproval) return pdfApprovalFooter_(t, false, null, isAdminOverride);
+
+  let html = '<div style="margin-top:20px;padding-top:14px;border-top:1px solid #ddd;font-size:12.5px;">' +
+    '<b>สถานะการอนุมัติ:</b> ' + pdfStatusBadge_(t.Status, false);
+  if (isAdminOverride) {
+    html += '&nbsp; โดย Admin (ดำเนินการแทนผู้อนุมัติ)';
+    if (t.ApprovedAt) html += ' เมื่อ ' + fmtDateServer_(t.ApprovedAt);
+  } else {
+    const decisionLabel = d => d === 'Approved' ? 'อนุมัติ' : (d === 'Rejected' ? 'ไม่อนุมัติ' : 'รอการพิจารณา');
+    html += '<div style="margin-top:8px;"><b>ฝ่ายโอน:</b> ' + escapeHtml_(t.ApproverName || t.ApproverEmail || '-') +
+      ' — ' + decisionLabel(t.FromDecision) + (t.FromDecidedAt ? ' เมื่อ ' + fmtDateServer_(t.FromDecidedAt) : '') + '</div>' +
+      '<div style="margin-top:4px;"><b>ฝ่ายรับโอน:</b> ' + escapeHtml_(t.ToApproverName || t.ToApproverEmail || '-') +
+      ' — ' + decisionLabel(t.ToDecision) + (t.ToDecidedAt ? ' เมื่อ ' + fmtDateServer_(t.ToDecidedAt) : '') + '</div>';
+    if (t.ApproverComment) html += '<br><b>ความเห็นฝ่ายโอน:</b> ' + escapeHtml_(t.ApproverComment);
+    if (t.ToApproverComment) html += '<br><b>ความเห็นฝ่ายรับโอน:</b> ' + escapeHtml_(t.ToApproverComment);
+  }
+  html += '</div>';
+  return html;
+}
+
+function buildTransferPdfHtml_(t, isAdminOverride) {
   const rows = (t.Items || []).map((it, i) =>
     '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
     '</td><td>' + escapeHtml_(it.FromDeptName) + '<br><span style="font-size:11px;color:#666;">' + escapeHtml_(it.FromSignName) + '</span></td>' +
@@ -4446,7 +4458,7 @@ function buildTransferPdfHtml_(t) {
     '<div style="margin-top:26px;font-size:13px;"><b>รับทราบโดย</b><br>' +
     '1. ผจก.ฝ่าย/ผจก.ส่วน (โอน) &nbsp;&nbsp; วันที่ <span style="white-space:nowrap;">..........................</span><br>' +
     '2. ผจก.ฝ่าย/ผจก.ส่วน (รับโอน) &nbsp;&nbsp; วันที่ <span style="white-space:nowrap;">..........................</span></div>' +
-    pdfApprovalFooter_(t, false) +
+    pdfTransferApprovalFooter_(t, isAdminOverride) +
     '</body></html>';
 }
 
@@ -4455,7 +4467,7 @@ function saleApprovedLabel_(s) {
   return s.SaleConfirmedAt ? 'ขายแล้ว' : 'รอขาย';
 }
 
-function buildSalePdfHtml_(s) {
+function buildSalePdfHtml_(s, isAdminOverride) {
   const rows = (s.Items || []).map((it, i) =>
     '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
     '</td><td class="money">' + fmtMoneyServer_(it.ScrapPrice) + '</td><td class="money">' + fmtMoneyServer_(it.AuctionPrice) +
@@ -4474,11 +4486,11 @@ function buildSalePdfHtml_(s) {
     '<th style="width:12%;">ราคาซาก</th><th style="width:12%;">ราคาประมูล</th><th style="width:12%;">ราคาขาย</th><th style="width:13%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="6" style="text-align:right;font-weight:600;">รวมราคาขาย</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
     pdfSignBlock_('ผู้บันทึก', s.CreatedBy, 'ผู้อนุมัติ', s.ApproverName) +
-    pdfApprovalFooter_(s, true, saleApprovedLabel_(s)) +
+    pdfApprovalFooter_(s, true, saleApprovedLabel_(s), isAdminOverride) +
     '</body></html>';
 }
 
-function buildWriteOffPdfHtml_(w) {
+function buildWriteOffPdfHtml_(w, isAdminOverride) {
   const rows = (w.Items || []).map((it, i) =>
     '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
     '</td><td class="money">' + fmtMoneyServer_(it.ScrapPrice) + '</td><td>' + escapeHtml_(it.Remark) + '</td></tr>'
@@ -4495,7 +4507,7 @@ function buildWriteOffPdfHtml_(w) {
     '<th style="width:16%;">ราคาซาก</th><th style="width:20%;">หมายเหตุ</th></tr>' + rows +
     '<tr><td colspan="4" style="text-align:right;font-weight:600;">รวมราคาซาก</td><td style="font-weight:700;">' + fmtMoneyServer_(total) + '</td><td></td></tr></table>' +
     pdfSignBlock_('ผู้บันทึก', w.CreatedBy, 'ผู้อนุมัติ', w.ApproverName) +
-    pdfApprovalFooter_(w, false) +
+    pdfApprovalFooter_(w, false, null, isAdminOverride) +
     '</body></html>';
 }
 
