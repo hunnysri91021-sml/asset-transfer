@@ -3288,11 +3288,13 @@ function renderList(root){
         <td>${statusBadge(t.Status)}</td>
         <td>${esc(t.ApproverName||t.ApproverEmail||'-')}</td>
         <td class="no-print">
+          ${STATE.role==='admin' ? `
           <button class="btn btn-secondary btn-sm" onclick="openPrint('${t.TransferID}')">ดู/พิมพ์</button>
           ${t.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('transfer','${t.TransferID}',this)">📧 ${t.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${t.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${t.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(t.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
-          ${STATE.role==='admin' && t.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingTransfer('${t.TransferID}',this)">✓ อนุมัติ (Admin)</button>
+          ${t.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingTransfer('${t.TransferID}',this)">✓ อนุมัติ (Admin)</button>
           <button class="btn btn-red btn-sm" onclick="cancelPendingTransfer('${t.TransferID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
+          ` : '-'}
         </td>
       </tr>`;
     });
@@ -3939,13 +3941,15 @@ function renderSaleList(root){
         <td>${saleStatusBadge(s)}</td>
         <td>${esc(s.ApproverName||s.ApproverEmail||'-')}</td>
         <td class="no-print">
+          ${STATE.role==='admin' ? `
           <button class="btn btn-secondary btn-sm" onclick="openSalePrint('${s.SaleID}')">ดู/พิมพ์</button>
           ${saleBucketOf(s)==='AwaitingSale' ? `<button class="btn btn-primary btn-sm" onclick="confirmSale('${s.SaleID}',this)">✔ ยืนยันขายแล้ว</button>` : ''}
           ${saleBucketOf(s)==='Sold' ? `<button class="btn btn-secondary btn-sm" onclick="unconfirmSale('${s.SaleID}',this)">↩ ยกเลิกการยืนยัน</button>` : ''}
-          ${STATE.role==='admin' && s.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingSale('${s.SaleID}',this)">✓ อนุมัติ (Admin)</button>
+          ${s.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingSale('${s.SaleID}',this)">✓ อนุมัติ (Admin)</button>
           <button class="btn btn-red btn-sm" onclick="cancelPendingSale('${s.SaleID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
           ${s.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('sale','${s.SaleID}',this)">📧 ${s.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${s.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${s.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(s.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
+          ` : '-'}
         </td>
       </tr>`;
     });
@@ -4539,11 +4543,13 @@ function renderWriteOffList(root){
         <td>${woStatusBadge(w)}</td>
         <td>${esc(w.ApproverName||w.ApproverEmail||'-')}</td>
         <td class="no-print">
+          ${STATE.role==='admin' ? `
           <button class="btn btn-secondary btn-sm" onclick="openWriteOffPrint('${w.WriteOffID}')">ดู/พิมพ์</button>
           ${w.Status==='Approved' ? `<button class="btn btn-secondary btn-sm" onclick="sendNotifyEmail('writeoff','${w.WriteOffID}',this)">📧 ${w.NotifiedAt?'ส่งซ้ำ':'แจ้งบัญชี/GA'}</button>
           <div style="font-size:11px;color:${w.NotifiedAt?'var(--green)':'var(--muted)'};margin-top:2px;">${w.NotifiedAt?('✅ ส่งแล้ว '+fmtDate(w.NotifiedAt)):'ยังไม่ส่ง'}</div>` : ''}
-          ${STATE.role==='admin' && w.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingWriteOff('${w.WriteOffID}',this)">✓ อนุมัติ (Admin)</button>
+          ${w.Status==='PendingApproval' ? `<button class="btn btn-green btn-sm" onclick="approvePendingWriteOff('${w.WriteOffID}',this)">✓ อนุมัติ (Admin)</button>
           <button class="btn btn-red btn-sm" onclick="cancelPendingWriteOff('${w.WriteOffID}',this)">❌ ยกเลิก (Admin)</button>` : ''}
+          ` : '-'}
         </td>
       </tr>`;
     });
