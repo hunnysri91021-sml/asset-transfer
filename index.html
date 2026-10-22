@@ -736,11 +736,12 @@ function render(){
   if(navAuctionLiveBtn) navAuctionLiveBtn.style.display = hideAuctionLiveNav ? 'none' : '';
   if(STATE.view==='auction' && hideAuctionNav) STATE.view = 'dashboard';
   if(STATE.view==='auctionLive' && hideAuctionLiveNav) STATE.view = 'dashboard';
-  // ซ่อนทั้งเมนู โอนย้าย/ขายออก/ตัดชำรุด (ทั้งรายการและปุ่มสร้าง) จากบัญชี role "user" ทั้งหมด — เฉพาะ Admin
-  // เท่านั้นที่เข้าถึง 3 หมวดนี้ได้ (ผู้บริหารยังดูรายการได้เหมือนเดิม แต่สร้าง/แก้ไขไม่ได้ ดู isViewOnly())
-  // หมายเหตุ: เดิมมีการตั้งค่าเปิด/ปิดเป็นรายหมวดต่อผู้ใช้ (STATE.disabledCategories จากหน้าตั้งค่า > ผู้ใช้งาน)
-  // แต่ตอนนี้ปิดทั้งหมวดให้ user ทุกคนเสมอแทน ค่า disabledCategories ที่ตั้งไว้เดิมจึงไม่มีผลแล้ว (ดู
-  // checkCategoryEnabled_ ฝั่ง backend ที่บังคับเหมือนกัน)
+  // ซ่อนปุ่ม "+ สร้าง..." (create/saleCreate/writeOffCreate) ถ้าเข้าเงื่อนไขใดเงื่อนไขหนึ่งต่อไปนี้:
+  // (1) ผู้บริหาร — ดูข้อมูลได้ทุกที่แต่สร้าง/แก้ไขเอกสารไม่ได้ (isViewOnly())
+  // (2) Admin ปิดการใช้งาน "ทั้งหมวด" โอนย้าย/ขายออก/ตัดชำรุดไว้สำหรับ user คนนี้ที่หน้าตั้งค่า > ผู้ใช้งาน
+  //     (STATE.disabledCategories มาจาก login_ — admin/ผู้บริหารไม่ถูกจำกัดเลย ดู checkCategoryEnabled_ ฝั่ง backend)
+  // คำนวณรวมทั้ง 2 เงื่อนไขในที่เดียวกันคราวเดียว กันบั๊กที่เคยเกิด (2 บล็อกแยกกันเซ็ต display ทับกันเอง
+  // ทำให้อีกเงื่อนไขหนึ่งถูกเขียนทับจนไม่มีผล ไม่ว่าจะรันก่อนหรือหลังก็ตาม)
   const CATEGORY_NAV = {
     Transfer: { groupId: 'navGroupTransfer', itemClass: 'navItemTransfer', views: ['list', 'create'] },
     Sale: { groupId: 'navGroupSale', itemClass: 'navItemSale', views: ['saleList', 'saleCreate', 'saleCreateAuction', 'auctionSoldAssets'] },
@@ -750,7 +751,7 @@ function render(){
   const canRestrictCategories = STATE.role !== 'admin' && STATE.role !== 'executive';
   const categoryHidden = {};
   Object.keys(CATEGORY_NAV).forEach(cat=>{
-    categoryHidden[cat] = canRestrictCategories;
+    categoryHidden[cat] = canRestrictCategories && (STATE.disabledCategories||[]).indexOf(cat) !== -1;
   });
   Object.keys(CREATE_BTN_CATEGORY).forEach(v=>{
     const btn = document.querySelector('#mainNav button[data-view="'+v+'"]');
