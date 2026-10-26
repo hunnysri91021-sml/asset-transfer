@@ -377,6 +377,9 @@ function doPost(e) {
       case 'adminStartNewAuctionRound':
         result = adminStartNewAuctionRound_(body);
         break;
+      case 'adminUndoStartAuctionRound':
+        result = adminUndoStartAuctionRound_(body);
+        break;
       case 'markAuctionInterest':
         result = markAuctionInterest_(body);
         break;
@@ -2014,6 +2017,7 @@ function markAuctionInterest_(body) {
 // ============================================================
 const AUCTION_CURRENT_ROUND_PROP = 'AUCTION_CURRENT_ROUND';
 const AUCTION_ROUND_STARTED_AT_PROP = 'AUCTION_ROUND_STARTED_AT';
+const AUCTION_LAST_ROUND_REMOVED_IDS_PROP = 'AUCTION_LAST_ROUND_REMOVED_IDS'; // JSON array ของ AssetID ที่ถูกถอดออกตอนปิดรอบล่าสุด ใช้คืนค่าตอน "ยกเลิกเริ่มรอบใหม่"
 function getAuctionCurrentRound_() {
   const v = parseInt(PropertiesService.getScriptProperties().getProperty(AUCTION_CURRENT_ROUND_PROP), 10);
   return (v && v > 0) ? v : 1;
@@ -2050,12 +2054,14 @@ function adminStartNewAuctionRound_(body) {
   const values = sh.getDataRange().getValues();
   const idx = indexMap_(values[0]);
   let removedCount = 0;
+  const removedAssetIds = [];
   if (idx.SendToAuction !== undefined && idx.AuctionSold !== undefined) {
     for (let i = 1; i < values.length; i++) {
       const sendToAuction = String(values[i][idx.SendToAuction]).toLowerCase() === 'true';
       const auctionSold = String(values[i][idx.AuctionSold]).toLowerCase() === 'true';
       if (sendToAuction && !auctionSold) {
         sh.getRange(i + 1, idx.SendToAuction + 1).setValue('FALSE');
+        removedAssetIds.push(String(values[i][idx.AssetID]));
         removedCount++;
       }
     }
@@ -2064,9 +2070,58 @@ function adminStartNewAuctionRound_(body) {
   const props = PropertiesService.getScriptProperties();
   props.setProperty(AUCTION_CURRENT_ROUND_PROP, String(nextRound));
   props.setProperty(AUCTION_ROUND_STARTED_AT_PROP, new Date().toISOString());
+  props.setProperty(AUCTION_LAST_ROUND_REMOVED_IDS_PROP, JSON.stringify(removedAssetIds));
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_START_AUCTION_ROUND', 'admin', 'ปิดรอบประมูลที่ ' + currentRound + ' และเริ่มรอบที่ ' + nextRound + ' (ถอดรายการที่ยังไม่ขาย ' + removedCount + ' รายการออกจากรายการเปิดประมูล รอ Admin เลือกเข้ารอบใหม่)');
   return { ok: true, data: { previousRound: currentRound, currentRound: nextRound, removedCount: removedCount } };
+}
+
+// Admin กด "ยกเลิกเริ่มรอบใหม่" (เผื่อกดปิดรอบผิด) — ย้อนกลับ adminStartNewAuctionRound_ ครั้งล่าสุด: คืนค่า
+// SendToAuction=TRUE ให้รายการที่เพิ่งถูกถอดออก (เก็บรายชื่อไว้ใน AUCTION_LAST_ROUND_REMOVED_IDS_PROP ตอนปิดรอบ)
+// แล้วลดเลขรอบปัจจุบันกลับ 1 — บล็อกไม่ให้ยกเลิกถ้ามีการบันทึกใบประมูลเข้ารอบปัจจุบันไปแล้ว (เพราะใบประมูลเหล่านั้น
+// จะกลายเป็นของรอบที่ไม่มีอยู่จริงอีกต่อไป) และยกเลิกได้แค่ "ครั้งล่าสุด" เท่านั้น (ไม่รองรับย้อนหลายรอบพร้อมกัน)
+function adminUndoStartAuctionRound_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const currentRound = getAuctionCurrentRound_();
+  if (currentRound <= 1) return { ok: false, error: 'ยังไม่เคยกด "ปิดรอบและเริ่มรอบใหม่" ไม่มีอะไรให้ยกเลิก' };
+
+  const bidSh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+  const bidValues = bidSh.getDataRange().getValues();
+  const bidIdx = indexMap_(bidValues[0]);
+  let bidsInCurrentRound = 0;
+  if (bidIdx.Round !== undefined) {
+    for (let i = 1; i < bidValues.length; i++) {
+      if (parseInt(bidValues[i][bidIdx.Round], 10) === currentRound) bidsInCurrentRound++;
+    }
+  }
+  if (bidsInCurrentRound > 0) {
+    return { ok: false, error: 'มีการบันทึกใบประมูลเข้ารอบที่ ' + currentRound + ' แล้ว ' + bidsInCurrentRound + ' ใบ ไม่สามารถยกเลิกเริ่มรอบใหม่ได้ (ต้องลบใบประมูลเหล่านั้นก่อน)' };
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const removedAssetIds = JSON.parse(props.getProperty(AUCTION_LAST_ROUND_REMOVED_IDS_PROP) || '[]');
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  let restoredCount = 0;
+  if (idx.SendToAuction !== undefined && idx.AuctionSold !== undefined && removedAssetIds.length) {
+    const idSet = new Set(removedAssetIds);
+    for (let i = 1; i < values.length; i++) {
+      const auctionSold = String(values[i][idx.AuctionSold]).toLowerCase() === 'true';
+      if (idSet.has(String(values[i][idx.AssetID])) && !auctionSold) {
+        sh.getRange(i + 1, idx.SendToAuction + 1).setValue('TRUE');
+        restoredCount++;
+      }
+    }
+  }
+
+  const previousRound = currentRound - 1;
+  props.setProperty(AUCTION_CURRENT_ROUND_PROP, String(previousRound));
+  if (previousRound <= 1) props.deleteProperty(AUCTION_ROUND_STARTED_AT_PROP);
+  props.deleteProperty(AUCTION_LAST_ROUND_REMOVED_IDS_PROP);
+  invalidateDisposedAssetStatusCache_();
+  logActivity_('', 'ADMIN_UNDO_START_AUCTION_ROUND', 'admin', 'ยกเลิกการเริ่มรอบที่ ' + currentRound + ' กลับไปเป็นรอบที่ ' + previousRound + ' (คืนรายการเปิดประมูล ' + restoredCount + ' รายการ)');
+  return { ok: true, data: { previousRound: currentRound, currentRound: previousRound, restoredCount: restoredCount } };
 }
 
 // ============================================================

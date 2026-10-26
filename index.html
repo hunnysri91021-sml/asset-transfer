@@ -2858,6 +2858,7 @@ function renderAuctionSelection(root){
       <p id="aselRoundBanner" style="color:var(--muted);font-size:13px;">กำลังโหลด...</p>
       <p style="color:var(--muted);font-size:12px;">เมื่อรอบปัจจุบันปิดรับประมูลแล้ว กด "ปิดรอบและเริ่มรอบใหม่" — รายการที่ยังไม่ขาย (ยังไม่ AuctionSold) จะถูกถอดออกจากรายการเปิดประมูลทั้งหมดกลับมาอยู่ในส่วน "คัดเลือกรายการประมูล" ด้านล่าง ให้ Admin เลือกติ๊ก "ส่งประมูล" เข้ารอบใหม่เองทีละรายการ ผลของรอบเก่ายังดูย้อนหลังได้ครบที่หน้า "ประกาศผล"</p>
       <button class="btn btn-primary btn-sm no-print" id="btnStartNewAuctionRound">🔁 ปิดรอบและเริ่มรอบใหม่</button>
+      <button class="btn btn-secondary btn-sm no-print" id="btnUndoStartNewAuctionRound">↩ ยกเลิกเริ่มรอบใหม่ (รอบล่าสุด)</button>
     </div>
 
     <div class="card">
@@ -2911,6 +2912,21 @@ function renderAuctionSelection(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'ปิดรอบไม่สำเร็จ','err'); return; }
       toast('ปิดรอบที่ '+res.data.previousRound+' และเริ่มรอบที่ '+res.data.currentRound+' สำเร็จ (ถอดรายการที่ยังไม่ขาย '+res.data.removedCount+' รายการออกจากประมูล)','ok');
+      loadRoundBanner();
+      load();
+    });
+  };
+
+  // ยกเลิกการ "ปิดรอบและเริ่มรอบใหม่" ครั้งล่าสุด (เผื่อกดผิด) — ย้อนเลขรอบกลับ 1 และคืนรายการที่เพิ่งถูกถอด
+  // ออกจากประมูลกลับเข้าไปใหม่ ใช้ action เดียวกับฝั่ง backend ที่กันไว้แล้วว่าถ้ามีใบประมูลเข้ารอบใหม่ไปแล้วจะยกเลิกไม่ได้
+  document.getElementById('btnUndoStartNewAuctionRound').onclick = ()=>{
+    if(!confirm('ยืนยันยกเลิกการเริ่มรอบใหม่ล่าสุด? (ย้อนเลขรอบกลับ 1 และคืนรายการที่ถูกถอดออกจากประมูลกลับเข้าไปใหม่)\n\nใช้ได้เฉพาะกรณียังไม่มีการบันทึกใบประมูลเข้ารอบใหม่เลย')) return;
+    const btn = document.getElementById('btnUndoStartNewAuctionRound');
+    btn.disabled = true;
+    apiPost({ action:'adminUndoStartAuctionRound', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+      toast('ยกเลิกรอบที่ '+res.data.previousRound+' กลับไปเป็นรอบที่ '+res.data.currentRound+' สำเร็จ (คืนรายการเปิดประมูล '+res.data.restoredCount+' รายการ)','ok');
       loadRoundBanner();
       load();
     });
