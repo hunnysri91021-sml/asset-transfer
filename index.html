@@ -164,6 +164,7 @@
     .doc-table{border-collapse:collapse !important;}
     .doc-table tr{page-break-inside:avoid;break-inside:avoid;}
   }
+  .asset-map-label{font-size:11px;font-weight:700;padding:1px 6px;}
 </style>
 </head>
 <body>
@@ -1399,7 +1400,10 @@ function renderAssetQrLabel(root){
     root.innerHTML = '<div class="card"><div class="empty">ไม่พบข้อมูลทรัพย์สิน — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
     return;
   }
-  const qrUrl = GAS_URL + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
+  // ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น GitHub Pages) ไม่ใช่ GAS_URL — GAS_URL คือ endpoint
+  // backend (Apps Script exec) ที่ตอบกลับเป็น JSON ล้วนเท่านั้น ไม่มีหน้า HTML ให้แสดงผล (เหมือนลิงก์
+  // "ประมูลขายสาธารณะ" ที่หน้าตั้งค่าใช้ location.origin+location.pathname แบบเดียวกัน)
+  const qrUrl = location.origin + location.pathname + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
   root.innerHTML = `
     <div class="card no-print" style="margin-bottom:12px;">
       <button class="btn btn-secondary btn-sm" id="btnQrBack">← กลับ</button>
@@ -1411,6 +1415,10 @@ function renderAssetQrLabel(root){
       <div style="font-size:16px;font-weight:700;">${esc(asset.AssetID)}</div>
       <div style="font-size:14px;margin-top:2px;">${esc(asset.AssetName)}</div>
       <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(asset.Department||'-')}${asset.Location ? ' — '+esc(asset.Location) : ''}</div>
+    </div>
+    <div class="card no-print" style="max-width:360px;">
+      <label style="font-size:12px;">ลิงก์ (กรณีไม่สะดวกสแกน)</label>
+      <input type="text" readonly value="${esc(qrUrl)}" onclick="this.select();" style="width:100%;font-size:12px;">
     </div>
   `;
   document.getElementById('btnQrBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
@@ -1748,6 +1756,9 @@ function renderDashAssetMap(assets){
   }).addTo(map);
   const markers = pinned.map(a=>{
     const m = L.marker([parseFloat(a.Lat), parseFloat(a.Lng)]).addTo(map);
+    // แสดงรหัสทรัพย์สินค้างไว้บนแผนที่เลยโดยไม่ต้องคลิก (permanent tooltip) — ส่วนรายละเอียดอื่น (ชื่อ/
+    // หน่วยงาน/สถานที่) ยังต้องคลิกหมุดดูใน popup เหมือนเดิม กันป้ายรกเกินไปถ้าหมุดเยอะ
+    m.bindTooltip(esc(a.AssetID), { permanent: true, direction: 'top', offset: [0, -8], className: 'asset-map-label' });
     m.bindPopup('<b>'+esc(a.AssetID)+'</b><br>'+esc(a.AssetName)+'<br>'+esc(a.Department||'-')+(a.Location?' — '+esc(a.Location):''));
     return m;
   });
