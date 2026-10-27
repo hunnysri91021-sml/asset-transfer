@@ -1123,7 +1123,7 @@ function renderAssetList(root){
     const allSelected = manageMode && rows.every(a=>STATE.selectedAssetIds.indexOf(a.AssetID)!==-1);
     let html = '<table class="asset-table"><tr>'
       + (manageMode ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="alSelectAll" ${allSelected?'checked':''}></th>` : '')
-      + `<th style="width:6%;">รูป</th><th class="no-print" style="width:5%;">QR</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
+      + `<th style="width:6%;">รูป</th><th class="no-print" style="width:4%;">QR</th><th style="width:9%;">รหัส</th><th style="width:${manageMode?'11':'14'}%;">ชื่อทรัพย์สิน</th>`
       + '<th style="width:8%;">หน่วยงาน</th><th style="width:7%;">ฝ่าย</th><th style="width:7%;">กลุ่มงาน</th><th style="width:8%;">ผู้ดูแล</th><th style="width:8%;">สถานที่</th>'
       + '<th style="width:8%;">ราคาซื้อ</th><th style="width:8%;">มูลค่าตามบัญชี</th><th style="width:6%;">สถานะ</th><th style="width:8%;">แท็กสถานะ</th>'
       + (manageMode ? '<th class="no-print" style="width:10%;">จัดการ</th><th class="no-print" style="width:5%;">ลบ</th>' : '')
@@ -1134,7 +1134,7 @@ function renderAssetList(root){
       html += `<tr>
         ${manageMode ? `<td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>` : ''}
         <td><img class="thumb thumb-sm" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
-        <td class="no-print"><img src="${esc(assetQrImageUrl(a.AssetID, 50))}" width="50" height="50" style="cursor:pointer;" title="คลิกเพื่อเปิด/พิมพ์ป้าย QR" data-qrthumb="${esc(a.AssetID)}"></td>
+        <td class="no-print" style="text-align:center;"><img src="${esc(assetQrImageUrl(a.AssetID, 36))}" width="36" height="36" style="cursor:pointer;vertical-align:middle;" title="คลิกเพื่อเปิด/พิมพ์ป้าย QR" data-qrthumb="${esc(a.AssetID)}"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}${syncFlagBadge(a)}</td>
         <td>${esc(a.Department)}</td>
