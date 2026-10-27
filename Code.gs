@@ -536,9 +536,11 @@ function getAssetPublicView_(assetId) {
 }
 
 // ปักหมุดตำแหน่ง GPS ของทรัพย์สิน — เรียกจากหน้าสาธารณะ renderAssetPublicView (สแกน QR แล้วแตะปักหมุดบนแผนที่
-// ได้เลย) ตั้งใจไม่ต้อง login เหมือนกับ getAssetPublicView_ (ฟีเจอร์นี้ออกแบบมาให้คนในหน่วยงานสแกนป้ายแล้ว
-// ปักหมุดเองตรงจุดได้ทันที ไม่ต้องรอ Admin) ไม่กระทบ Location (free text) เดิม — เก็บแยกเป็นพิกัด Lat/Lng
+// ได้เลย) ต่างจาก getAssetPublicView_ (ดูอย่างเดียว ไม่ต้อง login) ตรงที่การ "แก้ไข" ตำแหน่งนี้ต้อง login
+// ก่อนเสมอ (เช็คแค่ว่าเป็นผู้ใช้ที่มีอยู่จริง ไม่จำกัด role — user/executive/admin ปักหมุดได้ทุกคนที่ล็อกอินแล้ว)
+// กันคนนอกที่สแกนเจอ URL เฉยๆ มาแก้ตำแหน่งได้ตามใจ ไม่กระทบ Location (free text) เดิม — เก็บแยกเป็นพิกัด Lat/Lng
 function updateAssetLocationPin_(body) {
+  if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนปักหมุดตำแหน่ง' };
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'ไม่พบรหัสทรัพย์สิน' };
   const lat = parseFloat(body.lat);
