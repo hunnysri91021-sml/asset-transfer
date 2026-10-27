@@ -6,9 +6,7 @@
 <title>ระบบโอนย้ายทรัพย์สิน — SML</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
     --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
@@ -163,6 +161,7 @@
     * {-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important;}
     .doc-table{border-collapse:collapse !important;}
     .doc-table tr{page-break-inside:avoid;break-inside:avoid;}
+    .asset-qr-card{page-break-inside:avoid;break-inside:avoid;}
   }
   .asset-map-label{font-size:11px;font-weight:700;padding:1px 6px;}
 </style>
@@ -980,6 +979,7 @@ function renderAssetList(root){
         <button class="btn btn-primary btn-sm" id="btnAlSale">สร้างใบขาย</button>
         <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlQrBatch">🏷️ พิมพ์ป้าย QR (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
       </div>
       <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
@@ -1002,6 +1002,12 @@ function renderAssetList(root){
     document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
     document.getElementById('btnAlWriteOff').onclick = ()=> startFromSelection('writeOffCreate');
     document.getElementById('btnAlRestore').onclick = restoreSelected;
+    document.getElementById('btnAlQrBatch').onclick = ()=>{
+      if(!STATE.selectedAssetIds.length){ toast('กรุณาเลือกทรัพย์สินที่ต้องการพิมพ์ป้ายก่อน','err'); return; }
+      STATE.qrLabelAssetIds = STATE.selectedAssetIds.slice();
+      STATE.view = 'assetQrLabel';
+      render();
+    };
     document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
   }
 
@@ -1165,7 +1171,7 @@ function renderAssetList(root){
     host.querySelectorAll('[data-qrid]').forEach(btn=>{
       btn.onclick = ()=>{
         STATE.view = 'assetQrLabel';
-        STATE.qrLabelAssetId = btn.dataset.qrid;
+        STATE.qrLabelAssetIds = [btn.dataset.qrid];
         render();
       };
     });
@@ -1391,42 +1397,49 @@ function renderAssetList(root){
   }
 }
 
-/* ================= ASSET QR LABEL VIEW (Admin: สร้าง/พิมพ์ป้าย QR ติดทรัพย์สิน) ================= */
+/* ================= ASSET QR LABEL VIEW (Admin: สร้าง/พิมพ์ป้าย QR ติดทรัพย์สิน — เลือกได้หลายรายการ) ================= */
 // QR code เข้ารหัสเป็นลิงก์ไปหน้า renderAssetPublicView (?view=assetView&id=...) ที่เปิดดูได้โดยไม่ต้อง
 // login — สแกนป้ายที่ติดอยู่กับทรัพย์สินจริงแล้วเจอข้อมูล รหัส/ชื่อ/หน่วยงาน/สถานที่/สถานะทันที
+// ใช้รูปภาพ QR จาก api.qrserver.com (<img src="...">) แทนการสร้างด้วยไลบรารี JS ฝั่ง client — ของเดิม
+// (qrcode.js จาก CDN) เจอปัญหาจริงที่หน้างานว่า QR ไม่ขึ้นเลยแบบเงียบๆ (โหลดสคริปต์ไม่สำเร็จ/ถูกบล็อก)
+// เปลี่ยนเป็น <img> ธรรมดาแทน ถ้าโหลดไม่ได้อย่างน้อยก็ยังเห็นไอคอนรูปเสีย ไม่ใช่พื้นที่ว่างเงียบๆ เหมือนเดิม
+// ขนาดป้ายเล็กกะทัดรัด (QR ~110px) จัดเป็นตารางเพื่อพิมพ์ได้หลายป้ายต่อหน้าเดียว
 function renderAssetQrLabel(root){
-  const asset = (STATE.assetsFull||[]).find(a=>a.AssetID===STATE.qrLabelAssetId);
-  if(!asset){
+  const ids = STATE.qrLabelAssetIds || [];
+  const assets = ids.map(id => (STATE.assetsFull||[]).find(a=>a.AssetID===id)).filter(Boolean);
+  if(!assets.length){
     root.innerHTML = '<div class="card"><div class="empty">ไม่พบข้อมูลทรัพย์สิน — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
     return;
   }
   // ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น GitHub Pages) ไม่ใช่ GAS_URL — GAS_URL คือ endpoint
   // backend (Apps Script exec) ที่ตอบกลับเป็น JSON ล้วนเท่านั้น ไม่มีหน้า HTML ให้แสดงผล (เหมือนลิงก์
   // "ประมูลขายสาธารณะ" ที่หน้าตั้งค่าใช้ location.origin+location.pathname แบบเดียวกัน)
-  const qrUrl = location.origin + location.pathname + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
+  const base = location.origin + location.pathname;
+  const urlFor = (assetId) => base + '?view=assetView&id=' + encodeURIComponent(assetId);
+  const qrSize = 110;
+
+  const cardsHtml = assets.map(a=>{
+    const qrUrl = urlFor(a.AssetID);
+    const qrImgSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=' + qrSize + 'x' + qrSize + '&margin=1&data=' + encodeURIComponent(qrUrl);
+    return `
+      <div class="card asset-qr-card" style="width:180px;text-align:center;padding:12px;">
+        <img src="${esc(qrImgSrc)}" width="${qrSize}" height="${qrSize}" style="display:block;margin:0 auto;" alt="QR ${esc(a.AssetID)}">
+        <div style="font-size:13px;font-weight:700;margin-top:6px;">${esc(a.AssetID)}</div>
+        <div style="font-size:12px;margin-top:1px;">${esc(a.AssetName)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(a.Department||'-')}${a.Location ? ' — '+esc(a.Location) : ''}</div>
+      </div>`;
+  }).join('');
+
   root.innerHTML = `
     <div class="card no-print" style="margin-bottom:12px;">
       <button class="btn btn-secondary btn-sm" id="btnQrBack">← กลับ</button>
-      <button class="btn btn-primary btn-sm" id="btnQrPrint">🖨️ พิมพ์ป้าย</button>
-      <p style="color:var(--muted);font-size:12px;margin-top:8px;">สแกน QR นี้จะเปิดหน้าดูข้อมูลทรัพย์สินนี้ได้ทันทีโดยไม่ต้อง login — พิมพ์แล้วนำไปติดกับตัวทรัพย์สินจริง</p>
+      <button class="btn btn-primary btn-sm" id="btnQrPrint">🖨️ พิมพ์ป้าย (${assets.length} รายการ)</button>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px;">สแกน QR จะเปิดหน้าดูข้อมูลทรัพย์สินนั้นได้ทันทีโดยไม่ต้อง login — พิมพ์แล้วตัดแปะติดกับตัวทรัพย์สินจริง (ขนาดเล็กกะทัดรัด เหมาะกับของชิ้นเล็ก)</p>
     </div>
-    <div class="card" style="max-width:360px;text-align:center;">
-      <div id="qrCanvasHost" style="display:flex;justify-content:center;margin:10px 0;"></div>
-      <div style="font-size:16px;font-weight:700;">${esc(asset.AssetID)}</div>
-      <div style="font-size:14px;margin-top:2px;">${esc(asset.AssetName)}</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(asset.Department||'-')}${asset.Location ? ' — '+esc(asset.Location) : ''}</div>
-    </div>
-    <div class="card no-print" style="max-width:360px;">
-      <label style="font-size:12px;">ลิงก์ (กรณีไม่สะดวกสแกน)</label>
-      <input type="text" readonly value="${esc(qrUrl)}" onclick="this.select();" style="width:100%;font-size:12px;">
-    </div>
+    <div id="printArea" style="display:flex;flex-wrap:wrap;gap:10px;">${cardsHtml}</div>
   `;
   document.getElementById('btnQrBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
   document.getElementById('btnQrPrint').onclick = ()=> window.print();
-  QRCode.toCanvas(qrUrl, { width: 220, margin: 1 }, (err, canvas)=>{
-    if(err){ document.getElementById('qrCanvasHost').innerHTML = '<div class="empty">สร้าง QR code ไม่สำเร็จ</div>'; return; }
-    document.getElementById('qrCanvasHost').appendChild(canvas);
-  });
 }
 
 /* ================= ASSET PUBLIC VIEW (scan QR — เปิดดูได้โดยไม่ต้อง login) ================= */
