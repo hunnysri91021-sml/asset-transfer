@@ -6,6 +6,7 @@
 <title>ระบบโอนย้ายทรัพย์สิน — SML</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <style>
   :root{
     --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
@@ -579,6 +580,13 @@ function enterApp(){
   const params = new URLSearchParams(location.search);
   const av = params.get('view');
   if(av==='approve' || av==='approveSale' || av==='approveWriteOff'){ route(); return; }
+  // ?view=assetView เปิดได้เสมอโดยไม่ต้อง login — ปลายทางของ QR code ที่ติดบนป้ายทรัพย์สิน (ดู renderAssetQrLabel)
+  if(av==='assetView'){
+    hideAppChrome();
+    STATE.assetViewCtx = { id: params.get('id') };
+    renderAssetPublicView(document.getElementById('viewRoot'));
+    return;
+  }
   // ?view=auction เปิดหน้าประมูลขายแบบสาธารณะได้โดยไม่ต้องล็อกอิน — แต่ต้องเช็คก่อนว่า Admin เปิดใช้งานฟีเจอร์นี้ไว้จริง
   // (ค่านี้อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เพราะผู้เข้าชมยังไม่ได้ล็อกอิน) ถ้ายังไม่เปิด/เช็คไม่สำเร็จ กลับไปตามสิทธิ์ปกติ
   if(av==='auction' && !checkAuth()){
@@ -792,6 +800,7 @@ function render(){
   else if(STATE.view === 'activityLog') renderActivityLog(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
+  else if(STATE.view === 'assetQrLabel') renderAssetQrLabel(root);
 }
 
 /* ================= ASSET LIST VIEW (browse, select, and act on assets) ================= */
@@ -1111,6 +1120,7 @@ function renderAssetList(root){
           : `<td>${esc(curTag)}</td>`}
         ${manageMode ? `<td class="no-print" style="white-space:normal;">
           <button class="btn btn-secondary btn-sm" data-editid="${esc(a.AssetID)}">แก้ไข</button>
+          <button class="btn btn-secondary btn-sm" data-qrid="${esc(a.AssetID)}">🏷️ ป้าย QR</button>
           ${(a.AssetStatus||'Active')==='Active' ? (()=>{
             const queued = STATE.assetQueuedPurposes[a.AssetID] || [];
             // ปกติทรัพย์สิน 1 ชิ้นควรอยู่ในคิวรอได้แค่ประเภทเดียว (บังคับฝั่ง backend แล้ว) — ถ้าเจอว่าติดค้าง
@@ -1147,6 +1157,13 @@ function renderAssetList(root){
       btn.onclick = ()=>{
         const asset = STATE.assetsFull.find(x=>x.AssetID===btn.dataset.editid);
         openAssetEditModal(asset, renderTable);
+      };
+    });
+    host.querySelectorAll('[data-qrid]').forEach(btn=>{
+      btn.onclick = ()=>{
+        STATE.view = 'assetQrLabel';
+        STATE.qrLabelAssetId = btn.dataset.qrid;
+        render();
       };
     });
     const QUEUE_PURPOSE_INFO = {
@@ -1369,6 +1386,61 @@ function renderAssetList(root){
     };
     next();
   }
+}
+
+/* ================= ASSET QR LABEL VIEW (Admin: สร้าง/พิมพ์ป้าย QR ติดทรัพย์สิน) ================= */
+// QR code เข้ารหัสเป็นลิงก์ไปหน้า renderAssetPublicView (?view=assetView&id=...) ที่เปิดดูได้โดยไม่ต้อง
+// login — สแกนป้ายที่ติดอยู่กับทรัพย์สินจริงแล้วเจอข้อมูล รหัส/ชื่อ/หน่วยงาน/สถานที่/สถานะทันที
+function renderAssetQrLabel(root){
+  const asset = (STATE.assetsFull||[]).find(a=>a.AssetID===STATE.qrLabelAssetId);
+  if(!asset){
+    root.innerHTML = '<div class="card"><div class="empty">ไม่พบข้อมูลทรัพย์สิน — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
+    return;
+  }
+  const qrUrl = GAS_URL + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
+  root.innerHTML = `
+    <div class="card no-print" style="margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" id="btnQrBack">← กลับ</button>
+      <button class="btn btn-primary btn-sm" id="btnQrPrint">🖨️ พิมพ์ป้าย</button>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px;">สแกน QR นี้จะเปิดหน้าดูข้อมูลทรัพย์สินนี้ได้ทันทีโดยไม่ต้อง login — พิมพ์แล้วนำไปติดกับตัวทรัพย์สินจริง</p>
+    </div>
+    <div class="card" style="max-width:360px;text-align:center;">
+      <div id="qrCanvasHost" style="display:flex;justify-content:center;margin:10px 0;"></div>
+      <div style="font-size:16px;font-weight:700;">${esc(asset.AssetID)}</div>
+      <div style="font-size:14px;margin-top:2px;">${esc(asset.AssetName)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(asset.Department||'-')}${asset.Location ? ' — '+esc(asset.Location) : ''}</div>
+    </div>
+  `;
+  document.getElementById('btnQrBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
+  document.getElementById('btnQrPrint').onclick = ()=> window.print();
+  QRCode.toCanvas(qrUrl, { width: 220, margin: 1 }, (err, canvas)=>{
+    if(err){ document.getElementById('qrCanvasHost').innerHTML = '<div class="empty">สร้าง QR code ไม่สำเร็จ</div>'; return; }
+    document.getElementById('qrCanvasHost').appendChild(canvas);
+  });
+}
+
+/* ================= ASSET PUBLIC VIEW (scan QR — เปิดดูได้โดยไม่ต้อง login) ================= */
+function renderAssetPublicView(root){
+  root.innerHTML = '<div class="card"><div class="empty">กำลังโหลดข้อมูลทรัพย์สิน...</div></div>';
+  apiGet({ action:'getAssetPublicView', id: STATE.assetViewCtx.id }).then(res=>{
+    if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
+    const a = res.data;
+    root.innerHTML = `
+      <div class="card" style="max-width:420px;margin:20px auto;">
+        ${a.DisplayImage ? `<img src="${esc(a.DisplayImage)}" style="width:100%;max-height:260px;object-fit:contain;border-radius:8px;margin-bottom:14px;">` : ''}
+        <h2 style="margin:0 0 4px;">${esc(a.AssetName)}</h2>
+        <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">รหัสทรัพย์สิน ${esc(a.AssetID)}</p>
+        <table style="width:100%;font-size:14px;border-collapse:collapse;">
+          <tr><td style="padding:6px 0;color:var(--muted);width:40%;">หน่วยงาน</td><td style="padding:6px 0;">${esc(a.Department||'-')}</td></tr>
+          ${a.Division ? `<tr><td style="padding:6px 0;color:var(--muted);">ฝ่าย</td><td style="padding:6px 0;">${esc(a.Division)}</td></tr>` : ''}
+          ${a.WorkGroup ? `<tr><td style="padding:6px 0;color:var(--muted);">กลุ่มงาน</td><td style="padding:6px 0;">${esc(a.WorkGroup)}</td></tr>` : ''}
+          <tr><td style="padding:6px 0;color:var(--muted);">ผู้ดูแล</td><td style="padding:6px 0;">${esc(a.Custodian||'-')}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--muted);">สถานที่</td><td style="padding:6px 0;"><b>${esc(a.Location||'-')}</b></td></tr>
+          <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
+        </table>
+      </div>
+    `;
+  });
 }
 
 /* ================= DASHBOARD VIEW (ข้อมูลรวม) ================= */
