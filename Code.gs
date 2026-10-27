@@ -49,7 +49,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'Lat', 'Lng', 'LocationPinUpdatedAt'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction', 'DisabledCategories'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
@@ -461,6 +461,9 @@ function doPost(e) {
       case 'adminDeleteDept':
         result = adminDeleteDept_(body);
         break;
+      case 'updateAssetLocationPin':
+        result = updateAssetLocationPin_(body);
+        break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
     }
@@ -522,12 +525,43 @@ function getAssetPublicView_(assetId) {
           Location: r.Location,
           Tag: r.Tag,
           AssetStatus: disposed[String(r.AssetID)] || 'Active',
-          DisplayImage: r.ImageURLOverride || r.ImageURL || ''
+          DisplayImage: r.ImageURLOverride || r.ImageURL || '',
+          Lat: r.Lat || '',
+          Lng: r.Lng || ''
         }
       };
     }
   }
   return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + id };
+}
+
+// ปักหมุดตำแหน่ง GPS ของทรัพย์สิน — เรียกจากหน้าสาธารณะ renderAssetPublicView (สแกน QR แล้วแตะปักหมุดบนแผนที่
+// ได้เลย) ตั้งใจไม่ต้อง login เหมือนกับ getAssetPublicView_ (ฟีเจอร์นี้ออกแบบมาให้คนในหน่วยงานสแกนป้ายแล้ว
+// ปักหมุดเองตรงจุดได้ทันที ไม่ต้องรอ Admin) ไม่กระทบ Location (free text) เดิม — เก็บแยกเป็นพิกัด Lat/Lng
+function updateAssetLocationPin_(body) {
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'ไม่พบรหัสทรัพย์สิน' };
+  const lat = parseFloat(body.lat);
+  const lng = parseFloat(body.lng);
+  if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return { ok: false, error: 'พิกัดตำแหน่งไม่ถูกต้อง' };
+  }
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.Lat === undefined || idx.Lng === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ Lat/Lng ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  }
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      sh.getRange(i + 1, idx.Lat + 1).setValue(lat);
+      sh.getRange(i + 1, idx.Lng + 1).setValue(lng);
+      if (idx.LocationPinUpdatedAt !== undefined) sh.getRange(i + 1, idx.LocationPinUpdatedAt + 1).setValue(new Date());
+      logActivity_(assetId, 'UPDATE_ASSET_LOCATION_PIN', 'public-scan', 'ปักหมุดตำแหน่งทรัพย์สิน ' + assetId + ' (' + lat.toFixed(6) + ', ' + lng.toFixed(6) + ')');
+      return { ok: true, data: { lat: lat, lng: lng } };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + assetId };
 }
 
 function getAssetsRaw_(q) {

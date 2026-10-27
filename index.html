@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ระบบโอนย้ายทรัพย์สิน — SML</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
     --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
@@ -1439,8 +1441,66 @@ function renderAssetPublicView(root){
           <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
         </table>
       </div>
+      <div class="card" style="max-width:420px;margin:12px auto;">
+        <h3 style="margin:0 0 8px;font-size:15px;">📍 ปักหมุดตำแหน่งทรัพย์สิน</h3>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">แตะบนแผนที่ หรือลากหมุด เพื่อปักตำแหน่งจริงของทรัพย์สินชิ้นนี้ แล้วกด "บันทึกตำแหน่งนี้"</p>
+        <div id="assetPinMap" style="height:240px;border-radius:8px;overflow:hidden;"></div>
+        <button class="btn btn-primary btn-sm" id="btnSaveAssetPin" style="margin-top:10px;width:100%;" ${a.Lat && a.Lng ? '' : 'disabled'}>บันทึกตำแหน่งนี้</button>
+        <div id="assetPinStatus" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+      </div>
     `;
+    initAssetPinMap(a);
   });
+
+  // แผนที่ปักหมุดตำแหน่งจริง (Leaflet + OpenStreetMap) — ไม่มีพิกัดเดิมให้ลองขอ GPS เครื่องผู้สแกนมาตั้งจุดเริ่มต้นให้
+  // (ถ้าปฏิเสธ/ไม่รองรับก็ไม่เป็นไร ยังแตะปักหมุดเองบนแผนที่ได้ปกติ) บันทึกผ่าน action เดียวกับ backend ที่
+  // ไม่ต้อง login เหมือนกับหน้านี้ทั้งหน้า (ดู updateAssetLocationPin_ ฝั่ง Code.gs)
+  function initAssetPinMap(a){
+    const hasPin = a.Lat && a.Lng;
+    const initialLat = hasPin ? parseFloat(a.Lat) : 13.7563;
+    const initialLng = hasPin ? parseFloat(a.Lng) : 100.5018;
+    const map = L.map('assetPinMap').setView([initialLat, initialLng], hasPin ? 17 : 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap', maxZoom: 19
+    }).addTo(map);
+    const saveBtn = document.getElementById('btnSaveAssetPin');
+    const statusEl = document.getElementById('assetPinStatus');
+    let marker = hasPin ? L.marker([initialLat, initialLng], { draggable:true }).addTo(map) : null;
+    if(marker) marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
+
+    function setMarker(lat, lng){
+      if(marker) marker.setLatLng([lat, lng]);
+      else {
+        marker = L.marker([lat, lng], { draggable:true }).addTo(map);
+        marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
+      }
+      saveBtn.disabled = false;
+      statusEl.textContent = '';
+    }
+    map.on('click', (e)=> setMarker(e.latlng.lat, e.latlng.lng));
+
+    if(!hasPin && navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(pos=>{
+        map.setView([pos.coords.latitude, pos.coords.longitude], 17);
+      }, ()=>{}, { timeout: 5000 });
+    }
+
+    saveBtn.onclick = ()=>{
+      if(!marker) return;
+      const p = marker.getLatLng();
+      saveBtn.disabled = true;
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'กำลังบันทึก...';
+      apiPost({ action:'updateAssetLocationPin', assetId: a.AssetID, lat: p.lat, lng: p.lng }).then(res=>{
+        saveBtn.disabled = false;
+        if(!res.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = 'บันทึกไม่สำเร็จ: '+res.error; return; }
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = '✅ บันทึกตำแหน่งสำเร็จ';
+      });
+    };
+
+    setTimeout(()=> map.invalidateSize(), 150); // กัน map เพี้ยนถ้า container ยังไม่มีขนาดจริงตอน init
+  }
 }
 
 /* ================= DASHBOARD VIEW (ข้อมูลรวม) ================= */
@@ -1549,6 +1609,11 @@ function renderDashboard(root){
         <button class="btn btn-secondary btn-sm" id="btnDashExport">⬇ Export Excel</button>
       </div>
       ${tilesHtml}
+      <div style="margin-top:24px;">
+        <h2>แผนที่ตำแหน่งทรัพย์สิน</h2>
+        <p style="color:var(--muted);font-size:13px;">แสดงเฉพาะทรัพย์สินที่เคยปักหมุดตำแหน่งไว้แล้ว (สแกน QR ที่ป้ายแล้วปักหมุดได้ที่หน้ารายละเอียดทรัพย์สิน) — คลิกหมุดเพื่อดูรายละเอียด</p>
+        <div id="dashAssetMap" style="height:360px;border-radius:8px;overflow:hidden;"></div>
+      </div>
       <div class="row" style="margin-top:24px;align-items:flex-start;">
         <div style="flex:2;min-width:280px;">
           <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
@@ -1584,6 +1649,8 @@ function renderDashboard(root){
       };
     });
 
+    renderDashAssetMap(assets);
+
     document.getElementById('btnDashExport').onclick = ()=>{
       const statusSheet = {
         name: 'สรุปตามสถานะ',
@@ -1617,6 +1684,33 @@ function renderDashboard(root){
       exportExcel('ข้อมูลรวมทรัพย์สิน.xlsx', [statusSheet, deptSheet, deptQueueSheet, tagSheet]);
     };
   }
+}
+
+// แผนที่ภาพรวมทรัพย์สินที่หน้า Dashboard — แสดงเฉพาะทรัพย์สินที่มีพิกัด Lat/Lng (ปักหมุดไว้แล้วจากหน้า
+// renderAssetPublicView ตอนสแกน QR) คลิกหมุดดูรายละเอียดสั้นๆ ได้ — ถ้าไม่มีรายการไหนปักหมุดไว้เลยแสดงข้อความแทนแผนที่
+function renderDashAssetMap(assets){
+  const host = document.getElementById('dashAssetMap');
+  if(!host) return;
+  const pinned = (assets||[]).filter(a=>a.Lat && a.Lng);
+  if(!pinned.length){
+    host.outerHTML = '<div class="empty" id="dashAssetMap">ยังไม่มีทรัพย์สินที่ปักหมุดตำแหน่งไว้ — สแกน QR ที่ป้ายทรัพย์สินแล้วปักหมุดได้ที่หน้ารายละเอียด</div>';
+    return;
+  }
+  const map = L.map('dashAssetMap');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap', maxZoom: 19
+  }).addTo(map);
+  const markers = pinned.map(a=>{
+    const m = L.marker([parseFloat(a.Lat), parseFloat(a.Lng)]).addTo(map);
+    m.bindPopup('<b>'+esc(a.AssetID)+'</b><br>'+esc(a.AssetName)+'<br>'+esc(a.Department||'-')+(a.Location?' — '+esc(a.Location):''));
+    return m;
+  });
+  if(markers.length === 1){
+    map.setView(markers[0].getLatLng(), 16);
+  } else {
+    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
+  }
+  setTimeout(()=> map.invalidateSize(), 150);
 }
 
 /* ================= AUCTION VIEW (ประมูลขาย) — รวมคิวรอขาย + รอตัดชำรุด ให้ทุกคนดูได้ ================= */
