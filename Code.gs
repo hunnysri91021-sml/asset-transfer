@@ -3622,23 +3622,33 @@ function findSaleRow_(saleId) {
 // Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
 // เพิ่มขั้นตอนนี้เพื่อให้ระดับความมั่นใจเดียวกับช่องทาง "ประมูล" ที่ต้องรอจนมีคนประมูลได้ก่อนถึงจะนับว่าขายแล้วจริง —
 // ไม่กระทบ AssetStatus/Tag ที่ตัดสินจากการอนุมัติเอกสารเหมือนเดิม (ดู CLAUDE.md) เป็นสถานะเสริมสำหรับ Kanban หน้ารายการขายออกเท่านั้น
+// รองรับยืนยัน/ยกเลิกยืนยันขายแล้วครั้งละหลายใบ — ส่ง body.saleIds (array) แทน body.saleId เดี่ยวได้
+// (ยังรองรับ body.saleId เดี่ยวแบบเดิมไว้ด้วย เพื่อความเข้ากันได้ย้อนหลัง) แต่ละใบตรวจเงื่อนไขแยกกัน ใบที่ไม่ผ่าน
+// เงื่อนไข (ไม่ใช่ Approved/เป็นช่องทางประมูล/ไม่พบ) จะถูกข้ามแล้วรายงานกลับไปเป็น errors แทนที่จะทำให้ทั้งชุดล้มเหลว
 function adminConfirmSale_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
-  const saleId = String(body.saleId || '').trim();
-  if (!saleId) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
+  const saleIds = (Array.isArray(body.saleIds) && body.saleIds.length ? body.saleIds : [body.saleId])
+    .map(id => String(id || '').trim()).filter(Boolean);
+  if (!saleIds.length) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
   const confirmed = body.confirmed !== false; // ค่าเริ่มต้น true (ยืนยันขายแล้ว) — ส่ง confirmed:false เพื่อยกเลิกการยืนยัน กลับไปเป็น "รอขาย" เท่านั้น
-  const found = findSaleRow_(saleId);
-  if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
-  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ดำเนินการได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น' };
-  if (found.obj.Channel === 'ประมูล') return { ok: false, error: 'ใบขายออกช่องทางประมูลไม่ต้องยืนยันขั้นนี้ (ติดตามความคืบหน้าที่หน้าประมูลขายแทน)' };
-  if (found.idx.SaleConfirmedAt === undefined) {
-    return { ok: false, error: 'ไม่พบคอลัมน์ SaleConfirmedAt ในชีต Sales กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ใน Apps Script ก่อน' };
-  }
+
   const sh = getSS_().getSheetByName(SHEETS.SALES);
-  sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(confirmed ? new Date() : '');
-  invalidateDisposedAssetStatusCache_(); // getAssetLifecycleMeta_ นับ "ขายแล้ว"/"รอขาย" จาก SaleConfirmedAt ด้วย
-  logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', (confirmed ? 'ยืนยันขายแล้ว' : 'ยกเลิกการยืนยันขายแล้ว (กลับเป็นรอขาย)') + 'สำหรับใบขายออก ' + found.obj.RunningNo);
-  return { ok: true };
+  let successCount = 0;
+  const errors = [];
+  saleIds.forEach(saleId => {
+    const found = findSaleRow_(saleId);
+    if (!found) { errors.push(saleId + ': ไม่พบใบขายออกนี้'); return; }
+    if (found.obj.Status !== STATUS.APPROVED) { errors.push(found.obj.RunningNo + ': ดำเนินการได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น'); return; }
+    if (found.obj.Channel === 'ประมูล') { errors.push(found.obj.RunningNo + ': ช่องทางประมูลไม่ต้องยืนยันขั้นนี้ (ติดตามความคืบหน้าที่หน้าประมูลขายแทน)'); return; }
+    if (found.idx.SaleConfirmedAt === undefined) { errors.push(found.obj.RunningNo + ': ไม่พบคอลัมน์ SaleConfirmedAt กรุณาให้ Admin รัน setup() ใหม่'); return; }
+    sh.getRange(found.rowNum, found.idx.SaleConfirmedAt + 1).setValue(confirmed ? new Date() : '');
+    logActivity_(saleId, 'ADMIN_CONFIRM_SALE', 'admin', (confirmed ? 'ยืนยันขายแล้ว' : 'ยกเลิกการยืนยันขายแล้ว (กลับเป็นรอขาย)') + 'สำหรับใบขายออก ' + found.obj.RunningNo);
+    successCount++;
+  });
+
+  if (successCount > 0) invalidateDisposedAssetStatusCache_(); // getAssetLifecycleMeta_ นับ "ขายแล้ว"/"รอขาย" จาก SaleConfirmedAt ด้วย
+  if (successCount === 0) return { ok: false, error: errors.join('; ') || 'ดำเนินการไม่สำเร็จ' };
+  return { ok: true, data: { successCount: successCount, failedCount: errors.length, errors: errors } };
 }
 
 function createSale_(body) {
