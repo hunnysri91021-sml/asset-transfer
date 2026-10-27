@@ -164,6 +164,7 @@
     .doc-table{border-collapse:collapse !important;}
     .doc-table tr{page-break-inside:avoid;break-inside:avoid;}
   }
+  .asset-map-label{font-size:11px;font-weight:700;padding:1px 6px;}
 </style>
 </head>
 <body>
@@ -1755,6 +1756,9 @@ function renderDashAssetMap(assets){
   }).addTo(map);
   const markers = pinned.map(a=>{
     const m = L.marker([parseFloat(a.Lat), parseFloat(a.Lng)]).addTo(map);
+    // แสดงรหัสทรัพย์สินค้างไว้บนแผนที่เลยโดยไม่ต้องคลิก (permanent tooltip) — ส่วนรายละเอียดอื่น (ชื่อ/
+    // หน่วยงาน/สถานที่) ยังต้องคลิกหมุดดูใน popup เหมือนเดิม กันป้ายรกเกินไปถ้าหมุดเยอะ
+    m.bindTooltip(esc(a.AssetID), { permanent: true, direction: 'top', offset: [0, -8], className: 'asset-map-label' });
     m.bindPopup('<b>'+esc(a.AssetID)+'</b><br>'+esc(a.AssetName)+'<br>'+esc(a.Department||'-')+(a.Location?' — '+esc(a.Location):''));
     return m;
   });
