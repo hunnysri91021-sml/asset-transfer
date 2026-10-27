@@ -811,6 +811,7 @@ function render(){
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
   else if(STATE.view === 'assetQrLabel') renderAssetQrLabel(root);
+  else if(STATE.view === 'assetListPrint') renderAssetListPrint(root);
 }
 
 /* ================= ASSET LIST VIEW (browse, select, and act on assets) ================= */
@@ -978,6 +979,7 @@ function renderAssetList(root){
         <button class="btn btn-secondary btn-sm" id="btnAlFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlExportPdf">🖨️ Export PDF (มีรูป QR)</button>
       </div>
       ${manageMode ? `
       <div class="toolbar no-print" style="border-top:1px solid var(--border);padding-top:10px;">
@@ -1005,6 +1007,13 @@ function renderAssetList(root){
   document.getElementById('alWorkGroup').onchange = (e)=>{ selectedWorkGroup = e.target.value; renderTable(); };
   document.getElementById('alLocation').onchange = (e)=>{ selectedLocation = e.target.value; renderTable(); };
   document.getElementById('btnAlExport').onclick = exportAssetList;
+  document.getElementById('btnAlExportPdf').onclick = ()=>{
+    const rows = filteredRows();
+    if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    STATE.assetListPrintRows = rows;
+    STATE.view = 'assetListPrint';
+    render();
+  };
   if(manageMode){
     document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
     document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
@@ -1455,6 +1464,45 @@ function renderAssetQrLabel(root){
   `;
   document.getElementById('btnQrBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
   document.getElementById('btnQrPrint').onclick = ()=> window.print();
+}
+
+/* ================= ASSET LIST PDF/PRINT VIEW — รายการทรัพย์สิน (ตามตัวกรองปัจจุบัน) พร้อมรูป QR ================= */
+// Excel export ใส่ QR เป็นรูปภาพจริงไม่ได้ (ไลบรารี xlsx ฝั่ง client ไม่รองรับ) — หน้านี้ใช้กลไกพิมพ์ของ
+// เบราว์เซอร์แทน (window.print() แล้วเลือก "บันทึกเป็น PDF" ในหน้าต่างพิมพ์) ได้ไฟล์ PDF ที่เห็นรูป QR จริง
+function renderAssetListPrint(root){
+  const rows = STATE.assetListPrintRows || [];
+  if(!rows.length){
+    root.innerHTML = '<div class="card"><div class="empty">ไม่มีข้อมูลให้แสดง — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
+    return;
+  }
+  const qrSize = 50;
+  const rowsHtml = rows.map(a => `
+    <tr>
+      <td style="text-align:center;"><img src="${esc(assetQrImageUrl(a.AssetID, qrSize))}" width="${qrSize}" height="${qrSize}"></td>
+      <td><b>${esc(a.AssetID)}</b></td>
+      <td>${esc(a.AssetName)}</td>
+      <td>${esc(a.Department||'-')}</td>
+      <td>${esc(a.Location||'-')}</td>
+      <td>${esc(LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, STATE.assetQueuedPurposes[a.AssetID]&&STATE.assetQueuedPurposes[a.AssetID][0])]||'ใช้งานอยู่')}</td>
+      <td>${esc(a.Tag||'ใช้งาน')}</td>
+    </tr>`).join('');
+
+  root.innerHTML = `
+    <div class="card no-print" style="margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" id="btnAlPrintBack">← กลับ</button>
+      <button class="btn btn-primary btn-sm" id="btnAlPrintNow">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px;">กดพิมพ์แล้วเลือก "บันทึกเป็น PDF" (Save as PDF) ในหน้าต่างพิมพ์ของเบราว์เซอร์ — รวม ${rows.length} รายการ</p>
+    </div>
+    <div id="printArea" class="card">
+      <h2 style="margin-top:0;">รายการทรัพย์สิน</h2>
+      <table class="doc-table" style="width:100%;font-size:12px;">
+        <tr><th>QR</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>สถานที่</th><th>สถานะ</th><th>แท็กสถานะ</th></tr>
+        ${rowsHtml}
+      </table>
+    </div>
+  `;
+  document.getElementById('btnAlPrintBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
+  document.getElementById('btnAlPrintNow').onclick = ()=> window.print();
 }
 
 /* ================= ASSET PUBLIC VIEW (scan QR — เปิดดูได้โดยไม่ต้อง login) ================= */
