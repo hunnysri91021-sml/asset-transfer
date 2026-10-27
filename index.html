@@ -1528,7 +1528,15 @@ function renderAssetPublicView(root){
       </div>
       <div class="card" style="max-width:420px;margin:12px auto;">
         <h3 style="margin:0 0 8px;font-size:15px;">📍 ตำแหน่งทรัพย์สิน</h3>
-        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">${loggedIn ? 'แตะบนแผนที่ หรือลากหมุด เพื่อปักตำแหน่งจริงของทรัพย์สินชิ้นนี้ แล้วกด "บันทึกตำแหน่งนี้"' : 'ดูตำแหน่งปัจจุบันได้เลย — ต้องเข้าสู่ระบบก่อนจึงจะปักหมุด/แก้ไขตำแหน่งได้'}</p>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">${loggedIn ? 'แตะบนแผนที่ หรือลากหมุด เพื่อปักตำแหน่งจริงของทรัพย์สินชิ้นนี้ แล้วกด "บันทึกตำแหน่งนี้" — หรือค้นหาสถานที่/ใช้ตำแหน่งปัจจุบันด้านล่างแทนก็ได้' : 'ดูตำแหน่งปัจจุบันได้เลย — ต้องเข้าสู่ระบบก่อนจึงจะปักหมุด/แก้ไขตำแหน่งได้'}</p>
+        ${loggedIn ? `
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <input type="text" id="assetPinSearch" placeholder="ค้นหาสถานที่/ที่อยู่..." style="flex:1;font-size:13px;">
+          <button class="btn btn-secondary btn-sm" id="btnAssetPinSearch">ค้นหา</button>
+        </div>
+        <div id="assetPinSearchResults" style="font-size:12px;margin-bottom:8px;"></div>
+        <button class="btn btn-secondary btn-sm" id="btnUseMyLocation" style="width:100%;margin-bottom:8px;">📍 ใช้ตำแหน่งปัจจุบันของฉัน (GPS)</button>
+        ` : ''}
         <div id="assetPinMap" style="height:240px;border-radius:8px;overflow:hidden;"></div>
         ${loggedIn ? `
         <button class="btn btn-primary btn-sm" id="btnSaveAssetPin" style="margin-top:10px;width:100%;" ${a.Lat && a.Lng ? '' : 'disabled'}>บันทึกตำแหน่งนี้</button>
@@ -1598,12 +1606,13 @@ function renderAssetPublicView(root){
     const statusEl = document.getElementById('assetPinStatus');
     if(marker) marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
 
-    function setMarker(lat, lng){
+    function setMarker(lat, lng, recenter){
       if(marker) marker.setLatLng([lat, lng]);
       else {
         marker = L.marker([lat, lng], { draggable:true }).addTo(map);
         marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
       }
+      if(recenter) map.setView([lat, lng], 17);
       saveBtn.disabled = false;
       statusEl.textContent = '';
     }
@@ -1613,6 +1622,61 @@ function renderAssetPublicView(root){
       navigator.geolocation.getCurrentPosition(pos=>{
         map.setView([pos.coords.latitude, pos.coords.longitude], 17);
       }, ()=>{}, { timeout: 5000 });
+    }
+
+    // "ใช้ตำแหน่งปัจจุบันของฉัน" — กดเองได้ทุกเมื่อ (ต่างจากตอนโหลดหน้าแรกที่ลองขอ GPS อัตโนมัติแค่ตอนยัง
+    // ไม่เคยมีหมุดเดิม) ใช้ได้ทั้งปักหมุดใหม่และย้ายหมุดเดิมไปที่ตำแหน่งปัจจุบันจริง
+    const useMyLocationBtn = document.getElementById('btnUseMyLocation');
+    if(useMyLocationBtn) useMyLocationBtn.onclick = ()=>{
+      if(!navigator.geolocation){ toast('อุปกรณ์นี้ไม่รองรับการขอตำแหน่ง GPS','err'); return; }
+      useMyLocationBtn.disabled = true;
+      useMyLocationBtn.textContent = 'กำลังขอตำแหน่ง...';
+      navigator.geolocation.getCurrentPosition(pos=>{
+        useMyLocationBtn.disabled = false;
+        useMyLocationBtn.textContent = '📍 ใช้ตำแหน่งปัจจุบันของฉัน (GPS)';
+        setMarker(pos.coords.latitude, pos.coords.longitude, true);
+      }, err=>{
+        useMyLocationBtn.disabled = false;
+        useMyLocationBtn.textContent = '📍 ใช้ตำแหน่งปัจจุบันของฉัน (GPS)';
+        toast('ขอตำแหน่ง GPS ไม่สำเร็จ — กรุณาอนุญาตการเข้าถึงตำแหน่งที่เบราว์เซอร์','err');
+      }, { timeout: 8000, enableHighAccuracy: true });
+    };
+
+    // ค้นหาสถานที่/ที่อยู่ — ใช้ Nominatim (OpenStreetMap) ฟรี ไม่ต้องขอ API key แสดงผลลัพธ์ให้เลือกสูงสุด
+    // 5 รายการ (ชื่อสถานที่อาจตรงได้หลายจุด) เลือกแล้วย้ายหมุด+เลื่อนแผนที่ไปจุดนั้นทันที
+    const searchInput = document.getElementById('assetPinSearch');
+    const searchBtn = document.getElementById('btnAssetPinSearch');
+    const searchResultsEl = document.getElementById('assetPinSearchResults');
+    function doPinSearch(){
+      const q = searchInput.value.trim();
+      if(!q) return;
+      searchBtn.disabled = true;
+      searchResultsEl.innerHTML = '<span style="color:var(--muted);">กำลังค้นหา...</span>';
+      fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=th&q=' + encodeURIComponent(q))
+        .then(r=>r.json())
+        .then(results=>{
+          searchBtn.disabled = false;
+          if(!results || !results.length){ searchResultsEl.innerHTML = '<span style="color:var(--red);">ไม่พบสถานที่ที่ค้นหา</span>'; return; }
+          searchResultsEl.innerHTML = results.map((r,i)=>
+            `<div class="pin-search-result" data-idx="${i}" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;margin-top:4px;cursor:pointer;">${esc(r.display_name)}</div>`
+          ).join('');
+          searchResultsEl.querySelectorAll('.pin-search-result').forEach(el=>{
+            el.onclick = ()=>{
+              const r = results[Number(el.dataset.idx)];
+              setMarker(parseFloat(r.lat), parseFloat(r.lon), true);
+              searchResultsEl.innerHTML = '';
+              searchInput.value = r.display_name;
+            };
+          });
+        })
+        .catch(()=>{
+          searchBtn.disabled = false;
+          searchResultsEl.innerHTML = '<span style="color:var(--red);">ค้นหาไม่สำเร็จ ลองใหม่อีกครั้ง</span>';
+        });
+    }
+    if(searchBtn){
+      searchBtn.onclick = doPinSearch;
+      searchInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); doPinSearch(); } });
     }
 
     saveBtn.onclick = ()=>{
