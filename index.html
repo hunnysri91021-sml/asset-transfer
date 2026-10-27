@@ -197,6 +197,7 @@
       <div class="nav-group-label" id="navGroupWriteOff">ตัดชำรุด</div>
       <button data-view="writeOffList" class="navItemWriteOff">รายการตัดชำรุด</button>
       <button data-view="writeOffCreate" class="navItemWriteOff">+ บันทึกตัดชำรุด</button>
+      <button data-view="writeOffPendingDisposal" id="navWriteOffPendingDisposal">ตัดชำรุดแล้ว รอดำเนินการ</button>
       <div class="nav-group-label" id="navGroupSystem">ระบบ</div>
       <button data-view="activityLog" id="navActivityLog">ประวัติการใช้งาน</button>
       <button data-view="settings">ตั้งค่า</button>
@@ -741,9 +742,11 @@ function render(){
   if(activityLogNavBtn) activityLogNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const auctionSelectionNavBtn = document.getElementById('navAuctionSelection');
   if(auctionSelectionNavBtn) auctionSelectionNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
+  const woPendingDisposalNavBtn = document.getElementById('navWriteOffPendingDisposal');
+  if(woPendingDisposalNavBtn) woPendingDisposalNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
-  if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection') && STATE.role !== 'admin') STATE.view = 'dashboard';
+  if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection' || STATE.view === 'writeOffPendingDisposal') && STATE.role !== 'admin') STATE.view = 'dashboard';
   // Admin ซ่อนเมนู "ประมูลขาย"/"Live ประมูล" จากพนักงานทั่วไปได้ที่หน้าตั้งค่า (ดู getNavVisibilitySettings) —
   // Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร
   const navAuctionBtn = document.getElementById('navAuction');
@@ -804,6 +807,7 @@ function render(){
   else if(STATE.view === 'saleCreateAuction') renderSaleCreate(root, 'ประมูล');
   else if(STATE.view === 'salePrint') renderSalePrint(root);
   else if(STATE.view === 'writeOffList') renderWriteOffList(root);
+  else if(STATE.view === 'writeOffPendingDisposal') renderWriteOffPendingDisposal(root);
   else if(STATE.view === 'writeOffCreate') renderWriteOffCreate(root);
   else if(STATE.view === 'writeOffPrint') renderWriteOffPrint(root);
   else if(STATE.view === 'auctionSelection') renderAuctionSelection(root);
@@ -4771,23 +4775,6 @@ function renderWriteOffList(root){
       <div id="woKanbanHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
 
-    ${STATE.role==='admin' ? `
-    <div class="card">
-      <h2>ทรัพย์สินที่ตัดชำรุดแล้ว รอดำเนินการ</h2>
-      <p style="color:var(--muted);font-size:13px;">รายการที่ใบตัดชำรุดอนุมัติแล้ว ยังค้างอยู่ที่นี่จนกว่าจะเลือกว่าจะ "ส่งประมูล" หรือ "ขาย" โดยตรง</p>
-      <div class="toolbar no-print">
-        <input type="text" id="woPendingSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
-      </div>
-      <div id="woPendingCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
-      <div class="toolbar no-print" id="woPendingBulkBar" style="display:none;">
-        <span id="woPendingSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
-        <button class="btn btn-primary btn-sm" id="btnWoPendingBulkAuction">📢 ส่งประมูล (ที่เลือก)</button>
-        <button class="btn btn-secondary btn-sm" id="btnWoPendingBulkSale">💰 ขาย (ที่เลือก)</button>
-      </div>
-      <div id="woPendingTableHost"><div class="empty">กำลังโหลด...</div></div>
-    </div>
-    ` : ''}
-
     <div class="card" id="writeOffQueueCard" ${isViewOnly() ? 'style="display:none;"' : ''}>
       <h2>รายการรอตัดชำรุด</h2>
       <p style="color:var(--muted);font-size:13px;">ทรัพย์สินที่มาร์คไว้จากหน้า "รายการทรัพย์สิน" (ปุ่ม "+ คิวตัดชำรุด") รอรวมออกเป็นใบตัดชำรุด — เลือกรายการที่ต้องการแล้วกดสร้างใบ</p>
@@ -4833,124 +4820,6 @@ function renderWriteOffList(root){
   loadWoList();
   loadWriteOffQueue();
   loadWriteOffKanban();
-  if(STATE.role==='admin'){
-    document.getElementById('woPendingSearch').oninput = renderWoPendingTable;
-    loadWoPendingDisposal();
-  }
-
-  // ทรัพย์สินที่ "ตัดชำรุด" อนุมัติแล้ว (AssetStatus===WrittenOff) แต่ยังไม่ได้ส่งประมูล — ใช้ endpoint
-  // เดียวกับหน้า "คัดเลือกรายการประมูล" (adminGetAuctionCandidates) แต่กรองเฉพาะประเภทตัดชำรุด (ไม่รวม
-  // ขายออกช่องทางประมูลที่มาจากใบขายออกแยกต่างหาก) ให้เลือกได้ตรงนี้เลยว่าจะส่งประมูลหรือขายตรง —
-  // เลือกได้ทั้งทีละรายการ (ปุ่มต่อแถว) และหลายรายการพร้อมกัน (checkbox + แถบเลือกด้านบน)
-  let woPendingDisposal = [];
-  let selectedWoPendingIds = new Set();
-  function loadWoPendingDisposal(){
-    document.getElementById('woPendingTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
-    apiPost({ action:'adminGetAuctionCandidates', password: STATE.adminPassword }).then(res=>{
-      if(!res.ok){ document.getElementById('woPendingTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
-      woPendingDisposal = (res.data||[]).filter(a=>a.AssetStatus==='WrittenOff' && !a.SendToAuction);
-      selectedWoPendingIds.clear();
-      renderWoPendingTable();
-    });
-  }
-  function updateWoPendingBulkBar(visibleRows){
-    const visibleIds = new Set(visibleRows.map(a=>a.AssetID));
-    [...selectedWoPendingIds].forEach(id=>{ if(!visibleIds.has(id)) selectedWoPendingIds.delete(id); });
-    const bar = document.getElementById('woPendingBulkBar');
-    if(bar) bar.style.display = selectedWoPendingIds.size ? 'flex' : 'none';
-    const countEl = document.getElementById('woPendingSelCount');
-    if(countEl) countEl.textContent = 'เลือกไว้ '+selectedWoPendingIds.size+' รายการ';
-  }
-  function renderWoPendingTable(){
-    const qq = (document.getElementById('woPendingSearch').value||'').trim().toLowerCase();
-    const rows = woPendingDisposal.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
-    document.getElementById('woPendingCount').textContent = 'รวม '+rows.length+' รายการ';
-    const host = document.getElementById('woPendingTableHost');
-    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่มีรายการที่ค้างดำเนินการ</div>'; updateWoPendingBulkBar(rows); return; }
-    const allSelected = rows.length>0 && rows.every(a=>selectedWoPendingIds.has(a.AssetID));
-    let html = '<table><tr><th class="no-print" style="width:3%;"><input type="checkbox" id="woPendingSelectAll" '+(allSelected?'checked':'')+'></th><th style="width:6%;">รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th class="money">ราคาซาก</th><th class="no-print">การจัดการ</th></tr>';
-    rows.forEach(a=>{
-      html += `<tr>
-        <td class="no-print"><input type="checkbox" class="woPendingChk" data-id="${esc(a.AssetID)}" ${selectedWoPendingIds.has(a.AssetID)?'checked':''}></td>
-        <td><img class="thumb thumb-sm" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
-        <td><b>${esc(a.AssetID)}</b></td>
-        <td>${esc(a.AssetName)}</td>
-        <td>${esc(a.Department||'-')}</td>
-        <td class="money">${fmtMoney(a.ScrapPrice)}</td>
-        <td class="no-print">
-          <button class="btn btn-primary btn-sm" data-sendauction="${esc(a.AssetID)}">📢 ส่งประมูล</button>
-          <button class="btn btn-secondary btn-sm" data-sendsale="${esc(a.AssetID)}">💰 ขาย</button>
-        </td>
-      </tr>`;
-    });
-    html += '</table>';
-    host.innerHTML = html;
-
-    host.querySelectorAll('.woPendingChk').forEach(cb=>{
-      cb.onchange = ()=>{
-        if(cb.checked) selectedWoPendingIds.add(cb.dataset.id); else selectedWoPendingIds.delete(cb.dataset.id);
-        updateWoPendingBulkBar(rows);
-      };
-    });
-    const selectAllCb = document.getElementById('woPendingSelectAll');
-    if(selectAllCb) selectAllCb.onchange = ()=>{
-      rows.forEach(a=>{ if(selectAllCb.checked) selectedWoPendingIds.add(a.AssetID); else selectedWoPendingIds.delete(a.AssetID); });
-      renderWoPendingTable();
-    };
-    updateWoPendingBulkBar(rows);
-
-    host.querySelectorAll('[data-sendauction]').forEach(btn=>{
-      btn.onclick = ()=>{
-        if(!confirm('ส่งทรัพย์สินนี้เข้าประมูล? (จะไปแสดงในหน้า "ประมูลขาย" สาธารณะ — ตั้งราคากลางเพิ่มเติมได้ที่หน้า "คัดเลือกรายการประมูล")')) return;
-        btn.disabled = true;
-        apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId: btn.dataset.sendauction, sendToAuction: true }).then(res=>{
-          btn.disabled = false;
-          if(!res.ok){ toast(res.error||'ส่งประมูลไม่สำเร็จ','err'); return; }
-          toast('ส่งเข้าประมูลสำเร็จ','ok');
-          loadWoPendingDisposal();
-        });
-      };
-    });
-    host.querySelectorAll('[data-sendsale]').forEach(btn=>{
-      btn.onclick = ()=>{
-        const asset = woPendingDisposal.find(a=>a.AssetID===btn.dataset.sendsale);
-        if(!asset) return;
-        if(!confirm('ไปสร้างใบขายออก (ช่องทางขายตรง) สำหรับทรัพย์สินนี้?')) return;
-        goToSaleCreateWith([asset]);
-      };
-    });
-  }
-
-  function goToSaleCreateWith(assets){
-    STATE.draftSaleItems = assets.map(asset => ({
-      assetId: asset.AssetID, assetName: asset.AssetName, images: asset.DisplayImage ? [asset.DisplayImage] : [],
-      scrapPrice: asset.ScrapPrice||'', auctionPrice:'', salePrice: asset.MinSalePrice||'', remark:''
-    }));
-    STATE.view = 'saleCreate';
-    render();
-  }
-
-  if(STATE.role==='admin'){
-    document.getElementById('btnWoPendingBulkAuction').onclick = ()=>{
-      const ids = [...selectedWoPendingIds];
-      if(!ids.length) return;
-      if(!confirm('ส่งทรัพย์สินที่เลือกไว้ '+ids.length+' รายการเข้าประมูล?')) return;
-      const btn = document.getElementById('btnWoPendingBulkAuction');
-      btn.disabled = true;
-      Promise.all(ids.map(assetId => apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId, sendToAuction: true }))).then(results=>{
-        btn.disabled = false;
-        const failedCount = results.filter(r=>!r.ok).length;
-        toast(failedCount ? ('ส่งประมูลสำเร็จ '+(ids.length-failedCount)+' รายการ, ไม่สำเร็จ '+failedCount+' รายการ') : ('ส่งเข้าประมูลสำเร็จ '+ids.length+' รายการ'), failedCount ? 'err' : 'ok');
-        loadWoPendingDisposal();
-      });
-    };
-    document.getElementById('btnWoPendingBulkSale').onclick = ()=>{
-      const assets = woPendingDisposal.filter(a=>selectedWoPendingIds.has(a.AssetID));
-      if(!assets.length) return;
-      if(!confirm('ไปสร้างใบขายออก (ช่องทางขายตรง) สำหรับทรัพย์สินที่เลือกไว้ '+assets.length+' รายการ?')) return;
-      goToSaleCreateWith(assets);
-    };
-  }
 
   function loadWriteOffQueue(){
     document.getElementById('writeOffQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
@@ -5165,6 +5034,140 @@ window.openWriteOffPrint = function(id){
   STATE.printWriteOffId = id;
   render();
 };
+
+/* ================= WRITE-OFF PENDING DISPOSAL VIEW (Admin) — แท็บแยกต่างหาก คล้าย "ทรัพย์สินที่ขายแล้ว" ================= */
+// ทรัพย์สินที่ "ตัดชำรุด" อนุมัติแล้ว (AssetStatus===WrittenOff) แต่ยังไม่ได้ส่งประมูล — ใช้ endpoint
+// เดียวกับหน้า "คัดเลือกรายการประมูล" (adminGetAuctionCandidates) แต่กรองเฉพาะประเภทตัดชำรุด (ไม่รวม
+// ขายออกช่องทางประมูลที่มาจากใบขายออกแยกต่างหาก) ให้เลือกได้ตรงนี้เลยว่าจะส่งประมูลหรือขายตรง — เลือกได้
+// ทั้งทีละรายการ (ปุ่มต่อแถว) และหลายรายการพร้อมกัน (checkbox + แถบเลือกด้านบน)
+function renderWriteOffPendingDisposal(root){
+  root.innerHTML = `
+    <div class="card">
+      <h2>ทรัพย์สินที่ตัดชำรุดแล้ว รอดำเนินการ</h2>
+      <p style="color:var(--muted);font-size:13px;">รายการที่ใบตัดชำรุดอนุมัติแล้ว ยังค้างอยู่ที่นี่จนกว่าจะเลือกว่าจะ "ส่งประมูล" หรือ "ขาย" โดยตรง</p>
+      <div class="toolbar no-print">
+        <input type="text" id="woPendingSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+      </div>
+      <div id="woPendingCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div class="toolbar no-print" id="woPendingBulkBar" style="display:none;">
+        <span id="woPendingSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnWoPendingBulkAuction">📢 ส่งประมูล (ที่เลือก)</button>
+        <button class="btn btn-secondary btn-sm" id="btnWoPendingBulkSale">💰 ขาย (ที่เลือก)</button>
+      </div>
+      <div id="woPendingTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+  document.getElementById('woPendingSearch').oninput = renderWoPendingTable;
+  loadWoPendingDisposal();
+
+  let woPendingDisposal = [];
+  let selectedWoPendingIds = new Set();
+  function loadWoPendingDisposal(){
+    document.getElementById('woPendingTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    apiPost({ action:'adminGetAuctionCandidates', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ document.getElementById('woPendingTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc(res.error||''); return; }
+      woPendingDisposal = (res.data||[]).filter(a=>a.AssetStatus==='WrittenOff' && !a.SendToAuction);
+      selectedWoPendingIds.clear();
+      renderWoPendingTable();
+    });
+  }
+  function updateWoPendingBulkBar(visibleRows){
+    const visibleIds = new Set(visibleRows.map(a=>a.AssetID));
+    [...selectedWoPendingIds].forEach(id=>{ if(!visibleIds.has(id)) selectedWoPendingIds.delete(id); });
+    const bar = document.getElementById('woPendingBulkBar');
+    if(bar) bar.style.display = selectedWoPendingIds.size ? 'flex' : 'none';
+    const countEl = document.getElementById('woPendingSelCount');
+    if(countEl) countEl.textContent = 'เลือกไว้ '+selectedWoPendingIds.size+' รายการ';
+  }
+  function renderWoPendingTable(){
+    const qq = (document.getElementById('woPendingSearch').value||'').trim().toLowerCase();
+    const rows = woPendingDisposal.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
+    document.getElementById('woPendingCount').textContent = 'รวม '+rows.length+' รายการ';
+    const host = document.getElementById('woPendingTableHost');
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่มีรายการที่ค้างดำเนินการ</div>'; updateWoPendingBulkBar(rows); return; }
+    const allSelected = rows.length>0 && rows.every(a=>selectedWoPendingIds.has(a.AssetID));
+    let html = '<table><tr><th class="no-print" style="width:3%;"><input type="checkbox" id="woPendingSelectAll" '+(allSelected?'checked':'')+'></th><th style="width:6%;">รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th class="money">ราคาซาก</th><th class="no-print">การจัดการ</th></tr>';
+    rows.forEach(a=>{
+      html += `<tr>
+        <td class="no-print"><input type="checkbox" class="woPendingChk" data-id="${esc(a.AssetID)}" ${selectedWoPendingIds.has(a.AssetID)?'checked':''}></td>
+        <td><img class="thumb thumb-sm" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department||'-')}</td>
+        <td class="money">${fmtMoney(a.ScrapPrice)}</td>
+        <td class="no-print">
+          <button class="btn btn-primary btn-sm" data-sendauction="${esc(a.AssetID)}">📢 ส่งประมูล</button>
+          <button class="btn btn-secondary btn-sm" data-sendsale="${esc(a.AssetID)}">💰 ขาย</button>
+        </td>
+      </tr>`;
+    });
+    html += '</table>';
+    host.innerHTML = html;
+
+    host.querySelectorAll('.woPendingChk').forEach(cb=>{
+      cb.onchange = ()=>{
+        if(cb.checked) selectedWoPendingIds.add(cb.dataset.id); else selectedWoPendingIds.delete(cb.dataset.id);
+        updateWoPendingBulkBar(rows);
+      };
+    });
+    const selectAllCb = document.getElementById('woPendingSelectAll');
+    if(selectAllCb) selectAllCb.onchange = ()=>{
+      rows.forEach(a=>{ if(selectAllCb.checked) selectedWoPendingIds.add(a.AssetID); else selectedWoPendingIds.delete(a.AssetID); });
+      renderWoPendingTable();
+    };
+    updateWoPendingBulkBar(rows);
+
+    host.querySelectorAll('[data-sendauction]').forEach(btn=>{
+      btn.onclick = ()=>{
+        if(!confirm('ส่งทรัพย์สินนี้เข้าประมูล? (จะไปแสดงในหน้า "ประมูลขาย" สาธารณะ — ตั้งราคากลางเพิ่มเติมได้ที่หน้า "คัดเลือกรายการประมูล")')) return;
+        btn.disabled = true;
+        apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId: btn.dataset.sendauction, sendToAuction: true }).then(res=>{
+          btn.disabled = false;
+          if(!res.ok){ toast(res.error||'ส่งประมูลไม่สำเร็จ','err'); return; }
+          toast('ส่งเข้าประมูลสำเร็จ','ok');
+          loadWoPendingDisposal();
+        });
+      };
+    });
+    host.querySelectorAll('[data-sendsale]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const asset = woPendingDisposal.find(a=>a.AssetID===btn.dataset.sendsale);
+        if(!asset) return;
+        if(!confirm('ไปสร้างใบขายออก (ช่องทางขายตรง) สำหรับทรัพย์สินนี้?')) return;
+        goToSaleCreateWith([asset]);
+      };
+    });
+  }
+
+  function goToSaleCreateWith(assets){
+    STATE.draftSaleItems = assets.map(asset => ({
+      assetId: asset.AssetID, assetName: asset.AssetName, images: asset.DisplayImage ? [asset.DisplayImage] : [],
+      scrapPrice: asset.ScrapPrice||'', auctionPrice:'', salePrice: asset.MinSalePrice||'', remark:''
+    }));
+    STATE.view = 'saleCreate';
+    render();
+  }
+
+  document.getElementById('btnWoPendingBulkAuction').onclick = ()=>{
+    const ids = [...selectedWoPendingIds];
+    if(!ids.length) return;
+    if(!confirm('ส่งทรัพย์สินที่เลือกไว้ '+ids.length+' รายการเข้าประมูล?')) return;
+    const btn = document.getElementById('btnWoPendingBulkAuction');
+    btn.disabled = true;
+    Promise.all(ids.map(assetId => apiPost({ action:'adminSetAuctionSelection', password: STATE.adminPassword, assetId, sendToAuction: true }))).then(results=>{
+      btn.disabled = false;
+      const failedCount = results.filter(r=>!r.ok).length;
+      toast(failedCount ? ('ส่งประมูลสำเร็จ '+(ids.length-failedCount)+' รายการ, ไม่สำเร็จ '+failedCount+' รายการ') : ('ส่งเข้าประมูลสำเร็จ '+ids.length+' รายการ'), failedCount ? 'err' : 'ok');
+      loadWoPendingDisposal();
+    });
+  };
+  document.getElementById('btnWoPendingBulkSale').onclick = ()=>{
+    const assets = woPendingDisposal.filter(a=>selectedWoPendingIds.has(a.AssetID));
+    if(!assets.length) return;
+    if(!confirm('ไปสร้างใบขายออก (ช่องทางขายตรง) สำหรับทรัพย์สินที่เลือกไว้ '+assets.length+' รายการ?')) return;
+    goToSaleCreateWith(assets);
+  };
+}
 
 /* ================= WRITE-OFF CREATE VIEW ================= */
 function renderWriteOffCreate(root){
