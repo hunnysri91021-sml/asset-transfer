@@ -2858,6 +2858,7 @@ function renderAuctionSelection(root){
       <p id="aselRoundBanner" style="color:var(--muted);font-size:13px;">กำลังโหลด...</p>
       <p style="color:var(--muted);font-size:12px;">เมื่อรอบปัจจุบันปิดรับประมูลแล้ว กด "ปิดรอบและเริ่มรอบใหม่" — รายการที่ยังไม่ขาย (ยังไม่ AuctionSold) จะถูกถอดออกจากรายการเปิดประมูลทั้งหมดกลับมาอยู่ในส่วน "คัดเลือกรายการประมูล" ด้านล่าง ให้ Admin เลือกติ๊ก "ส่งประมูล" เข้ารอบใหม่เองทีละรายการ ผลของรอบเก่ายังดูย้อนหลังได้ครบที่หน้า "ประกาศผล"</p>
       <button class="btn btn-primary btn-sm no-print" id="btnStartNewAuctionRound">🔁 ปิดรอบและเริ่มรอบใหม่</button>
+      <button class="btn btn-secondary btn-sm no-print" id="btnUndoStartNewAuctionRound">↩ ยกเลิกเริ่มรอบใหม่ (รอบล่าสุด)</button>
     </div>
 
     <div class="card">
@@ -2911,6 +2912,21 @@ function renderAuctionSelection(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'ปิดรอบไม่สำเร็จ','err'); return; }
       toast('ปิดรอบที่ '+res.data.previousRound+' และเริ่มรอบที่ '+res.data.currentRound+' สำเร็จ (ถอดรายการที่ยังไม่ขาย '+res.data.removedCount+' รายการออกจากประมูล)','ok');
+      loadRoundBanner();
+      load();
+    });
+  };
+
+  // ยกเลิกการ "ปิดรอบและเริ่มรอบใหม่" ครั้งล่าสุด (เผื่อกดผิด) — ย้อนเลขรอบกลับ 1 และคืนรายการที่เพิ่งถูกถอด
+  // ออกจากประมูลกลับเข้าไปใหม่ ใช้ action เดียวกับฝั่ง backend ที่กันไว้แล้วว่าถ้ามีใบประมูลเข้ารอบใหม่ไปแล้วจะยกเลิกไม่ได้
+  document.getElementById('btnUndoStartNewAuctionRound').onclick = ()=>{
+    if(!confirm('ยืนยันยกเลิกการเริ่มรอบใหม่ล่าสุด? (ย้อนเลขรอบกลับ 1 และคืนรายการที่ถูกถอดออกจากประมูลกลับเข้าไปใหม่)\n\nใช้ได้เฉพาะกรณียังไม่มีการบันทึกใบประมูลเข้ารอบใหม่เลย')) return;
+    const btn = document.getElementById('btnUndoStartNewAuctionRound');
+    btn.disabled = true;
+    apiPost({ action:'adminUndoStartAuctionRound', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+      toast('ยกเลิกรอบที่ '+res.data.previousRound+' กลับไปเป็นรอบที่ '+res.data.currentRound+' สำเร็จ (คืนรายการเปิดประมูล '+res.data.restoredCount+' รายการ)','ok');
       loadRoundBanner();
       load();
     });
@@ -3746,6 +3762,10 @@ function renderSaleList(root){
         <span id="saleListCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
         <button class="btn btn-secondary btn-sm" id="btnSaleExport">⬇ Export Excel</button>
       </div>
+      <div class="toolbar no-print" id="saleBulkConfirmBar" style="display:none;">
+        <span id="saleBulkConfirmCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnBulkConfirmSale">✔ ยืนยันขายแล้ว (ที่เลือก)</button>
+      </div>
       <div id="saleListTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
   `;
@@ -3759,8 +3779,39 @@ function renderSaleList(root){
   document.getElementById('btnCreateFromSaleQueueAuction').onclick = ()=> createSaleFromQueue('ประมูล');
   document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
   document.getElementById('saleQSearch').oninput = renderSaleQueueTable;
+  document.getElementById('btnBulkConfirmSale').onclick = bulkConfirmSale;
   loadSales();
   loadSaleQueue();
+
+  // เลือกหลายใบขายออก (เฉพาะที่อยู่สถานะ "รอขาย") แล้วกดยืนยันขายแล้วพร้อมกันทีเดียว — เก็บ selection
+  // ไว้นอก renderSaleListTable เพื่อไม่ให้หายเวลา re-render ตาราง (เช่นกดกรอง) ตัดรายการที่ไม่อยู่ในผลกรอง
+  // ปัจจุบันออกจาก selection ด้วยกันค้างเลือกรายการที่มองไม่เห็นแล้ว
+  let selectedConfirmSaleIds = new Set();
+  function updateSaleBulkConfirmBar(){
+    const bar = document.getElementById('saleBulkConfirmBar');
+    const visibleIds = new Set(STATE.sales.filter(s=>saleBucketOf(s)==='AwaitingSale').map(s=>s.SaleID));
+    [...selectedConfirmSaleIds].forEach(id=>{ if(!visibleIds.has(id)) selectedConfirmSaleIds.delete(id); });
+    if(bar) bar.style.display = selectedConfirmSaleIds.size ? 'flex' : 'none';
+    const countEl = document.getElementById('saleBulkConfirmCount');
+    if(countEl) countEl.textContent = 'เลือกไว้ '+selectedConfirmSaleIds.size+' รายการ';
+  }
+  function bulkConfirmSale(){
+    const saleIds = [...selectedConfirmSaleIds];
+    if(!saleIds.length) return;
+    if(!confirm('ยืนยันว่าใบขายออกที่เลือกไว้ '+saleIds.length+' รายการ ขายเรียบร้อยแล้ว?')) return;
+    const btn = document.getElementById('btnBulkConfirmSale');
+    btn.disabled = true;
+    apiPost({ action:'adminConfirmSale', password: STATE.adminPassword, saleIds }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
+      const confirmedIds = new Set(saleIds);
+      allSales.forEach(s=>{ if(confirmedIds.has(s.SaleID)) s.SaleConfirmedAt = new Date().toISOString(); });
+      selectedConfirmSaleIds.clear();
+      toast(res.data && res.data.failedCount ? ('ยืนยันสำเร็จ '+res.data.successCount+' รายการ, ไม่สำเร็จ '+res.data.failedCount+' รายการ') : ('ยืนยันขายแล้วสำเร็จ '+saleIds.length+' รายการ'), res.data && res.data.failedCount ? 'err' : 'ok');
+      renderSaleKanban();
+      renderSaleListTable();
+    });
+  }
 
   function loadSaleQueue(){
     document.getElementById('saleQueueTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
@@ -3927,10 +3978,12 @@ function renderSaleList(root){
     STATE.sales = applySaleFilters();
     const host = document.getElementById('saleListTableHost');
     document.getElementById('saleListCount').textContent = 'รวม '+STATE.sales.length+' รายการ';
-    if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ไม่พบรายการขายออกที่ตรงกับตัวกรอง</div>'; return; }
-    let html = '<table><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ช่องทาง</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
+    if(!STATE.sales.length){ host.innerHTML = '<div class="empty">ไม่พบรายการขายออกที่ตรงกับตัวกรอง</div>'; updateSaleBulkConfirmBar(); return; }
+    const awaitingSaleVisible = STATE.sales.filter(s=>saleBucketOf(s)==='AwaitingSale');
+    let html = '<table><tr>' + (STATE.role==='admin' && awaitingSaleVisible.length ? '<th class="no-print"><input type="checkbox" id="saleSelectAllConfirm" title="เลือกทั้งหมด (รอขาย)"></th>' : '') + '<th>เลขที่</th><th>วันที่</th><th>หน่วยงาน</th><th>ช่องทาง</th><th>ผู้ซื้อ</th><th>จำนวนรายการ</th><th>รวมราคาขาย</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th class="no-print">การจัดการ</th></tr>';
     STATE.sales.forEach(s=>{
       html += `<tr>
+        ${STATE.role==='admin' && awaitingSaleVisible.length ? `<td class="no-print">${saleBucketOf(s)==='AwaitingSale' ? '<input type="checkbox" class="saleConfirmCheck" data-id="'+s.SaleID+'" '+(selectedConfirmSaleIds.has(s.SaleID)?'checked':'')+'>' : ''}</td>` : ''}
         <td><b>${esc(s.RunningNo)}</b></td>
         <td>${fmtDate(s.CreatedAt)}</td>
         <td>${esc(s.FromDept)}</td>
@@ -3955,6 +4008,24 @@ function renderSaleList(root){
     });
     html += '</table>';
     host.innerHTML = html;
+
+    host.querySelectorAll('.saleConfirmCheck').forEach(cb=>{
+      cb.onchange = ()=>{
+        if(cb.checked) selectedConfirmSaleIds.add(cb.dataset.id); else selectedConfirmSaleIds.delete(cb.dataset.id);
+        updateSaleBulkConfirmBar();
+      };
+    });
+    const selectAllCb = document.getElementById('saleSelectAllConfirm');
+    if(selectAllCb){
+      selectAllCb.checked = awaitingSaleVisible.length>0 && awaitingSaleVisible.every(s=>selectedConfirmSaleIds.has(s.SaleID));
+      selectAllCb.onchange = ()=>{
+        awaitingSaleVisible.forEach(s=>{
+          if(selectAllCb.checked) selectedConfirmSaleIds.add(s.SaleID); else selectedConfirmSaleIds.delete(s.SaleID);
+        });
+        renderSaleListTable();
+      };
+    }
+    updateSaleBulkConfirmBar();
   }
 
   window.confirmSale = function(saleId, btn){
