@@ -6,9 +6,7 @@
 <title>ระบบโอนย้ายทรัพย์สิน — SML</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
     --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
@@ -163,6 +161,7 @@
     * {-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important;}
     .doc-table{border-collapse:collapse !important;}
     .doc-table tr{page-break-inside:avoid;break-inside:avoid;}
+    .asset-qr-card{page-break-inside:avoid;break-inside:avoid;}
   }
   .asset-map-label{font-size:11px;font-weight:700;padding:1px 6px;}
 </style>
@@ -464,6 +463,14 @@ function syncFlagBadge(a){
   return '';
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// ลิงก์หน้าดูข้อมูลทรัพย์สินสาธารณะ (ปลายทาง QR) — ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น
+// GitHub Pages) ไม่ใช่ GAS_URL ซึ่งเป็น endpoint backend ที่ตอบกลับเป็น JSON ล้วนเท่านั้น
+function assetViewUrl(assetId){ return location.origin + location.pathname + '?view=assetView&id=' + encodeURIComponent(assetId); }
+// รูปภาพ QR จาก api.qrserver.com — ไม่ต้องพึ่งไลบรารี JS ฝั่ง client เลย (ของเดิมเคยใช้ qrcode.js จาก CDN
+// แล้วเจอปัญหาจริงว่าโหลดสคริปต์ไม่สำเร็จแล้ว QR ไม่ขึ้นแบบเงียบๆ) ใช้ร่วมกันทั้งหน้ารายการทรัพย์สิน/
+// ป้ายพิมพ์/export
+function assetQrImageUrl(assetId, size){ return 'https://api.qrserver.com/v1/create-qr-code/?size='+size+'x'+size+'&margin=1&data='+encodeURIComponent(assetViewUrl(assetId)); }
 
 /* ================= EXCEL EXPORT ================= */
 // sheetDefs: [{ name, header:[...], rows:[[...], ...] }, ...]
@@ -804,6 +811,7 @@ function render(){
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
   else if(STATE.view === 'assetQrLabel') renderAssetQrLabel(root);
+  else if(STATE.view === 'assetListPrint') renderAssetListPrint(root);
 }
 
 /* ================= ASSET LIST VIEW (browse, select, and act on assets) ================= */
@@ -971,6 +979,7 @@ function renderAssetList(root){
         <button class="btn btn-secondary btn-sm" id="btnAlFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlExportPdf">🖨️ Export PDF (มีรูป QR)</button>
       </div>
       ${manageMode ? `
       <div class="toolbar no-print" style="border-top:1px solid var(--border);padding-top:10px;">
@@ -980,6 +989,7 @@ function renderAssetList(root){
         <button class="btn btn-primary btn-sm" id="btnAlSale">สร้างใบขาย</button>
         <button class="btn btn-primary btn-sm" id="btnAlWriteOff">สร้างใบตัดชำรุด</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRestore">คืนสถานะใช้งาน (Admin)</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlQrBatch">🏷️ พิมพ์ป้าย QR (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
       </div>
       <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
@@ -997,11 +1007,24 @@ function renderAssetList(root){
   document.getElementById('alWorkGroup').onchange = (e)=>{ selectedWorkGroup = e.target.value; renderTable(); };
   document.getElementById('alLocation').onchange = (e)=>{ selectedLocation = e.target.value; renderTable(); };
   document.getElementById('btnAlExport').onclick = exportAssetList;
+  document.getElementById('btnAlExportPdf').onclick = ()=>{
+    const rows = filteredRows();
+    if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    STATE.assetListPrintRows = rows;
+    STATE.view = 'assetListPrint';
+    render();
+  };
   if(manageMode){
     document.getElementById('btnAlTransfer').onclick = ()=> startFromSelection('create');
     document.getElementById('btnAlSale').onclick = ()=> startFromSelection('saleCreate');
     document.getElementById('btnAlWriteOff').onclick = ()=> startFromSelection('writeOffCreate');
     document.getElementById('btnAlRestore').onclick = restoreSelected;
+    document.getElementById('btnAlQrBatch').onclick = ()=>{
+      if(!STATE.selectedAssetIds.length){ toast('กรุณาเลือกทรัพย์สินที่ต้องการพิมพ์ป้ายก่อน','err'); return; }
+      STATE.qrLabelAssetIds = STATE.selectedAssetIds.slice();
+      STATE.view = 'assetQrLabel';
+      render();
+    };
     document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
   }
 
@@ -1014,8 +1037,11 @@ function renderAssetList(root){
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const queuePurposeLabel = { transfer:'รอโอนย้าย', sale:'รอขาย', writeoff:'รอตัดชำรุด' };
     const queueStatusOf = a => (STATE.assetQueuedPurposes[a.AssetID]||[]).map(p=>queuePurposeLabel[p]||p).join('/');
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
+    // ไลบรารี xlsx ฝั่ง client ที่ใช้ export (ฟรี/community edition) ไม่รองรับการฝังรูปภาพลงในไฟล์ .xlsx
+    // ได้ — ใส่ "ลิงก์ QR" เป็นข้อความ (ลิงก์เดียวกับที่เข้ารหัสอยู่ใน QR code จริง) แทน เปิดจากมือถือ/
+    // คลิกจากในชีตก็ไปหน้าเดียวกับสแกน QR เป๊ะ ถ้าต้องการรูป QR จริงต้องพิมพ์ป้ายจากหน้า "ป้าย QR" แทน
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ','ลิงก์ QR (สแกนดูข้อมูล)'];
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'', assetViewUrl(a.AssetID)]);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
@@ -1097,7 +1123,7 @@ function renderAssetList(root){
     const allSelected = manageMode && rows.every(a=>STATE.selectedAssetIds.indexOf(a.AssetID)!==-1);
     let html = '<table class="asset-table"><tr>'
       + (manageMode ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="alSelectAll" ${allSelected?'checked':''}></th>` : '')
-      + `<th style="width:6%;">รูป</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
+      + `<th style="width:6%;">รูป</th><th class="no-print" style="width:5%;">QR</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
       + '<th style="width:8%;">หน่วยงาน</th><th style="width:7%;">ฝ่าย</th><th style="width:7%;">กลุ่มงาน</th><th style="width:8%;">ผู้ดูแล</th><th style="width:8%;">สถานที่</th>'
       + '<th style="width:8%;">ราคาซื้อ</th><th style="width:8%;">มูลค่าตามบัญชี</th><th style="width:6%;">สถานะ</th><th style="width:8%;">แท็กสถานะ</th>'
       + (manageMode ? '<th class="no-print" style="width:10%;">จัดการ</th><th class="no-print" style="width:5%;">ลบ</th>' : '')
@@ -1108,6 +1134,7 @@ function renderAssetList(root){
       html += `<tr>
         ${manageMode ? `<td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>` : ''}
         <td><img class="thumb thumb-sm" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td class="no-print"><img src="${esc(assetQrImageUrl(a.AssetID, 50))}" width="50" height="50" style="cursor:pointer;" title="คลิกเพื่อเปิด/พิมพ์ป้าย QR" data-qrthumb="${esc(a.AssetID)}"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}${syncFlagBadge(a)}</td>
         <td>${esc(a.Department)}</td>
@@ -1154,6 +1181,16 @@ function renderAssetList(root){
     html += '</table>';
     host.innerHTML = html;
 
+    // เปิดหน้าพิมพ์ป้าย QR ทีละชิ้นจากรูปตัวอย่างเล็กๆ ในตาราง — ใช้งานได้ทั้ง 2 แท็บ (ข้อมูลทั้งหมด/จัดการ)
+    // ไม่ใช่แค่โหมดจัดการเหมือนปุ่ม "🏷️ ป้าย QR" เดิม จึงต้อง wire ไว้ก่อนเช็ค manageMode ด้านล่าง
+    host.querySelectorAll('[data-qrthumb]').forEach(img=>{
+      img.onclick = ()=>{
+        STATE.qrLabelAssetIds = [img.dataset.qrthumb];
+        STATE.view = 'assetQrLabel';
+        render();
+      };
+    });
+
     if(!manageMode) return;
 
     host.querySelectorAll('[data-editid]').forEach(btn=>{
@@ -1165,7 +1202,7 @@ function renderAssetList(root){
     host.querySelectorAll('[data-qrid]').forEach(btn=>{
       btn.onclick = ()=>{
         STATE.view = 'assetQrLabel';
-        STATE.qrLabelAssetId = btn.dataset.qrid;
+        STATE.qrLabelAssetIds = [btn.dataset.qrid];
         render();
       };
     });
@@ -1391,42 +1428,81 @@ function renderAssetList(root){
   }
 }
 
-/* ================= ASSET QR LABEL VIEW (Admin: สร้าง/พิมพ์ป้าย QR ติดทรัพย์สิน) ================= */
+/* ================= ASSET QR LABEL VIEW (Admin: สร้าง/พิมพ์ป้าย QR ติดทรัพย์สิน — เลือกได้หลายรายการ) ================= */
 // QR code เข้ารหัสเป็นลิงก์ไปหน้า renderAssetPublicView (?view=assetView&id=...) ที่เปิดดูได้โดยไม่ต้อง
 // login — สแกนป้ายที่ติดอยู่กับทรัพย์สินจริงแล้วเจอข้อมูล รหัส/ชื่อ/หน่วยงาน/สถานที่/สถานะทันที
+// ใช้รูปภาพ QR จาก api.qrserver.com (<img src="...">) แทนการสร้างด้วยไลบรารี JS ฝั่ง client — ของเดิม
+// (qrcode.js จาก CDN) เจอปัญหาจริงที่หน้างานว่า QR ไม่ขึ้นเลยแบบเงียบๆ (โหลดสคริปต์ไม่สำเร็จ/ถูกบล็อก)
+// เปลี่ยนเป็น <img> ธรรมดาแทน ถ้าโหลดไม่ได้อย่างน้อยก็ยังเห็นไอคอนรูปเสีย ไม่ใช่พื้นที่ว่างเงียบๆ เหมือนเดิม
+// ขนาดป้ายเล็กกะทัดรัด (QR ~110px) จัดเป็นตารางเพื่อพิมพ์ได้หลายป้ายต่อหน้าเดียว
 function renderAssetQrLabel(root){
-  const asset = (STATE.assetsFull||[]).find(a=>a.AssetID===STATE.qrLabelAssetId);
-  if(!asset){
+  const ids = STATE.qrLabelAssetIds || [];
+  const assets = ids.map(id => (STATE.assetsFull||[]).find(a=>a.AssetID===id)).filter(Boolean);
+  if(!assets.length){
     root.innerHTML = '<div class="card"><div class="empty">ไม่พบข้อมูลทรัพย์สิน — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
     return;
   }
-  // ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น GitHub Pages) ไม่ใช่ GAS_URL — GAS_URL คือ endpoint
-  // backend (Apps Script exec) ที่ตอบกลับเป็น JSON ล้วนเท่านั้น ไม่มีหน้า HTML ให้แสดงผล (เหมือนลิงก์
-  // "ประมูลขายสาธารณะ" ที่หน้าตั้งค่าใช้ location.origin+location.pathname แบบเดียวกัน)
-  const qrUrl = location.origin + location.pathname + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
+  const qrSize = 110;
+
+  const cardsHtml = assets.map(a=>{
+    return `
+      <div class="card asset-qr-card" style="width:180px;text-align:center;padding:12px;">
+        <img src="${esc(assetQrImageUrl(a.AssetID, qrSize))}" width="${qrSize}" height="${qrSize}" style="display:block;margin:0 auto;" alt="QR ${esc(a.AssetID)}">
+        <div style="font-size:13px;font-weight:700;margin-top:6px;">${esc(a.AssetID)}</div>
+        <div style="font-size:12px;margin-top:1px;">${esc(a.AssetName)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(a.Department||'-')}${a.Location ? ' — '+esc(a.Location) : ''}</div>
+      </div>`;
+  }).join('');
+
   root.innerHTML = `
     <div class="card no-print" style="margin-bottom:12px;">
       <button class="btn btn-secondary btn-sm" id="btnQrBack">← กลับ</button>
-      <button class="btn btn-primary btn-sm" id="btnQrPrint">🖨️ พิมพ์ป้าย</button>
-      <p style="color:var(--muted);font-size:12px;margin-top:8px;">สแกน QR นี้จะเปิดหน้าดูข้อมูลทรัพย์สินนี้ได้ทันทีโดยไม่ต้อง login — พิมพ์แล้วนำไปติดกับตัวทรัพย์สินจริง</p>
+      <button class="btn btn-primary btn-sm" id="btnQrPrint">🖨️ พิมพ์ป้าย (${assets.length} รายการ)</button>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px;">สแกน QR จะเปิดหน้าดูข้อมูลทรัพย์สินนั้นได้ทันทีโดยไม่ต้อง login — พิมพ์แล้วตัดแปะติดกับตัวทรัพย์สินจริง (ขนาดเล็กกะทัดรัด เหมาะกับของชิ้นเล็ก)</p>
     </div>
-    <div class="card" style="max-width:360px;text-align:center;">
-      <div id="qrCanvasHost" style="display:flex;justify-content:center;margin:10px 0;"></div>
-      <div style="font-size:16px;font-weight:700;">${esc(asset.AssetID)}</div>
-      <div style="font-size:14px;margin-top:2px;">${esc(asset.AssetName)}</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(asset.Department||'-')}${asset.Location ? ' — '+esc(asset.Location) : ''}</div>
-    </div>
-    <div class="card no-print" style="max-width:360px;">
-      <label style="font-size:12px;">ลิงก์ (กรณีไม่สะดวกสแกน)</label>
-      <input type="text" readonly value="${esc(qrUrl)}" onclick="this.select();" style="width:100%;font-size:12px;">
-    </div>
+    <div id="printArea" style="display:flex;flex-wrap:wrap;gap:10px;">${cardsHtml}</div>
   `;
   document.getElementById('btnQrBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
   document.getElementById('btnQrPrint').onclick = ()=> window.print();
-  QRCode.toCanvas(qrUrl, { width: 220, margin: 1 }, (err, canvas)=>{
-    if(err){ document.getElementById('qrCanvasHost').innerHTML = '<div class="empty">สร้าง QR code ไม่สำเร็จ</div>'; return; }
-    document.getElementById('qrCanvasHost').appendChild(canvas);
-  });
+}
+
+/* ================= ASSET LIST PDF/PRINT VIEW — รายการทรัพย์สิน (ตามตัวกรองปัจจุบัน) พร้อมรูป QR ================= */
+// Excel export ใส่ QR เป็นรูปภาพจริงไม่ได้ (ไลบรารี xlsx ฝั่ง client ไม่รองรับ) — หน้านี้ใช้กลไกพิมพ์ของ
+// เบราว์เซอร์แทน (window.print() แล้วเลือก "บันทึกเป็น PDF" ในหน้าต่างพิมพ์) ได้ไฟล์ PDF ที่เห็นรูป QR จริง
+function renderAssetListPrint(root){
+  const rows = STATE.assetListPrintRows || [];
+  if(!rows.length){
+    root.innerHTML = '<div class="card"><div class="empty">ไม่มีข้อมูลให้แสดง — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
+    return;
+  }
+  const qrSize = 50;
+  const rowsHtml = rows.map(a => `
+    <tr>
+      <td style="text-align:center;"><img src="${esc(assetQrImageUrl(a.AssetID, qrSize))}" width="${qrSize}" height="${qrSize}"></td>
+      <td><b>${esc(a.AssetID)}</b></td>
+      <td>${esc(a.AssetName)}</td>
+      <td>${esc(a.Department||'-')}</td>
+      <td>${esc(a.Location||'-')}</td>
+      <td>${esc(LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, STATE.assetQueuedPurposes[a.AssetID]&&STATE.assetQueuedPurposes[a.AssetID][0])]||'ใช้งานอยู่')}</td>
+      <td>${esc(a.Tag||'ใช้งาน')}</td>
+    </tr>`).join('');
+
+  root.innerHTML = `
+    <div class="card no-print" style="margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" id="btnAlPrintBack">← กลับ</button>
+      <button class="btn btn-primary btn-sm" id="btnAlPrintNow">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px;">กดพิมพ์แล้วเลือก "บันทึกเป็น PDF" (Save as PDF) ในหน้าต่างพิมพ์ของเบราว์เซอร์ — รวม ${rows.length} รายการ</p>
+    </div>
+    <div id="printArea" class="card">
+      <h2 style="margin-top:0;">รายการทรัพย์สิน</h2>
+      <table class="doc-table" style="width:100%;font-size:12px;">
+        <tr><th>QR</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>สถานที่</th><th>สถานะ</th><th>แท็กสถานะ</th></tr>
+        ${rowsHtml}
+      </table>
+    </div>
+  `;
+  document.getElementById('btnAlPrintBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
+  document.getElementById('btnAlPrintNow').onclick = ()=> window.print();
 }
 
 /* ================= ASSET PUBLIC VIEW (scan QR — เปิดดูได้โดยไม่ต้อง login) ================= */
