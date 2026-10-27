@@ -255,6 +255,9 @@ function doGet(e) {
       case 'getWriteOffApprovalView':
         result = getWriteOffApprovalView_(e.parameter.id, e.parameter.token);
         break;
+      case 'getAssetPublicView':
+        result = getAssetPublicView_(e.parameter.id);
+        break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
     }
@@ -492,6 +495,39 @@ function getAssetsFull_(q) {
   const rows = getAssetsRaw_(q);
   rows.forEach(r => { r.AssetStatus = disposed[String(r.AssetID)] || 'Active'; });
   return rows;
+}
+
+// หน้าสาธารณะที่เปิดจากการสแกน QR code บนป้ายทรัพย์สิน (ไม่ต้อง login) — ตั้งใจคืนเฉพาะฟิลด์ที่ไม่อ่อนไหว
+// (ไม่มีราคาซื้อ/มูลค่าทางบัญชี/ราคาซาก) ต่างจาก getAssets_/getAssetsFull_ ที่คืนทุกคอลัมน์ (ใช้สำหรับหน้าที่
+// ต้อง login อยู่แล้วเป็นหลัก แต่ยังไม่ได้ล็อกไว้ที่ระดับ action เพราะมีจุดอื่นในระบบพึ่งพาอยู่)
+function getAssetPublicView_(assetId) {
+  const id = String(assetId || '').trim();
+  if (!id) return { ok: false, error: 'ไม่พบรหัสทรัพย์สิน' };
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === id) {
+      const r = rowToObj_(values[i], idx);
+      const disposed = getDisposedAssetStatus_();
+      return {
+        ok: true,
+        data: {
+          AssetID: r.AssetID,
+          AssetName: r.AssetName,
+          Department: r.Department,
+          Division: r.Division,
+          WorkGroup: r.WorkGroup,
+          Custodian: r.Custodian,
+          Location: r.Location,
+          Tag: r.Tag,
+          AssetStatus: disposed[String(r.AssetID)] || 'Active',
+          DisplayImage: r.ImageURLOverride || r.ImageURL || ''
+        }
+      };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + id };
 }
 
 function getAssetsRaw_(q) {
