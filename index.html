@@ -3230,7 +3230,7 @@ function renderAuctionSelection(root){
 
     <div class="card">
       <h2>คัดเลือกรายการประมูล</h2>
-      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว หรือขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก และยังไม่ได้ส่งประมูล — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — เมื่อส่งประมูลแล้วรายการจะย้ายไปแสดงในส่วน "รายการที่ส่งประมูลแล้ว" ด้านล่างแทน</p>
+      <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก และยังไม่ได้ส่งประมูล (รายการตัดชำรุดอนุมัติแล้วให้ไปเลือกส่งประมูล/ขาย ที่แท็บ "ตัดชำรุดแล้ว รอดำเนินการ" แยกไว้ต่างหาก) — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — เมื่อส่งประมูลแล้วรายการจะย้ายไปแสดงในส่วน "รายการที่ส่งประมูลแล้ว" ด้านล่างแทน</p>
       <div class="toolbar no-print">
         <input type="text" id="aselSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
       </div>
@@ -3321,9 +3321,11 @@ function renderAuctionSelection(root){
     return candidates.filter(a=>a.AssetStatus!=='Sold' || a.SaleChannel==='ประมูล');
   }
 
+  // ไม่รวมรายการ "ตัดชำรุด" ที่ยังไม่ส่งประมูล ในที่นี้ เพราะย้ายไปให้ Admin เลือกส่งประมูล/ขาย
+  // ที่แท็บ "ตัดชำรุดแล้ว รอดำเนินการ" แยกไว้แล้ว — ที่นี่เหลือแค่รายการขายออกช่องทางประมูลที่รออยู่
   function filteredCandidates(){
     const qq = (document.getElementById('aselSearch').value||'').trim().toLowerCase();
-    return activeCandidates().filter(a => !a.SendToAuction &&
+    return activeCandidates().filter(a => !a.SendToAuction && a.AssetStatus!=='WrittenOff' &&
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1)
     );
   }
