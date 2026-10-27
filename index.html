@@ -464,6 +464,14 @@ function syncFlagBadge(a){
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+// ลิงก์หน้าดูข้อมูลทรัพย์สินสาธารณะ (ปลายทาง QR) — ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น
+// GitHub Pages) ไม่ใช่ GAS_URL ซึ่งเป็น endpoint backend ที่ตอบกลับเป็น JSON ล้วนเท่านั้น
+function assetViewUrl(assetId){ return location.origin + location.pathname + '?view=assetView&id=' + encodeURIComponent(assetId); }
+// รูปภาพ QR จาก api.qrserver.com — ไม่ต้องพึ่งไลบรารี JS ฝั่ง client เลย (ของเดิมเคยใช้ qrcode.js จาก CDN
+// แล้วเจอปัญหาจริงว่าโหลดสคริปต์ไม่สำเร็จแล้ว QR ไม่ขึ้นแบบเงียบๆ) ใช้ร่วมกันทั้งหน้ารายการทรัพย์สิน/
+// ป้ายพิมพ์/export
+function assetQrImageUrl(assetId, size){ return 'https://api.qrserver.com/v1/create-qr-code/?size='+size+'x'+size+'&margin=1&data='+encodeURIComponent(assetViewUrl(assetId)); }
+
 /* ================= EXCEL EXPORT ================= */
 // sheetDefs: [{ name, header:[...], rows:[[...], ...] }, ...]
 function exportExcel(filename, sheetDefs){
@@ -1020,8 +1028,11 @@ function renderAssetList(root){
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
     const queuePurposeLabel = { transfer:'รอโอนย้าย', sale:'รอขาย', writeoff:'รอตัดชำรุด' };
     const queueStatusOf = a => (STATE.assetQueuedPurposes[a.AssetID]||[]).map(p=>queuePurposeLabel[p]||p).join('/');
-    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ'];
-    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'']);
+    // ไลบรารี xlsx ฝั่ง client ที่ใช้ export (ฟรี/community edition) ไม่รองรับการฝังรูปภาพลงในไฟล์ .xlsx
+    // ได้ — ใส่ "ลิงก์ QR" เป็นข้อความ (ลิงก์เดียวกับที่เข้ารหัสอยู่ใน QR code จริง) แทน เปิดจากมือถือ/
+    // คลิกจากในชีตก็ไปหน้าเดียวกับสแกน QR เป๊ะ ถ้าต้องการรูป QR จริงต้องพิมพ์ป้ายจากหน้า "ป้าย QR" แทน
+    const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ','ลิงก์ QR (สแกนดูข้อมูล)'];
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'', assetViewUrl(a.AssetID)]);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
   }
 
@@ -1103,7 +1114,7 @@ function renderAssetList(root){
     const allSelected = manageMode && rows.every(a=>STATE.selectedAssetIds.indexOf(a.AssetID)!==-1);
     let html = '<table class="asset-table"><tr>'
       + (manageMode ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="alSelectAll" ${allSelected?'checked':''}></th>` : '')
-      + `<th style="width:6%;">รูป</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
+      + `<th style="width:6%;">รูป</th><th class="no-print" style="width:5%;">QR</th><th style="width:8%;">รหัส</th><th style="width:${manageMode?'12':'15'}%;">ชื่อทรัพย์สิน</th>`
       + '<th style="width:8%;">หน่วยงาน</th><th style="width:7%;">ฝ่าย</th><th style="width:7%;">กลุ่มงาน</th><th style="width:8%;">ผู้ดูแล</th><th style="width:8%;">สถานที่</th>'
       + '<th style="width:8%;">ราคาซื้อ</th><th style="width:8%;">มูลค่าตามบัญชี</th><th style="width:6%;">สถานะ</th><th style="width:8%;">แท็กสถานะ</th>'
       + (manageMode ? '<th class="no-print" style="width:10%;">จัดการ</th><th class="no-print" style="width:5%;">ลบ</th>' : '')
@@ -1114,6 +1125,7 @@ function renderAssetList(root){
       html += `<tr>
         ${manageMode ? `<td class="no-print"><input type="checkbox" class="alRowChk" data-id="${esc(a.AssetID)}" ${checked}></td>` : ''}
         <td><img class="thumb thumb-sm" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td class="no-print"><img src="${esc(assetQrImageUrl(a.AssetID, 50))}" width="50" height="50" style="cursor:pointer;" title="คลิกเพื่อเปิด/พิมพ์ป้าย QR" data-qrthumb="${esc(a.AssetID)}"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}${syncFlagBadge(a)}</td>
         <td>${esc(a.Department)}</td>
@@ -1159,6 +1171,16 @@ function renderAssetList(root){
     });
     html += '</table>';
     host.innerHTML = html;
+
+    // เปิดหน้าพิมพ์ป้าย QR ทีละชิ้นจากรูปตัวอย่างเล็กๆ ในตาราง — ใช้งานได้ทั้ง 2 แท็บ (ข้อมูลทั้งหมด/จัดการ)
+    // ไม่ใช่แค่โหมดจัดการเหมือนปุ่ม "🏷️ ป้าย QR" เดิม จึงต้อง wire ไว้ก่อนเช็ค manageMode ด้านล่าง
+    host.querySelectorAll('[data-qrthumb]').forEach(img=>{
+      img.onclick = ()=>{
+        STATE.qrLabelAssetIds = [img.dataset.qrthumb];
+        STATE.view = 'assetQrLabel';
+        render();
+      };
+    });
 
     if(!manageMode) return;
 
@@ -1411,19 +1433,12 @@ function renderAssetQrLabel(root){
     root.innerHTML = '<div class="card"><div class="empty">ไม่พบข้อมูลทรัพย์สิน — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
     return;
   }
-  // ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น GitHub Pages) ไม่ใช่ GAS_URL — GAS_URL คือ endpoint
-  // backend (Apps Script exec) ที่ตอบกลับเป็น JSON ล้วนเท่านั้น ไม่มีหน้า HTML ให้แสดงผล (เหมือนลิงก์
-  // "ประมูลขายสาธารณะ" ที่หน้าตั้งค่าใช้ location.origin+location.pathname แบบเดียวกัน)
-  const base = location.origin + location.pathname;
-  const urlFor = (assetId) => base + '?view=assetView&id=' + encodeURIComponent(assetId);
   const qrSize = 110;
 
   const cardsHtml = assets.map(a=>{
-    const qrUrl = urlFor(a.AssetID);
-    const qrImgSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=' + qrSize + 'x' + qrSize + '&margin=1&data=' + encodeURIComponent(qrUrl);
     return `
       <div class="card asset-qr-card" style="width:180px;text-align:center;padding:12px;">
-        <img src="${esc(qrImgSrc)}" width="${qrSize}" height="${qrSize}" style="display:block;margin:0 auto;" alt="QR ${esc(a.AssetID)}">
+        <img src="${esc(assetQrImageUrl(a.AssetID, qrSize))}" width="${qrSize}" height="${qrSize}" style="display:block;margin:0 auto;" alt="QR ${esc(a.AssetID)}">
         <div style="font-size:13px;font-weight:700;margin-top:6px;">${esc(a.AssetID)}</div>
         <div style="font-size:12px;margin-top:1px;">${esc(a.AssetName)}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(a.Department||'-')}${a.Location ? ' — '+esc(a.Location) : ''}</div>
