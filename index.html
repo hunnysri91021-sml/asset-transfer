@@ -1399,7 +1399,10 @@ function renderAssetQrLabel(root){
     root.innerHTML = '<div class="card"><div class="empty">ไม่พบข้อมูลทรัพย์สิน — กรุณากลับไปหน้ารายการทรัพย์สินแล้วลองใหม่</div></div>';
     return;
   }
-  const qrUrl = GAS_URL + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
+  // ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น GitHub Pages) ไม่ใช่ GAS_URL — GAS_URL คือ endpoint
+  // backend (Apps Script exec) ที่ตอบกลับเป็น JSON ล้วนเท่านั้น ไม่มีหน้า HTML ให้แสดงผล (เหมือนลิงก์
+  // "ประมูลขายสาธารณะ" ที่หน้าตั้งค่าใช้ location.origin+location.pathname แบบเดียวกัน)
+  const qrUrl = location.origin + location.pathname + '?view=assetView&id=' + encodeURIComponent(asset.AssetID);
   root.innerHTML = `
     <div class="card no-print" style="margin-bottom:12px;">
       <button class="btn btn-secondary btn-sm" id="btnQrBack">← กลับ</button>
@@ -1411,6 +1414,10 @@ function renderAssetQrLabel(root){
       <div style="font-size:16px;font-weight:700;">${esc(asset.AssetID)}</div>
       <div style="font-size:14px;margin-top:2px;">${esc(asset.AssetName)}</div>
       <div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(asset.Department||'-')}${asset.Location ? ' — '+esc(asset.Location) : ''}</div>
+    </div>
+    <div class="card no-print" style="max-width:360px;">
+      <label style="font-size:12px;">ลิงก์ (กรณีไม่สะดวกสแกน)</label>
+      <input type="text" readonly value="${esc(qrUrl)}" onclick="this.select();" style="width:100%;font-size:12px;">
     </div>
   `;
   document.getElementById('btnQrBack').onclick = ()=>{ STATE.view = 'assetList'; render(); };
