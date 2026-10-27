@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ระบบโอนย้ายทรัพย์สิน — SML</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
     --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
@@ -1425,6 +1427,7 @@ function renderAssetPublicView(root){
   apiGet({ action:'getAssetPublicView', id: STATE.assetViewCtx.id }).then(res=>{
     if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
     const a = res.data;
+    const loggedIn = checkAuth(); // ดูตำแหน่งได้โดยไม่ต้อง login แต่ "ปักหมุด/แก้ไข" ต้อง login ก่อนเสมอ
     root.innerHTML = `
       <div class="card" style="max-width:420px;margin:20px auto;">
         ${a.DisplayImage ? `<img src="${esc(a.DisplayImage)}" style="width:100%;max-height:260px;object-fit:contain;border-radius:8px;margin-bottom:14px;">` : ''}
@@ -1439,8 +1442,111 @@ function renderAssetPublicView(root){
           <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
         </table>
       </div>
+      <div class="card" style="max-width:420px;margin:12px auto;">
+        <h3 style="margin:0 0 8px;font-size:15px;">📍 ตำแหน่งทรัพย์สิน</h3>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">${loggedIn ? 'แตะบนแผนที่ หรือลากหมุด เพื่อปักตำแหน่งจริงของทรัพย์สินชิ้นนี้ แล้วกด "บันทึกตำแหน่งนี้"' : 'ดูตำแหน่งปัจจุบันได้เลย — ต้องเข้าสู่ระบบก่อนจึงจะปักหมุด/แก้ไขตำแหน่งได้'}</p>
+        <div id="assetPinMap" style="height:240px;border-radius:8px;overflow:hidden;"></div>
+        ${loggedIn ? `
+        <button class="btn btn-primary btn-sm" id="btnSaveAssetPin" style="margin-top:10px;width:100%;" ${a.Lat && a.Lng ? '' : 'disabled'}>บันทึกตำแหน่งนี้</button>
+        <div id="assetPinStatus" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+        ` : `
+        <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+          <label style="font-size:12px;">ชื่อผู้ใช้</label>
+          <input type="text" id="pinLoginUsername" placeholder="กรอกชื่อผู้ใช้" style="width:100%;margin-bottom:6px;">
+          <label style="font-size:12px;">รหัสผ่าน</label>
+          <input type="password" id="pinLoginPw" placeholder="กรอกรหัสผ่าน" style="width:100%;margin-bottom:8px;">
+          <button class="btn btn-primary btn-sm" id="btnPinLogin" style="width:100%;">เข้าสู่ระบบเพื่อปักหมุด</button>
+          <div id="pinLoginStatus" style="font-size:12px;color:var(--red);margin-top:6px;"></div>
+        </div>
+        `}
+      </div>
     `;
+    initAssetPinMap(a, loggedIn);
+    if(!loggedIn){
+      const doPinLogin = ()=>{
+        const username = document.getElementById('pinLoginUsername').value.trim();
+        const pw = document.getElementById('pinLoginPw').value;
+        const statusEl = document.getElementById('pinLoginStatus');
+        if(!username || !pw){ statusEl.textContent = 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน'; return; }
+        const btn = document.getElementById('btnPinLogin');
+        btn.disabled = true;
+        statusEl.style.color = 'var(--muted)';
+        statusEl.textContent = 'กำลังเข้าสู่ระบบ...';
+        apiPost({ action:'login', username, password: pw }).then(lres=>{
+          btn.disabled = false;
+          if(!lres.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = lres.error||'เข้าสู่ระบบไม่สำเร็จ'; return; }
+          STATE.adminPassword = pw;
+          STATE.role = lres.data.role;
+          STATE.username = lres.data.username;
+          STATE.myDepartments = lres.data.departments || [];
+          STATE.canViewPrices = !!lres.data.canViewPrices;
+          STATE.canExportAuction = !!lres.data.canExportAuction;
+          STATE.disabledCategories = lres.data.disabledCategories || [];
+          sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: lres.data.role, username: lres.data.username, departments: lres.data.departments || [], canViewPrices: !!lres.data.canViewPrices, canExportAuction: !!lres.data.canExportAuction, disabledCategories: lres.data.disabledCategories || [] }));
+          renderAssetPublicView(root); // re-render ทั้งหน้าแบบ login แล้ว เปิดแผนที่ให้ปักหมุดได้
+        });
+      };
+      document.getElementById('btnPinLogin').onclick = doPinLogin;
+      document.getElementById('pinLoginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') doPinLogin(); });
+    }
   });
+
+  // แผนที่ตำแหน่งทรัพย์สิน (Leaflet + OpenStreetMap) — ดูได้เสมอโดยไม่ต้อง login (editable=false: แสดงหมุดเดิม
+  // ถ้ามี เฉยๆ แตะ/ลากไม่ได้) ส่วนโหมดแก้ไข (editable=true หลัง login แล้วเท่านั้น) ให้แตะปักหรือลากหมุดได้ และ
+  // ถ้ายังไม่เคยปักหมุดไว้จะลองขอ GPS เครื่องมาตั้งจุดเริ่มต้นให้ด้วย บันทึกผ่าน updateAssetLocationPin_ ฝั่ง
+  // Code.gs ที่บังคับเช็ค login (isValidUserPassword_) อีกชั้นเสมอ ไม่ใช่แค่ซ่อนปุ่มฝั่งนี้
+  function initAssetPinMap(a, editable){
+    const hasPin = a.Lat && a.Lng;
+    const initialLat = hasPin ? parseFloat(a.Lat) : 13.7563;
+    const initialLng = hasPin ? parseFloat(a.Lng) : 100.5018;
+    const map = L.map('assetPinMap').setView([initialLat, initialLng], hasPin ? 17 : 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap', maxZoom: 19
+    }).addTo(map);
+    let marker = hasPin ? L.marker([initialLat, initialLng], { draggable: editable }).addTo(map) : null;
+
+    if(!editable){
+      setTimeout(()=> map.invalidateSize(), 150);
+      return;
+    }
+
+    const saveBtn = document.getElementById('btnSaveAssetPin');
+    const statusEl = document.getElementById('assetPinStatus');
+    if(marker) marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
+
+    function setMarker(lat, lng){
+      if(marker) marker.setLatLng([lat, lng]);
+      else {
+        marker = L.marker([lat, lng], { draggable:true }).addTo(map);
+        marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
+      }
+      saveBtn.disabled = false;
+      statusEl.textContent = '';
+    }
+    map.on('click', (e)=> setMarker(e.latlng.lat, e.latlng.lng));
+
+    if(!hasPin && navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(pos=>{
+        map.setView([pos.coords.latitude, pos.coords.longitude], 17);
+      }, ()=>{}, { timeout: 5000 });
+    }
+
+    saveBtn.onclick = ()=>{
+      if(!marker) return;
+      const p = marker.getLatLng();
+      saveBtn.disabled = true;
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'กำลังบันทึก...';
+      apiPost({ action:'updateAssetLocationPin', password: STATE.adminPassword, assetId: a.AssetID, lat: p.lat, lng: p.lng }).then(res=>{
+        saveBtn.disabled = false;
+        if(!res.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = 'บันทึกไม่สำเร็จ: '+res.error; return; }
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = '✅ บันทึกตำแหน่งสำเร็จ';
+      });
+    };
+
+    setTimeout(()=> map.invalidateSize(), 150); // กัน map เพี้ยนถ้า container ยังไม่มีขนาดจริงตอน init
+  }
 }
 
 /* ================= DASHBOARD VIEW (ข้อมูลรวม) ================= */
@@ -1549,6 +1655,11 @@ function renderDashboard(root){
         <button class="btn btn-secondary btn-sm" id="btnDashExport">⬇ Export Excel</button>
       </div>
       ${tilesHtml}
+      <div style="margin-top:24px;">
+        <h2>แผนที่ตำแหน่งทรัพย์สิน</h2>
+        <p style="color:var(--muted);font-size:13px;">แสดงเฉพาะทรัพย์สินที่เคยปักหมุดตำแหน่งไว้แล้ว (สแกน QR ที่ป้ายแล้วปักหมุดได้ที่หน้ารายละเอียดทรัพย์สิน) — คลิกหมุดเพื่อดูรายละเอียด</p>
+        <div id="dashAssetMap" style="height:360px;border-radius:8px;overflow:hidden;"></div>
+      </div>
       <div class="row" style="margin-top:24px;align-items:flex-start;">
         <div style="flex:2;min-width:280px;">
           <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
@@ -1584,6 +1695,8 @@ function renderDashboard(root){
       };
     });
 
+    renderDashAssetMap(assets);
+
     document.getElementById('btnDashExport').onclick = ()=>{
       const statusSheet = {
         name: 'สรุปตามสถานะ',
@@ -1617,6 +1730,33 @@ function renderDashboard(root){
       exportExcel('ข้อมูลรวมทรัพย์สิน.xlsx', [statusSheet, deptSheet, deptQueueSheet, tagSheet]);
     };
   }
+}
+
+// แผนที่ภาพรวมทรัพย์สินที่หน้า Dashboard — แสดงเฉพาะทรัพย์สินที่มีพิกัด Lat/Lng (ปักหมุดไว้แล้วจากหน้า
+// renderAssetPublicView ตอนสแกน QR) คลิกหมุดดูรายละเอียดสั้นๆ ได้ — ถ้าไม่มีรายการไหนปักหมุดไว้เลยแสดงข้อความแทนแผนที่
+function renderDashAssetMap(assets){
+  const host = document.getElementById('dashAssetMap');
+  if(!host) return;
+  const pinned = (assets||[]).filter(a=>a.Lat && a.Lng);
+  if(!pinned.length){
+    host.outerHTML = '<div class="empty" id="dashAssetMap">ยังไม่มีทรัพย์สินที่ปักหมุดตำแหน่งไว้ — สแกน QR ที่ป้ายทรัพย์สินแล้วปักหมุดได้ที่หน้ารายละเอียด</div>';
+    return;
+  }
+  const map = L.map('dashAssetMap');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap', maxZoom: 19
+  }).addTo(map);
+  const markers = pinned.map(a=>{
+    const m = L.marker([parseFloat(a.Lat), parseFloat(a.Lng)]).addTo(map);
+    m.bindPopup('<b>'+esc(a.AssetID)+'</b><br>'+esc(a.AssetName)+'<br>'+esc(a.Department||'-')+(a.Location?' — '+esc(a.Location):''));
+    return m;
+  });
+  if(markers.length === 1){
+    map.setView(markers[0].getLatLng(), 16);
+  } else {
+    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
+  }
+  setTimeout(()=> map.invalidateSize(), 150);
 }
 
 /* ================= AUCTION VIEW (ประมูลขาย) — รวมคิวรอขาย + รอตัดชำรุด ให้ทุกคนดูได้ ================= */
