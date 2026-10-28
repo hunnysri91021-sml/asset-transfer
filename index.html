@@ -163,7 +163,8 @@
     .asset-qr-card{page-break-inside:avoid;break-inside:avoid;}
   }
   .layout-pin{position:absolute;transform:translate(-50%,-100%);cursor:pointer;display:flex;flex-direction:column;align-items:center;pointer-events:auto;}
-  .layout-pin::after{content:'';display:block;width:12px;height:12px;border-radius:50%;background:var(--red,#c0392b);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);margin:0 auto;}
+  .layout-pin-dot{width:12px;height:12px;border-radius:50%;background:var(--red,#c0392b);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);margin:0 auto;}
+  .layout-pin-thumb{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:block;background:#fff;}
   .layout-pin-label{font-size:10px;font-weight:700;background:#fff;color:#1a3c6e;padding:1px 5px;border-radius:4px;border:1px solid var(--border);white-space:nowrap;margin-bottom:2px;box-shadow:0 1px 2px rgba(0,0,0,.2);}
 </style>
 </head>
@@ -466,6 +467,18 @@ function syncFlagBadge(a){
   return '';
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// หมุดบนผังทรัพย์สิน (ใช้ร่วมกันทั้งหน้า "ผังทรัพย์สิน" และหน้าสแกน QR) — แสดงรหัสทรัพย์สิน + รูปภาพ (ถ้ามี) ไม่ใช่
+// แค่จุดสีแดงเฉยๆ เหมือนเดิม ถ้าไม่มีรูปหรือรูปโหลดไม่ขึ้นจะ fallback กลับไปเป็นจุดสีแดงแทน
+function layoutPinMarkerHtml(p, x, y){
+  const img = p.DisplayImage
+    ? `<img class="layout-pin-thumb" src="${esc(p.DisplayImage)}" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><div class="layout-pin-dot" style="display:none;"></div>`
+    : `<div class="layout-pin-dot"></div>`;
+  return `<div class="layout-pin" data-pinid="${esc(p.AssetID)}" style="left:${x}%;top:${y}%;" title="${esc(p.AssetID)} — ${esc(p.AssetName||'')}">
+    <span class="layout-pin-label">${esc(p.AssetID)}</span>
+    ${img}
+  </div>`;
+}
 
 // ลิงก์หน้าดูข้อมูลทรัพย์สินสาธารณะ (ปลายทาง QR) — ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น
 // GitHub Pages) ไม่ใช่ GAS_URL ซึ่งเป็น endpoint backend ที่ตอบกลับเป็น JSON ล้วนเท่านั้น
@@ -1519,6 +1532,7 @@ function renderAssetPublicView(root){
   apiGet({ action:'getAssetPublicView', id: STATE.assetViewCtx.id }).then(res=>{
     if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
     const a = res.data;
+    const loggedIn = checkAuth(); // ดูตำแหน่งได้โดยไม่ต้อง login แต่ "ปักหมุด/แก้ไข" ต้อง login ก่อนเสมอ
     root.innerHTML = `
       <div class="card" style="max-width:420px;margin:20px auto;">
         ${a.DisplayImage ? `<img src="${esc(a.DisplayImage)}" style="width:100%;max-height:260px;object-fit:contain;border-radius:8px;margin-bottom:14px;">` : ''}
@@ -1533,19 +1547,151 @@ function renderAssetPublicView(root){
           <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
         </table>
       </div>
-      ${a.LayoutImageURL && a.LayoutX!=='' && a.LayoutY!=='' ? `
       <div class="card" style="max-width:420px;margin:12px auto;">
-        <h3 style="margin:0 0 8px;font-size:15px;">📍 ตำแหน่งทรัพย์สิน — ${esc(a.LayoutName||'ผังทรัพย์สิน')}</h3>
+        <h3 style="margin:0 0 8px;font-size:15px;">📍 ตำแหน่งทรัพย์สิน</h3>
+        <div id="assetLayoutPinBody">กำลังโหลด...</div>
+      </div>
+    `;
+    initAssetLayoutPinCard(a, loggedIn, root);
+  });
+
+  // การ์ด "ตำแหน่งทรัพย์สิน" ที่หน้าสแกน QR — ดูตำแหน่งที่ปักไว้ได้เสมอโดยไม่ต้อง login ส่วนการปัก/ย้าย/ถอดหมุด
+  // ต้อง login ก่อนเสมอ (เช็คซ้ำฝั่ง Code.gs ด้วย ไม่ใช่แค่ซ่อนปุ่มฝั่งนี้) เหมือนรูปแบบเดิมตอนยังใช้ GPS pin
+  function initAssetLayoutPinCard(a, loggedIn, root){
+    const body = document.getElementById('assetLayoutPinBody');
+
+    if(!loggedIn){
+      body.innerHTML = `
+        ${a.LayoutImageURL && a.LayoutX!=='' && a.LayoutY!=='' ? `
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">ปักหมุดไว้ที่ผัง "${esc(a.LayoutName||'')}"— เข้าสู่ระบบก่อนจึงจะย้าย/แก้ไขตำแหน่งได้</p>
         <div style="position:relative;display:inline-block;max-width:100%;">
           <img src="${esc(a.LayoutImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
-          <div class="layout-pin" style="left:${a.LayoutX}%;top:${a.LayoutY}%;" title="${esc(a.AssetID)} — ${esc(a.AssetName)}">
-            <span class="layout-pin-label">${esc(a.AssetID)}</span>
-          </div>
+          ${layoutPinMarkerHtml(a, a.LayoutX, a.LayoutY)}
         </div>
-      </div>
-      ` : ''}
-    `;
-  });
+        ` : `<p style="color:var(--muted);font-size:12px;margin:0 0 8px;">ยังไม่ได้ปักหมุดตำแหน่งทรัพย์สินนี้ไว้ — เข้าสู่ระบบก่อนจึงจะปักหมุดได้</p>`}
+        <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+          <label style="font-size:12px;">ชื่อผู้ใช้</label>
+          <input type="text" id="pinLoginUsername" placeholder="กรอกชื่อผู้ใช้" style="width:100%;margin-bottom:6px;">
+          <label style="font-size:12px;">รหัสผ่าน</label>
+          <input type="password" id="pinLoginPw" placeholder="กรอกรหัสผ่าน" style="width:100%;margin-bottom:8px;">
+          <button class="btn btn-primary btn-sm" id="btnPinLogin" style="width:100%;">เข้าสู่ระบบเพื่อปักหมุด</button>
+          <div id="pinLoginStatus" style="font-size:12px;color:var(--red);margin-top:6px;"></div>
+        </div>
+      `;
+      const doPinLogin = ()=>{
+        const username = document.getElementById('pinLoginUsername').value.trim();
+        const pw = document.getElementById('pinLoginPw').value;
+        const statusEl = document.getElementById('pinLoginStatus');
+        if(!username || !pw){ statusEl.textContent = 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน'; return; }
+        const btn = document.getElementById('btnPinLogin');
+        btn.disabled = true;
+        statusEl.style.color = 'var(--muted)';
+        statusEl.textContent = 'กำลังเข้าสู่ระบบ...';
+        apiPost({ action:'login', username, password: pw }).then(lres=>{
+          btn.disabled = false;
+          if(!lres.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = lres.error||'เข้าสู่ระบบไม่สำเร็จ'; return; }
+          STATE.adminPassword = pw;
+          STATE.role = lres.data.role;
+          STATE.username = lres.data.username;
+          STATE.myDepartments = lres.data.departments || [];
+          STATE.canViewPrices = !!lres.data.canViewPrices;
+          STATE.canExportAuction = !!lres.data.canExportAuction;
+          STATE.disabledCategories = lres.data.disabledCategories || [];
+          sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: lres.data.role, username: lres.data.username, departments: lres.data.departments || [], canViewPrices: !!lres.data.canViewPrices, canExportAuction: !!lres.data.canExportAuction, disabledCategories: lres.data.disabledCategories || [] }));
+          renderAssetPublicView(root); // re-render ทั้งหน้าแบบ login แล้ว เปิดให้ปักหมุดได้
+        });
+      };
+      document.getElementById('btnPinLogin').onclick = doPinLogin;
+      document.getElementById('pinLoginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') doPinLogin(); });
+      return;
+    }
+
+    // login แล้ว — โหลดรายชื่อผังทั้งหมดมาให้เลือก (เริ่มต้นเลือกผังเดิมที่เคยปักไว้ ถ้ามี) แล้วคลิกบนภาพเพื่อปัก/ย้ายหมุด
+    body.innerHTML = '<div class="empty">กำลังโหลดรายการผัง...</div>';
+    apiPost({ action:'getAssetLayouts', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ body.innerHTML = 'โหลดรายการผังไม่สำเร็จ: '+esc(res.error||''); return; }
+      const layouts = res.data || [];
+      if(!layouts.length){
+        body.innerHTML = '<p style="color:var(--muted);font-size:12px;">ยังไม่มีผังให้เลือกปักหมุด — ให้ Admin อัปโหลดผังก่อนที่หน้า "ผังทรัพย์สิน"</p>';
+        return;
+      }
+      let selectedLayoutId = (a.LayoutID && layouts.some(l=>l.LayoutID===a.LayoutID)) ? a.LayoutID : layouts[0].LayoutID;
+      let pendingX = (selectedLayoutId === a.LayoutID && a.LayoutX!=='') ? a.LayoutX : null;
+      let pendingY = (selectedLayoutId === a.LayoutID && a.LayoutY!=='') ? a.LayoutY : null;
+      const hasExistingPin = !!(a.LayoutID && a.LayoutX!=='' && a.LayoutY!=='');
+
+      body.innerHTML = `
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">เลือกผัง แล้วแตะตำแหน่งบนภาพเพื่อปัก/ย้ายหมุดของทรัพย์สินนี้ แล้วกด "บันทึกตำแหน่งนี้"</p>
+        <select id="alpLayoutSelect" style="width:100%;margin-bottom:8px;">${layouts.map(l=>`<option value="${esc(l.LayoutID)}" ${l.LayoutID===selectedLayoutId?'selected':''}>${esc(l.Name)}</option>`).join('')}</select>
+        <div id="alpImageHost"></div>
+        <div class="toolbar no-print" style="margin-top:10px;">
+          <button class="btn btn-primary btn-sm" id="alpSaveBtn" ${pendingX===null?'disabled':''}>บันทึกตำแหน่งนี้</button>
+          ${hasExistingPin ? `<button class="btn btn-secondary btn-sm" id="alpClearBtn">ถอดหมุด</button>` : ''}
+        </div>
+        <div id="alpStatus" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+      `;
+
+      function renderImage(){
+        const layout = layouts.find(l=>l.LayoutID===selectedLayoutId);
+        const host = document.getElementById('alpImageHost');
+        host.innerHTML = `
+          <div id="alpImageWrap" style="position:relative;display:inline-block;max-width:100%;cursor:crosshair;">
+            <img src="${esc(layout.ImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
+            ${pendingX!==null ? layoutPinMarkerHtml(a, pendingX, pendingY) : ''}
+          </div>
+        `;
+        document.getElementById('alpImageWrap').onclick = (e)=>{
+          const wrap = document.getElementById('alpImageWrap');
+          const rect = wrap.getBoundingClientRect();
+          const x = ((e.clientX - rect.left) / rect.width) * 100;
+          const y = ((e.clientY - rect.top) / rect.height) * 100;
+          if(x<0||x>100||y<0||y>100) return;
+          pendingX = x; pendingY = y;
+          document.getElementById('alpSaveBtn').disabled = false;
+          renderImage();
+        };
+      }
+      renderImage();
+
+      document.getElementById('alpLayoutSelect').onchange = function(){
+        selectedLayoutId = this.value;
+        pendingX = (selectedLayoutId === a.LayoutID && a.LayoutX!=='') ? a.LayoutX : null;
+        pendingY = (selectedLayoutId === a.LayoutID && a.LayoutY!=='') ? a.LayoutY : null;
+        document.getElementById('alpSaveBtn').disabled = pendingX===null;
+        renderImage();
+      };
+
+      document.getElementById('alpSaveBtn').onclick = ()=>{
+        if(pendingX===null) return;
+        const btn = document.getElementById('alpSaveBtn');
+        const statusEl = document.getElementById('alpStatus');
+        btn.disabled = true;
+        statusEl.style.color = 'var(--muted)';
+        statusEl.textContent = 'กำลังบันทึก...';
+        apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: a.AssetID, layoutId: selectedLayoutId, x: pendingX, y: pendingY }).then(res=>{
+          btn.disabled = false;
+          if(!res.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = 'บันทึกไม่สำเร็จ: '+res.error; return; }
+          statusEl.style.color = 'var(--green)';
+          statusEl.textContent = '✅ บันทึกตำแหน่งสำเร็จ';
+          a.LayoutID = selectedLayoutId; a.LayoutX = pendingX; a.LayoutY = pendingY;
+          a.LayoutName = (layouts.find(l=>l.LayoutID===selectedLayoutId)||{}).Name || '';
+        });
+      };
+
+      const clearBtn = document.getElementById('alpClearBtn');
+      if(clearBtn) clearBtn.onclick = ()=>{
+        if(!confirm('ถอดหมุดตำแหน่งของทรัพย์สินนี้?')) return;
+        clearBtn.disabled = true;
+        apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: a.AssetID, clear:true }).then(res=>{
+          clearBtn.disabled = false;
+          if(!res.ok){ toast(res.error||'ถอดหมุดไม่สำเร็จ','err'); return; }
+          toast('ถอดหมุดสำเร็จ','ok');
+          a.LayoutID = ''; a.LayoutX = ''; a.LayoutY = ''; a.LayoutName = '';
+          renderAssetPublicView(root);
+        });
+      };
+    });
+  }
 }
 
 /* ================= DASHBOARD VIEW (ข้อมูลรวม) ================= */
@@ -1827,11 +1973,7 @@ function renderAssetLayoutMap(root){
       const layer = wrap.querySelector('.layoutPinLayer');
       if(!layer) return;
       const layoutPins = pinsByLayout[layoutId] || [];
-      layer.innerHTML = layoutPins.map(p=>`
-        <div class="layout-pin" data-pinid="${esc(p.AssetID)}" style="left:${p.LayoutX}%;top:${p.LayoutY}%;" title="${esc(p.AssetID)} — ${esc(p.AssetName)}">
-          <span class="layout-pin-label">${esc(p.AssetID)}</span>
-        </div>
-      `).join('');
+      layer.innerHTML = layoutPins.map(p => layoutPinMarkerHtml(p, p.LayoutX, p.LayoutY)).join('');
       layer.querySelectorAll('.layout-pin').forEach(el=>{
         el.onclick = (e)=>{
           e.stopPropagation();
@@ -1879,15 +2021,32 @@ function renderAssetLayoutMap(root){
     btn.style.display = (pinMode && hasExisting) ? '' : 'none';
   }
 
+  // หาข้อมูลรหัส/ชื่อ/รูปของทรัพย์สิน จากหมุดเดิมที่เคยปักไว้ (ถ้ามี) หรือจากผลค้นหาล่าสุด — ใช้ตอนปักหมุดใหม่แบบ
+  // optimistic (วาดหมุดทันทีโดยไม่ต้องรอผลจาก loadAllPins() ซึ่งเป็น network round-trip ที่อาจช้าหลายวินาที)
+  function findAssetDisplayInfo(assetId){
+    for(const lid in pinsByLayout){
+      const found = (pinsByLayout[lid]||[]).find(p=>p.AssetID===assetId);
+      if(found) return found;
+    }
+    const found2 = assetSearchResults.find(x=>x.AssetID===assetId);
+    if(found2) return { AssetID: found2.AssetID, AssetName: found2.AssetName, Department: found2.Department||'', DisplayImage: found2.DisplayImage||'' };
+    return { AssetID: assetId, AssetName: assetId, Department: '', DisplayImage: '' };
+  }
+
   document.getElementById('btnRemovePendingPin').onclick = function(){
     if(!pendingAssetId) return;
     if(!confirm('ถอดหมุด '+pendingAssetId+' ออกจากผัง?')) return;
-    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, clear:true }).then(res=>{
+    const assetId = pendingAssetId;
+    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: assetId, clear:true }).then(res=>{
       if(!res.ok){ toast(res.error||'ถอดหมุดไม่สำเร็จ','err'); return; }
       toast('ถอดหมุดสำเร็จ','ok');
+      // ถอดออกจาก state ทันที ไม่ต้องรอ loadAllPins() กลับมาถึงจะหายจากจอ
+      Object.keys(pinsByLayout).forEach(lid=>{ pinsByLayout[lid] = (pinsByLayout[lid]||[]).filter(p=>p.AssetID!==assetId); });
+      renderAllPinLayers();
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
-      loadAllPins();
+      updateRemovePendingPinBtn();
+      loadAllPins(); // ซิงค์กับ server อีกรอบเบื้องหลัง เผื่อมีคนอื่นแก้ไขพร้อมกัน
     });
   };
 
@@ -1926,13 +2085,21 @@ function renderAssetLayoutMap(root){
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
     if(x<0||x>100||y<0||y>100) return;
-    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, layoutId: layoutId, x: x, y: y }).then(res=>{
+    const assetId = pendingAssetId;
+    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: assetId, layoutId: layoutId, x: x, y: y }).then(res=>{
       if(!res.ok){ toast(res.error||'ปักหมุดไม่สำเร็จ','err'); return; }
-      toast('ปักหมุด '+pendingAssetId+' สำเร็จ','ok');
+      toast('ปักหมุด '+assetId+' สำเร็จ','ok');
+      // วาดหมุดขึ้นจอทันทีแบบ optimistic (ย้ายออกจากผังเดิมถ้ามี แล้วใส่ที่ผังใหม่) ไม่ต้องรอ loadAllPins()
+      // ซึ่งเป็น network round-trip หลายรายการที่อาจช้า ทำให้เคยดูเหมือนปักไม่ขึ้นทั้งที่บันทึกสำเร็จแล้ว
+      const info = findAssetDisplayInfo(assetId);
+      Object.keys(pinsByLayout).forEach(lid=>{ pinsByLayout[lid] = (pinsByLayout[lid]||[]).filter(p=>p.AssetID!==assetId); });
+      if(!pinsByLayout[layoutId]) pinsByLayout[layoutId] = [];
+      pinsByLayout[layoutId].push({ AssetID: assetId, AssetName: info.AssetName, Department: info.Department||'', DisplayImage: info.DisplayImage||'', LayoutX: x, LayoutY: y, AssetStatus: info.AssetStatus||'Active' });
+      renderAllPinLayers();
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
       updateRemovePendingPinBtn();
-      loadAllPins();
+      loadAllPins(); // ซิงค์กับ server อีกรอบเบื้องหลัง เผื่อมีคนอื่นแก้ไขพร้อมกัน
     });
   }
 
