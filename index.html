@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ระบบโอนย้ายทรัพย์สิน — SML</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --navy:#1a3c6e; --navy-dark:#122a4d; --navy-light:#eaf0f8;
@@ -163,7 +162,6 @@
     .doc-table tr{page-break-inside:avoid;break-inside:avoid;}
     .asset-qr-card{page-break-inside:avoid;break-inside:avoid;}
   }
-  .asset-map-label{font-size:11px;font-weight:700;padding:1px 6px;}
   .layout-pin{position:absolute;transform:translate(-50%,-100%);cursor:pointer;display:flex;flex-direction:column;align-items:center;pointer-events:auto;}
   .layout-pin::after{content:'';display:block;width:12px;height:12px;border-radius:50%;background:var(--red,#c0392b);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);margin:0 auto;}
   .layout-pin-label{font-size:10px;font-weight:700;background:#fff;color:#1a3c6e;padding:1px 5px;border-radius:4px;border:1px solid var(--border);white-space:nowrap;margin-bottom:2px;box-shadow:0 1px 2px rgba(0,0,0,.2);}
@@ -1521,7 +1519,6 @@ function renderAssetPublicView(root){
   apiGet({ action:'getAssetPublicView', id: STATE.assetViewCtx.id }).then(res=>{
     if(!res.ok){ root.innerHTML = `<div class="card"><div class="empty">${esc(res.error)}</div></div>`; return; }
     const a = res.data;
-    const loggedIn = checkAuth(); // ดูตำแหน่งได้โดยไม่ต้อง login แต่ "ปักหมุด/แก้ไข" ต้อง login ก่อนเสมอ
     root.innerHTML = `
       <div class="card" style="max-width:420px;margin:20px auto;">
         ${a.DisplayImage ? `<img src="${esc(a.DisplayImage)}" style="width:100%;max-height:260px;object-fit:contain;border-radius:8px;margin-bottom:14px;">` : ''}
@@ -1536,175 +1533,8 @@ function renderAssetPublicView(root){
           <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
         </table>
       </div>
-      <div class="card" style="max-width:420px;margin:12px auto;">
-        <h3 style="margin:0 0 8px;font-size:15px;">📍 ตำแหน่งทรัพย์สิน</h3>
-        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">${loggedIn ? 'แตะบนแผนที่ หรือลากหมุด เพื่อปักตำแหน่งจริงของทรัพย์สินชิ้นนี้ แล้วกด "บันทึกตำแหน่งนี้" — หรือค้นหาสถานที่/ใช้ตำแหน่งปัจจุบันด้านล่างแทนก็ได้' : 'ดูตำแหน่งปัจจุบันได้เลย — ต้องเข้าสู่ระบบก่อนจึงจะปักหมุด/แก้ไขตำแหน่งได้'}</p>
-        ${loggedIn ? `
-        <div style="display:flex;gap:6px;margin-bottom:8px;">
-          <input type="text" id="assetPinSearch" placeholder="ค้นหาสถานที่/ที่อยู่..." style="flex:1;font-size:13px;">
-          <button class="btn btn-secondary btn-sm" id="btnAssetPinSearch">ค้นหา</button>
-        </div>
-        <div id="assetPinSearchResults" style="font-size:12px;margin-bottom:8px;"></div>
-        <button class="btn btn-secondary btn-sm" id="btnUseMyLocation" style="width:100%;margin-bottom:8px;">📍 ใช้ตำแหน่งปัจจุบันของฉัน (GPS)</button>
-        ` : ''}
-        <div id="assetPinMap" style="height:240px;border-radius:8px;overflow:hidden;"></div>
-        ${loggedIn ? `
-        <button class="btn btn-primary btn-sm" id="btnSaveAssetPin" style="margin-top:10px;width:100%;" ${a.Lat && a.Lng ? '' : 'disabled'}>บันทึกตำแหน่งนี้</button>
-        <div id="assetPinStatus" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
-        ` : `
-        <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
-          <label style="font-size:12px;">ชื่อผู้ใช้</label>
-          <input type="text" id="pinLoginUsername" placeholder="กรอกชื่อผู้ใช้" style="width:100%;margin-bottom:6px;">
-          <label style="font-size:12px;">รหัสผ่าน</label>
-          <input type="password" id="pinLoginPw" placeholder="กรอกรหัสผ่าน" style="width:100%;margin-bottom:8px;">
-          <button class="btn btn-primary btn-sm" id="btnPinLogin" style="width:100%;">เข้าสู่ระบบเพื่อปักหมุด</button>
-          <div id="pinLoginStatus" style="font-size:12px;color:var(--red);margin-top:6px;"></div>
-        </div>
-        `}
-      </div>
     `;
-    initAssetPinMap(a, loggedIn);
-    if(!loggedIn){
-      const doPinLogin = ()=>{
-        const username = document.getElementById('pinLoginUsername').value.trim();
-        const pw = document.getElementById('pinLoginPw').value;
-        const statusEl = document.getElementById('pinLoginStatus');
-        if(!username || !pw){ statusEl.textContent = 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน'; return; }
-        const btn = document.getElementById('btnPinLogin');
-        btn.disabled = true;
-        statusEl.style.color = 'var(--muted)';
-        statusEl.textContent = 'กำลังเข้าสู่ระบบ...';
-        apiPost({ action:'login', username, password: pw }).then(lres=>{
-          btn.disabled = false;
-          if(!lres.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = lres.error||'เข้าสู่ระบบไม่สำเร็จ'; return; }
-          STATE.adminPassword = pw;
-          STATE.role = lres.data.role;
-          STATE.username = lres.data.username;
-          STATE.myDepartments = lres.data.departments || [];
-          STATE.canViewPrices = !!lres.data.canViewPrices;
-          STATE.canExportAuction = !!lres.data.canExportAuction;
-          STATE.disabledCategories = lres.data.disabledCategories || [];
-          sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ password: pw, role: lres.data.role, username: lres.data.username, departments: lres.data.departments || [], canViewPrices: !!lres.data.canViewPrices, canExportAuction: !!lres.data.canExportAuction, disabledCategories: lres.data.disabledCategories || [] }));
-          renderAssetPublicView(root); // re-render ทั้งหน้าแบบ login แล้ว เปิดแผนที่ให้ปักหมุดได้
-        });
-      };
-      document.getElementById('btnPinLogin').onclick = doPinLogin;
-      document.getElementById('pinLoginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') doPinLogin(); });
-    }
   });
-
-  // แผนที่ตำแหน่งทรัพย์สิน (Leaflet + OpenStreetMap) — ดูได้เสมอโดยไม่ต้อง login (editable=false: แสดงหมุดเดิม
-  // ถ้ามี เฉยๆ แตะ/ลากไม่ได้) ส่วนโหมดแก้ไข (editable=true หลัง login แล้วเท่านั้น) ให้แตะปักหรือลากหมุดได้ และ
-  // ถ้ายังไม่เคยปักหมุดไว้จะลองขอ GPS เครื่องมาตั้งจุดเริ่มต้นให้ด้วย บันทึกผ่าน updateAssetLocationPin_ ฝั่ง
-  // Code.gs ที่บังคับเช็ค login (isValidUserPassword_) อีกชั้นเสมอ ไม่ใช่แค่ซ่อนปุ่มฝั่งนี้
-  function initAssetPinMap(a, editable){
-    const hasPin = a.Lat && a.Lng;
-    const initialLat = hasPin ? parseFloat(a.Lat) : 13.7563;
-    const initialLng = hasPin ? parseFloat(a.Lng) : 100.5018;
-    const map = L.map('assetPinMap').setView([initialLat, initialLng], hasPin ? 17 : 6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap', maxZoom: 19
-    }).addTo(map);
-    let marker = hasPin ? L.marker([initialLat, initialLng], { draggable: editable }).addTo(map) : null;
-
-    if(!editable){
-      setTimeout(()=> map.invalidateSize(), 150);
-      return;
-    }
-
-    const saveBtn = document.getElementById('btnSaveAssetPin');
-    const statusEl = document.getElementById('assetPinStatus');
-    if(marker) marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
-
-    function setMarker(lat, lng, recenter){
-      if(marker) marker.setLatLng([lat, lng]);
-      else {
-        marker = L.marker([lat, lng], { draggable:true }).addTo(map);
-        marker.on('dragend', ()=>{ const p=marker.getLatLng(); setMarker(p.lat, p.lng); });
-      }
-      if(recenter) map.setView([lat, lng], 17);
-      saveBtn.disabled = false;
-      statusEl.textContent = '';
-    }
-    map.on('click', (e)=> setMarker(e.latlng.lat, e.latlng.lng));
-
-    if(!hasPin && navigator.geolocation){
-      navigator.geolocation.getCurrentPosition(pos=>{
-        map.setView([pos.coords.latitude, pos.coords.longitude], 17);
-      }, ()=>{}, { timeout: 5000 });
-    }
-
-    // "ใช้ตำแหน่งปัจจุบันของฉัน" — กดเองได้ทุกเมื่อ (ต่างจากตอนโหลดหน้าแรกที่ลองขอ GPS อัตโนมัติแค่ตอนยัง
-    // ไม่เคยมีหมุดเดิม) ใช้ได้ทั้งปักหมุดใหม่และย้ายหมุดเดิมไปที่ตำแหน่งปัจจุบันจริง
-    const useMyLocationBtn = document.getElementById('btnUseMyLocation');
-    if(useMyLocationBtn) useMyLocationBtn.onclick = ()=>{
-      if(!navigator.geolocation){ toast('อุปกรณ์นี้ไม่รองรับการขอตำแหน่ง GPS','err'); return; }
-      useMyLocationBtn.disabled = true;
-      useMyLocationBtn.textContent = 'กำลังขอตำแหน่ง...';
-      navigator.geolocation.getCurrentPosition(pos=>{
-        useMyLocationBtn.disabled = false;
-        useMyLocationBtn.textContent = '📍 ใช้ตำแหน่งปัจจุบันของฉัน (GPS)';
-        setMarker(pos.coords.latitude, pos.coords.longitude, true);
-      }, err=>{
-        useMyLocationBtn.disabled = false;
-        useMyLocationBtn.textContent = '📍 ใช้ตำแหน่งปัจจุบันของฉัน (GPS)';
-        toast('ขอตำแหน่ง GPS ไม่สำเร็จ — กรุณาอนุญาตการเข้าถึงตำแหน่งที่เบราว์เซอร์','err');
-      }, { timeout: 8000, enableHighAccuracy: true });
-    };
-
-    // ค้นหาสถานที่/ที่อยู่ — ใช้ Nominatim (OpenStreetMap) ฟรี ไม่ต้องขอ API key แสดงผลลัพธ์ให้เลือกสูงสุด
-    // 5 รายการ (ชื่อสถานที่อาจตรงได้หลายจุด) เลือกแล้วย้ายหมุด+เลื่อนแผนที่ไปจุดนั้นทันที
-    const searchInput = document.getElementById('assetPinSearch');
-    const searchBtn = document.getElementById('btnAssetPinSearch');
-    const searchResultsEl = document.getElementById('assetPinSearchResults');
-    function doPinSearch(){
-      const q = searchInput.value.trim();
-      if(!q) return;
-      searchBtn.disabled = true;
-      searchResultsEl.innerHTML = '<span style="color:var(--muted);">กำลังค้นหา...</span>';
-      fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=th&q=' + encodeURIComponent(q))
-        .then(r=>r.json())
-        .then(results=>{
-          searchBtn.disabled = false;
-          if(!results || !results.length){ searchResultsEl.innerHTML = '<span style="color:var(--red);">ไม่พบสถานที่ที่ค้นหา</span>'; return; }
-          searchResultsEl.innerHTML = results.map((r,i)=>
-            `<div class="pin-search-result" data-idx="${i}" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;margin-top:4px;cursor:pointer;">${esc(r.display_name)}</div>`
-          ).join('');
-          searchResultsEl.querySelectorAll('.pin-search-result').forEach(el=>{
-            el.onclick = ()=>{
-              const r = results[Number(el.dataset.idx)];
-              setMarker(parseFloat(r.lat), parseFloat(r.lon), true);
-              searchResultsEl.innerHTML = '';
-              searchInput.value = r.display_name;
-            };
-          });
-        })
-        .catch(()=>{
-          searchBtn.disabled = false;
-          searchResultsEl.innerHTML = '<span style="color:var(--red);">ค้นหาไม่สำเร็จ ลองใหม่อีกครั้ง</span>';
-        });
-    }
-    if(searchBtn){
-      searchBtn.onclick = doPinSearch;
-      searchInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); doPinSearch(); } });
-    }
-
-    saveBtn.onclick = ()=>{
-      if(!marker) return;
-      const p = marker.getLatLng();
-      saveBtn.disabled = true;
-      statusEl.style.color = 'var(--muted)';
-      statusEl.textContent = 'กำลังบันทึก...';
-      apiPost({ action:'updateAssetLocationPin', password: STATE.adminPassword, assetId: a.AssetID, lat: p.lat, lng: p.lng }).then(res=>{
-        saveBtn.disabled = false;
-        if(!res.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = 'บันทึกไม่สำเร็จ: '+res.error; return; }
-        statusEl.style.color = 'var(--green)';
-        statusEl.textContent = '✅ บันทึกตำแหน่งสำเร็จ';
-      });
-    };
-
-    setTimeout(()=> map.invalidateSize(), 150); // กัน map เพี้ยนถ้า container ยังไม่มีขนาดจริงตอน init
-  }
 }
 
 /* ================= DASHBOARD VIEW (ข้อมูลรวม) ================= */
@@ -1813,11 +1643,6 @@ function renderDashboard(root){
         <button class="btn btn-secondary btn-sm" id="btnDashExport">⬇ Export Excel</button>
       </div>
       ${tilesHtml}
-      <div style="margin-top:24px;">
-        <h2>แผนที่ตำแหน่งทรัพย์สิน</h2>
-        <p style="color:var(--muted);font-size:13px;">แสดงเฉพาะทรัพย์สินที่เคยปักหมุดตำแหน่งไว้แล้ว (สแกน QR ที่ป้ายแล้วปักหมุดได้ที่หน้ารายละเอียดทรัพย์สิน) — คลิกหมุดเพื่อดูรายละเอียด</p>
-        <div id="dashAssetMap" style="height:360px;border-radius:8px;overflow:hidden;"></div>
-      </div>
       <div class="row" style="margin-top:24px;align-items:flex-start;">
         <div style="flex:2;min-width:280px;">
           <h2>สรุปแยกตามหน่วยงาน (ตามสถานะ)</h2>
@@ -1852,8 +1677,6 @@ function renderDashboard(root){
         render();
       };
     });
-
-    renderDashAssetMap(assets);
 
     document.getElementById('btnDashExport').onclick = ()=>{
       const statusSheet = {
@@ -1890,46 +1713,15 @@ function renderDashboard(root){
   }
 }
 
-// แผนที่ภาพรวมทรัพย์สินที่หน้า Dashboard — แสดงเฉพาะทรัพย์สินที่มีพิกัด Lat/Lng (ปักหมุดไว้แล้วจากหน้า
-// renderAssetPublicView ตอนสแกน QR) คลิกหมุดดูรายละเอียดสั้นๆ ได้ — ถ้าไม่มีรายการไหนปักหมุดไว้เลยแสดงข้อความแทนแผนที่
-function renderDashAssetMap(assets){
-  const host = document.getElementById('dashAssetMap');
-  if(!host) return;
-  const pinned = (assets||[]).filter(a=>a.Lat && a.Lng);
-  if(!pinned.length){
-    host.outerHTML = '<div class="empty" id="dashAssetMap">ยังไม่มีทรัพย์สินที่ปักหมุดตำแหน่งไว้ — สแกน QR ที่ป้ายทรัพย์สินแล้วปักหมุดได้ที่หน้ารายละเอียด</div>';
-    return;
-  }
-  const map = L.map('dashAssetMap');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap', maxZoom: 19
-  }).addTo(map);
-  const markers = pinned.map(a=>{
-    const m = L.marker([parseFloat(a.Lat), parseFloat(a.Lng)]).addTo(map);
-    // แสดงรหัสทรัพย์สินค้างไว้บนแผนที่เลยโดยไม่ต้องคลิก (permanent tooltip) — ส่วนรายละเอียดอื่น (ชื่อ/
-    // หน่วยงาน/สถานที่) ยังต้องคลิกหมุดดูใน popup เหมือนเดิม กันป้ายรกเกินไปถ้าหมุดเยอะ
-    m.bindTooltip(esc(a.AssetID), { permanent: true, direction: 'top', offset: [0, -8], className: 'asset-map-label' });
-    m.bindPopup('<b>'+esc(a.AssetID)+'</b><br>'+esc(a.AssetName)+'<br>'+esc(a.Department||'-')+(a.Location?' — '+esc(a.Location):''));
-    return m;
-  });
-  if(markers.length === 1){
-    map.setView(markers[0].getLatLng(), 16);
-  } else {
-    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
-  }
-  setTimeout(()=> map.invalidateSize(), 150);
-}
-
 /* ================= ASSET LAYOUT MAP (ผังทรัพย์สินแบบกำหนดเอง) ================= */
-// ต่างจาก Dashboard/GPS pin ที่ใช้พิกัดจริงบนแผนที่ OpenStreetMap — หน้านี้ให้ Admin อัปโหลดภาพผัง/แผนผังสถานที่
-// เอง (รองรับหลายผัง) แล้วผู้ใช้ที่ล็อกอินแล้วทุกคนคลิกปักหมุดตำแหน่งทรัพย์สินบนภาพได้โดยตรง เก็บเป็นพิกัด
-// เปอร์เซ็นต์ (LayoutX/LayoutY 0-100 เทียบกับขนาดภาพ) เหมาะกับพื้นที่ที่ GPS ไม่แม่นยำพอ เช่น ภายในโรงงาน/
-// คลังสินค้าเดียวกัน
+// Admin อัปโหลดภาพผัง/แผนผังสถานที่เอง (รองรับหลายผัง) แล้วผู้ใช้ที่ล็อกอินแล้วทุกคนคลิกปักหมุดตำแหน่งทรัพย์สิน
+// บนภาพได้โดยตรง เก็บเป็นพิกัดเปอร์เซ็นต์ (LayoutX/LayoutY 0-100 เทียบกับขนาดภาพ) — ไม่ใช้พิกัด GPS จริง เพราะ
+// ไม่แม่นยำพอในสถานที่แบบนี้ เช่น ภายในโรงงาน/คลังสินค้าเดียวกันหลายอาคาร
 function renderAssetLayoutMap(root){
   const isAdmin = STATE.role === 'admin';
   let layouts = [];
-  let currentLayoutId = '';
-  let pins = [];
+  let filterLayoutId = ''; // '' = แสดงทุกผังเรียงต่อกัน, ไม่ว่าง = กรองดูเฉพาะผังที่เลือก
+  let pinsByLayout = {};
   let pinMode = false;
   let pendingAssetId = '';
   let assetSearchResults = [];
@@ -1937,22 +1729,22 @@ function renderAssetLayoutMap(root){
   root.innerHTML = `
     <div class="card">
       <h2>ผังทรัพย์สิน</h2>
-      <p style="color:var(--muted);font-size:13px;">อัปโหลดภาพผัง/แผนผังสถานที่เอง แล้วคลิกปักหมุดตำแหน่งทรัพย์สินลงบนภาพได้โดยตรง (ผู้ใช้ที่ล็อกอินแล้วทุกคนปักหมุดได้ — ${isAdmin?'Admin เพิ่ม/ลบผังได้ที่นี่':'เฉพาะ Admin เท่านั้นที่เพิ่ม/ลบผังได้'})</p>
+      <p style="color:var(--muted);font-size:13px;">อัปโหลดภาพผัง/แผนผังสถานที่เอง แล้วคลิกปักหมุดตำแหน่งทรัพย์สินลงบนภาพได้โดยตรง (ผู้ใช้ที่ล็อกอินแล้วทุกคนปักหมุดได้ — ${isAdmin?'Admin เพิ่ม/ลบผังได้ที่นี่':'เฉพาะ Admin เท่านั้นที่เพิ่ม/ลบผังได้'}) — ค่าเริ่มต้นแสดงทุกผังเรียงต่อกันลงมา เลือกจากตัวกรองด้านล่างเพื่อดูทีละผังได้</p>
       <div class="toolbar no-print" style="flex-wrap:wrap;">
-        <select id="layoutSelect" style="max-width:240px;"><option value="">-- เลือกผัง --</option></select>
-        ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btnAddLayout">+ เพิ่มผังใหม่</button><button class="btn btn-secondary btn-sm" id="btnDeleteLayout" style="display:none;">🗑 ลบผังนี้</button>` : ''}
+        <select id="layoutSelect" style="max-width:240px;"><option value="">-- แสดงทั้งหมด --</option></select>
+        ${isAdmin ? `<button class="btn btn-secondary btn-sm" id="btnAddLayout">+ เพิ่มผังใหม่</button>` : ''}
       </div>
       <div class="toolbar no-print" id="pinModeBar" style="display:none;flex-wrap:wrap;align-items:center;">
         <button class="btn btn-primary btn-sm" id="btnTogglePinMode">📍 โหมดปักหมุด: ปิด</button>
-        <span id="pinModeHint" style="font-size:12px;color:var(--muted);display:none;">ค้นหาทรัพย์สินด้านล่างแล้วคลิกตำแหน่งบนภาพเพื่อปักหมุด — คลิกหมุดเดิมเพื่อเลือกย้าย (แล้วคลิกตำแหน่งใหม่) หรือกด "ถอดหมุดที่เลือก" เพื่อลบ</span>
+        <span id="pinModeHint" style="font-size:12px;color:var(--muted);display:none;">ค้นหาทรัพย์สินด้านล่างแล้วคลิกตำแหน่งบนภาพผังใดก็ได้เพื่อปักหมุด — คลิกหมุดเดิมเพื่อเลือกย้าย (แล้วคลิกตำแหน่งใหม่ ย้ายข้ามผังก็ได้) หรือกด "ถอดหมุดที่เลือก" เพื่อลบ</span>
       </div>
       <div class="toolbar no-print" id="pinAssetSearchBar" style="display:none;flex-wrap:wrap;">
         <input type="text" id="layoutAssetSearch" placeholder="ค้นหารหัส/ชื่อทรัพย์สินที่จะปัก..." style="max-width:240px;">
         <button class="btn btn-secondary btn-sm" id="btnRemovePendingPin" style="display:none;">🗑 ถอดหมุดที่เลือก</button>
       </div>
       <div id="layoutAssetSearchResults" style="font-size:13px;margin:4px 0;"></div>
-      <div id="layoutImageHost" style="margin-top:10px;"><div class="empty">กำลังโหลด...</div></div>
     </div>
+    <div id="layoutSectionsHost"><div class="card"><div class="empty">กำลังโหลด...</div></div></div>
   `;
 
   function loadLayouts(){
@@ -1960,85 +1752,97 @@ function renderAssetLayoutMap(root){
       if(!res.ok){ toast(res.error||'โหลดรายการผังไม่สำเร็จ','err'); return; }
       layouts = res.data || [];
       const sel = document.getElementById('layoutSelect');
-      sel.innerHTML = '<option value="">-- เลือกผัง --</option>' + layouts.map(l=>`<option value="${esc(l.LayoutID)}">${esc(l.Name)}</option>`).join('');
-      if(currentLayoutId && layouts.some(l=>l.LayoutID===currentLayoutId)){
-        sel.value = currentLayoutId;
-      } else if(layouts.length){
-        currentLayoutId = layouts[0].LayoutID;
-        sel.value = currentLayoutId;
-      } else {
-        currentLayoutId = '';
-      }
-      renderCurrentLayout();
+      sel.innerHTML = '<option value="">-- แสดงทั้งหมด --</option>' + layouts.map(l=>`<option value="${esc(l.LayoutID)}">${esc(l.Name)}</option>`).join('');
+      if(filterLayoutId && !layouts.some(l=>l.LayoutID===filterLayoutId)) filterLayoutId = '';
+      sel.value = filterLayoutId;
+      loadAllPins();
     });
   }
 
-  function currentLayout(){
-    return layouts.find(l=>l.LayoutID===currentLayoutId) || null;
+  function visibleLayouts(){
+    return filterLayoutId ? layouts.filter(l=>l.LayoutID===filterLayoutId) : layouts;
   }
 
-  function renderCurrentLayout(){
-    const deleteBtn = document.getElementById('btnDeleteLayout');
-    const pinModeBar = document.getElementById('pinModeBar');
-    const host = document.getElementById('layoutImageHost');
-    const layout = currentLayout();
-    if(deleteBtn) deleteBtn.style.display = layout ? '' : 'none';
-    if(!layout){
-      pinModeBar.style.display = 'none';
-      document.getElementById('pinAssetSearchBar').style.display = 'none';
-      host.innerHTML = '<div class="empty">ยังไม่มีผัง — ' + (isAdmin ? 'กด "+ เพิ่มผังใหม่" ด้านบน' : 'รอ Admin อัปโหลดผัง') + '</div>';
-      return;
-    }
-    pinModeBar.style.display = '';
-    host.innerHTML = `
-      <div id="layoutImageWrap" style="position:relative;display:inline-block;max-width:100%;cursor:${pinMode?'crosshair':'default'};">
-        <img id="layoutImage" src="${esc(layout.ImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
-        <div id="layoutPinLayer" style="position:absolute;left:0;top:0;right:0;bottom:0;"></div>
-      </div>
-    `;
-    document.getElementById('layoutImageWrap').onclick = onLayoutImageClick;
-    loadPins();
-  }
-
-  function loadPins(){
-    if(!currentLayoutId) return;
-    apiPost({ action:'getLayoutAssetPins', password: STATE.adminPassword, layoutId: currentLayoutId }).then(res=>{
-      if(!res.ok){ toast(res.error||'โหลดหมุดไม่สำเร็จ','err'); return; }
-      pins = res.data || [];
-      renderPinLayer();
+  // โหลดหมุดของ "ทุกผัง" เสมอ (ไม่ใช่แค่ผังที่กรองอยู่) เพื่อให้ updateRemovePendingPinBtn ตรวจสอบได้ว่าทรัพย์สิน
+  // ที่เลือกไว้มีหมุดอยู่บนผังไหนบ้าง และสลับตัวกรองไปมาได้โดยไม่ต้องโหลดซ้ำ
+  function loadAllPins(){
+    if(!layouts.length){ pinsByLayout = {}; renderSections(); return; }
+    Promise.all(layouts.map(l =>
+      apiPost({ action:'getLayoutAssetPins', password: STATE.adminPassword, layoutId: l.LayoutID })
+        .then(res => ({ layoutId: l.LayoutID, pins: res.ok ? (res.data||[]) : [] }))
+    )).then(results=>{
+      pinsByLayout = {};
+      results.forEach(r=>{ pinsByLayout[r.layoutId] = r.pins; });
+      renderSections();
       updateRemovePendingPinBtn();
     });
   }
 
-  function renderPinLayer(){
-    const layer = document.getElementById('layoutPinLayer');
-    if(!layer) return;
-    layer.innerHTML = pins.map(p=>`
-      <div class="layout-pin" data-pinid="${esc(p.AssetID)}" style="left:${p.LayoutX}%;top:${p.LayoutY}%;" title="${esc(p.AssetID)} — ${esc(p.AssetName)}">
-        <span class="layout-pin-label">${esc(p.AssetID)}</span>
+  function renderSections(){
+    const host = document.getElementById('layoutSectionsHost');
+    const pinModeBar = document.getElementById('pinModeBar');
+    if(!layouts.length){
+      pinModeBar.style.display = 'none';
+      document.getElementById('pinAssetSearchBar').style.display = 'none';
+      host.innerHTML = '<div class="card"><div class="empty">ยังไม่มีผัง — ' + (isAdmin ? 'กด "+ เพิ่มผังใหม่" ด้านบน' : 'รอ Admin อัปโหลดผัง') + '</div></div>';
+      return;
+    }
+    pinModeBar.style.display = '';
+    host.innerHTML = visibleLayouts().map(layout => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+          <h3 style="margin:0;">${esc(layout.Name)}</h3>
+          ${isAdmin ? `<button class="btn btn-secondary btn-sm no-print" data-deletelayout="${esc(layout.LayoutID)}">🗑 ลบผังนี้</button>` : ''}
+        </div>
+        <div class="layoutImageWrap" data-layoutid="${esc(layout.LayoutID)}" style="position:relative;display:inline-block;max-width:100%;margin-top:10px;cursor:${pinMode?'crosshair':'default'};">
+          <img src="${esc(layout.ImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
+          <div class="layoutPinLayer" style="position:absolute;left:0;top:0;right:0;bottom:0;"></div>
+        </div>
       </div>
     `).join('');
-    layer.querySelectorAll('.layout-pin').forEach(el=>{
-      el.onclick = (e)=>{
-        e.stopPropagation();
-        const p = pins.find(x=>x.AssetID===el.dataset.pinid);
-        if(!p) return;
-        if(pinMode){
-          pendingAssetId = p.AssetID;
-          document.getElementById('layoutAssetSearch').value = p.AssetID+' — '+p.AssetName;
-          document.getElementById('layoutAssetSearchResults').innerHTML = '';
-          updateRemovePendingPinBtn();
-          toast('เลือก '+p.AssetID+' แล้ว — คลิกตำแหน่งใหม่บนภาพเพื่อย้ายหมุด หรือกด "ถอดหมุดที่เลือก" เพื่อลบ');
-        } else {
-          toast(p.AssetID+' — '+p.AssetName+(p.Department?' ('+p.Department+')':''));
-        }
-      };
+
+    host.querySelectorAll('.layoutImageWrap').forEach(wrap=>{
+      wrap.onclick = onLayoutImageClick;
+    });
+    host.querySelectorAll('[data-deletelayout]').forEach(btn=>{
+      btn.onclick = (e)=>{ e.stopPropagation(); deleteLayout(btn.dataset.deletelayout); };
+    });
+    renderAllPinLayers();
+  }
+
+  function renderAllPinLayers(){
+    document.querySelectorAll('.layoutImageWrap').forEach(wrap=>{
+      const layoutId = wrap.dataset.layoutid;
+      const layer = wrap.querySelector('.layoutPinLayer');
+      if(!layer) return;
+      const layoutPins = pinsByLayout[layoutId] || [];
+      layer.innerHTML = layoutPins.map(p=>`
+        <div class="layout-pin" data-pinid="${esc(p.AssetID)}" style="left:${p.LayoutX}%;top:${p.LayoutY}%;" title="${esc(p.AssetID)} — ${esc(p.AssetName)}">
+          <span class="layout-pin-label">${esc(p.AssetID)}</span>
+        </div>
+      `).join('');
+      layer.querySelectorAll('.layout-pin').forEach(el=>{
+        el.onclick = (e)=>{
+          e.stopPropagation();
+          const p = layoutPins.find(x=>x.AssetID===el.dataset.pinid);
+          if(!p) return;
+          if(pinMode){
+            pendingAssetId = p.AssetID;
+            document.getElementById('layoutAssetSearch').value = p.AssetID+' — '+p.AssetName;
+            document.getElementById('layoutAssetSearchResults').innerHTML = '';
+            updateRemovePendingPinBtn();
+            toast('เลือก '+p.AssetID+' แล้ว — คลิกตำแหน่งใหม่บนภาพผังใดก็ได้เพื่อย้ายหมุด หรือกด "ถอดหมุดที่เลือก" เพื่อลบ');
+          } else {
+            toast(p.AssetID+' — '+p.AssetName+(p.Department?' ('+p.Department+')':''));
+          }
+        };
+      });
     });
   }
 
   document.getElementById('layoutSelect').onchange = function(){
-    currentLayoutId = this.value;
-    renderCurrentLayout();
+    filterLayoutId = this.value;
+    renderSections();
   };
 
   document.getElementById('btnTogglePinMode').onclick = function(){
@@ -2046,8 +1850,7 @@ function renderAssetLayoutMap(root){
     this.textContent = '📍 โหมดปักหมุด: ' + (pinMode ? 'เปิด' : 'ปิด');
     document.getElementById('pinModeHint').style.display = pinMode ? '' : 'none';
     document.getElementById('pinAssetSearchBar').style.display = pinMode ? '' : 'none';
-    const wrap = document.getElementById('layoutImageWrap');
-    if(wrap) wrap.style.cursor = pinMode ? 'crosshair' : 'default';
+    document.querySelectorAll('.layoutImageWrap').forEach(wrap=>{ wrap.style.cursor = pinMode ? 'crosshair' : 'default'; });
     if(!pinMode){
       pendingAssetId = '';
       document.getElementById('layoutAssetSearchResults').innerHTML = '';
@@ -2056,23 +1859,24 @@ function renderAssetLayoutMap(root){
     updateRemovePendingPinBtn();
   };
 
-  // แสดงปุ่ม "ถอดหมุดที่เลือก" เฉพาะตอนทรัพย์สินที่เลือกไว้ (pendingAssetId) มีหมุดอยู่บนผังนี้แล้วจริงๆ
+  // แสดงปุ่ม "ถอดหมุดที่เลือก" เฉพาะตอนทรัพย์สินที่เลือกไว้ (pendingAssetId) มีหมุดอยู่บนผังใดผังหนึ่งแล้วจริงๆ
   // (เลือกจากการคลิกหมุดเดิม หรือค้นหาเจอทรัพย์สินที่บังเอิญปักไว้แล้ว) — ถ้าเลือกทรัพย์สินใหม่ที่ยังไม่เคยปักจะไม่โชว์
   function updateRemovePendingPinBtn(){
     const btn = document.getElementById('btnRemovePendingPin');
     if(!btn) return;
-    btn.style.display = (pinMode && pendingAssetId && pins.some(p=>p.AssetID===pendingAssetId)) ? '' : 'none';
+    const hasExisting = pendingAssetId && Object.values(pinsByLayout).some(arr=>arr.some(p=>p.AssetID===pendingAssetId));
+    btn.style.display = (pinMode && hasExisting) ? '' : 'none';
   }
 
   document.getElementById('btnRemovePendingPin').onclick = function(){
     if(!pendingAssetId) return;
-    if(!confirm('ถอดหมุด '+pendingAssetId+' ออกจากผังนี้?')) return;
+    if(!confirm('ถอดหมุด '+pendingAssetId+' ออกจากผัง?')) return;
     apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, clear:true }).then(res=>{
       if(!res.ok){ toast(res.error||'ถอดหมุดไม่สำเร็จ','err'); return; }
       toast('ถอดหมุดสำเร็จ','ok');
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
-      loadPins();
+      loadAllPins();
     });
   };
 
@@ -2105,34 +1909,36 @@ function renderAssetLayoutMap(root){
   function onLayoutImageClick(e){
     if(!pinMode) return;
     if(!pendingAssetId){ toast('กรุณาค้นหาและเลือกทรัพย์สินก่อน','err'); return; }
-    const wrap = document.getElementById('layoutImageWrap');
+    const wrap = e.currentTarget;
+    const layoutId = wrap.dataset.layoutid;
     const rect = wrap.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
     if(x<0||x>100||y<0||y>100) return;
-    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, layoutId: currentLayoutId, x: x, y: y }).then(res=>{
+    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, layoutId: layoutId, x: x, y: y }).then(res=>{
       if(!res.ok){ toast(res.error||'ปักหมุดไม่สำเร็จ','err'); return; }
       toast('ปักหมุด '+pendingAssetId+' สำเร็จ','ok');
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
       updateRemovePendingPinBtn();
-      loadPins();
+      loadAllPins();
+    });
+  }
+
+  function deleteLayout(layoutId){
+    const layout = layouts.find(l=>l.LayoutID===layoutId);
+    if(!layout) return;
+    if(!confirm('ลบผัง "'+layout.Name+'"? (หมุดทรัพย์สินที่เคยปักไว้บนผังนี้จะยังค้างอยู่ แต่จะไม่แสดงที่ไหนจนกว่าจะปักใหม่)')) return;
+    apiPost({ action:'adminDeleteLayout', password: STATE.adminPassword, layoutId: layoutId }).then(res=>{
+      if(!res.ok){ toast(res.error||'ลบผังไม่สำเร็จ','err'); return; }
+      toast('ลบผังสำเร็จ','ok');
+      if(filterLayoutId === layoutId) filterLayoutId = '';
+      loadLayouts();
     });
   }
 
   if(isAdmin){
     document.getElementById('btnAddLayout').onclick = openAddLayoutModal;
-    document.getElementById('btnDeleteLayout').onclick = function(){
-      const layout = currentLayout();
-      if(!layout) return;
-      if(!confirm('ลบผัง "'+layout.Name+'"? (หมุดทรัพย์สินที่เคยปักไว้บนผังนี้จะยังค้างอยู่ แต่จะไม่แสดงที่ไหนจนกว่าจะปักใหม่)')) return;
-      apiPost({ action:'adminDeleteLayout', password: STATE.adminPassword, layoutId: layout.LayoutID }).then(res=>{
-        if(!res.ok){ toast(res.error||'ลบผังไม่สำเร็จ','err'); return; }
-        toast('ลบผังสำเร็จ','ok');
-        currentLayoutId = '';
-        loadLayouts();
-      });
-    };
   }
 
   function openAddLayoutModal(){
@@ -2191,7 +1997,7 @@ function renderAssetLayoutMap(root){
         if(!res.ok){ btn.disabled=false; btn.innerHTML='บันทึก'; toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
         toast('เพิ่มผังสำเร็จ','ok');
         close();
-        currentLayoutId = res.data.layoutId;
+        filterLayoutId = res.data.layoutId;
         loadLayouts();
       });
     };

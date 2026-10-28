@@ -50,7 +50,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'Lat', 'Lng', 'LocationPinUpdatedAt', 'LayoutID', 'LayoutX', 'LayoutY', 'LayoutPinUpdatedAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'LayoutID', 'LayoutX', 'LayoutY', 'LayoutPinUpdatedAt'],
   ASSET_LAYOUTS: ['LayoutID', 'Name', 'ImageURL', 'CreatedAt', 'CreatedBy'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction', 'DisabledCategories'],
@@ -464,9 +464,6 @@ function doPost(e) {
       case 'adminDeleteDept':
         result = adminDeleteDept_(body);
         break;
-      case 'updateAssetLocationPin':
-        result = updateAssetLocationPin_(body);
-        break;
       case 'getAssetLayouts':
         result = getAssetLayouts_(body);
         break;
@@ -543,9 +540,7 @@ function getAssetPublicView_(assetId) {
           Location: r.Location,
           Tag: r.Tag,
           AssetStatus: disposed[String(r.AssetID)] || 'Active',
-          DisplayImage: r.ImageURLOverride || r.ImageURL || '',
-          Lat: r.Lat || '',
-          Lng: r.Lng || ''
+          DisplayImage: r.ImageURLOverride || r.ImageURL || ''
         }
       };
     }
@@ -553,43 +548,11 @@ function getAssetPublicView_(assetId) {
   return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + id };
 }
 
-// ปักหมุดตำแหน่ง GPS ของทรัพย์สิน — เรียกจากหน้าสาธารณะ renderAssetPublicView (สแกน QR แล้วแตะปักหมุดบนแผนที่
-// ได้เลย) ต่างจาก getAssetPublicView_ (ดูอย่างเดียว ไม่ต้อง login) ตรงที่การ "แก้ไข" ตำแหน่งนี้ต้อง login
-// ก่อนเสมอ (เช็คแค่ว่าเป็นผู้ใช้ที่มีอยู่จริง ไม่จำกัด role — user/executive/admin ปักหมุดได้ทุกคนที่ล็อกอินแล้ว)
-// กันคนนอกที่สแกนเจอ URL เฉยๆ มาแก้ตำแหน่งได้ตามใจ ไม่กระทบ Location (free text) เดิม — เก็บแยกเป็นพิกัด Lat/Lng
-function updateAssetLocationPin_(body) {
-  if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนปักหมุดตำแหน่ง' };
-  const assetId = String(body.assetId || '').trim();
-  if (!assetId) return { ok: false, error: 'ไม่พบรหัสทรัพย์สิน' };
-  const lat = parseFloat(body.lat);
-  const lng = parseFloat(body.lng);
-  if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    return { ok: false, error: 'พิกัดตำแหน่งไม่ถูกต้อง' };
-  }
-  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
-  const values = sh.getDataRange().getValues();
-  const idx = indexMap_(values[0]);
-  if (idx.Lat === undefined || idx.Lng === undefined) {
-    return { ok: false, error: 'ไม่พบคอลัมน์ Lat/Lng ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
-  }
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][idx.AssetID]) === assetId) {
-      sh.getRange(i + 1, idx.Lat + 1).setValue(lat);
-      sh.getRange(i + 1, idx.Lng + 1).setValue(lng);
-      if (idx.LocationPinUpdatedAt !== undefined) sh.getRange(i + 1, idx.LocationPinUpdatedAt + 1).setValue(new Date());
-      logActivity_(assetId, 'UPDATE_ASSET_LOCATION_PIN', 'public-scan', 'ปักหมุดตำแหน่งทรัพย์สิน ' + assetId + ' (' + lat.toFixed(6) + ', ' + lng.toFixed(6) + ')');
-      return { ok: true, data: { lat: lat, lng: lng } };
-    }
-  }
-  return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + assetId };
-}
-
 // ============================================================
 // ASSET LAYOUT PINS — ผังทรัพย์สินแบบกำหนดเอง (Admin อัปโหลดภาพผัง/แผนผังโรงงานเอง แล้วผู้ใช้ปักหมุดตำแหน่ง
-// ทรัพย์สินบนภาพโดยตรงด้วยพิกัดเปอร์เซ็นต์ LayoutX/LayoutY เทียบกับขนาดภาพ 0-100) ต่างจาก Lat/Lng ที่เป็น
-// พิกัด GPS จริงบนแผนที่ OpenStreetMap — ใช้กรณี GPS ไม่แม่นยำพอ (เช่น ภายในโรงงาน/คลังสินค้าเดียวกัน)
+// ทรัพย์สินบนภาพโดยตรงด้วยพิกัดเปอร์เซ็นต์ LayoutX/LayoutY เทียบกับขนาดภาพ 0-100) ใช้แทนพิกัด GPS จริง ซึ่งไม่
+// แม่นยำพอในสถานที่แบบนี้ (เช่น ภายในโรงงาน/คลังสินค้าเดียวกันหลายอาคาร)
 // การจัดการผัง (เพิ่ม/ลบ) เฉพาะ Admin แต่การปักหมุดทรัพย์สินบนผังที่มีอยู่ ผู้ใช้ที่ล็อกอินแล้วทุกคนทำได้
-// (เหมือน updateAssetLocationPin_)
 // ============================================================
 function getAssetLayouts_(body) {
   if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
@@ -642,8 +605,8 @@ function adminDeleteLayout_(body) {
   return { ok: false, error: 'ไม่พบผังนี้' };
 }
 
-// ปักหมุดตำแหน่งทรัพย์สินบนผังที่กำหนดเอง — ผู้ใช้ที่ล็อกอินแล้วทุกคนปักได้ (ไม่จำกัด role) เหมือน
-// updateAssetLocationPin_ ส่ง clear:true เพื่อถอดหมุดออกจากผัง (เช่นย้ายไปผังอื่น หรือไม่ต้องการปักแล้ว)
+// ปักหมุดตำแหน่งทรัพย์สินบนผังที่กำหนดเอง — ผู้ใช้ที่ล็อกอินแล้วทุกคนปักได้ (ไม่จำกัด role)
+// ส่ง clear:true เพื่อถอดหมุดออกจากผัง (เช่นย้ายไปผังอื่น หรือไม่ต้องการปักแล้ว)
 function updateAssetLayoutPin_(body) {
   if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนปักหมุดตำแหน่ง' };
   const assetId = String(body.assetId || '').trim();
