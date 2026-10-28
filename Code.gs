@@ -4195,11 +4195,13 @@ function sendDecisionNotification_(transferObj, decision, comment, isAdminOverri
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
     const banner = '<p style="font-size:16px;">ใบโอนย้ายทรัพย์สินนี้ได้รับการพิจารณาแล้ว สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>';
-    const html = buildTransferPdfHtml_(transferObj, isAdminOverride).replace('<body>', '<body>' + banner);
+    const inlineImages = {};
+    const html = buildTransferPdfHtml_(transferObj, isAdminOverride, inlineImages).replace('<body>', '<body>' + banner);
     MailApp.sendEmail({
       to: transferObj.CreatedByEmail,
       subject: '[' + statusThai + '] ใบโอนย้ายทรัพย์สิน ' + transferObj.RunningNo,
-      htmlBody: html
+      htmlBody: html,
+      inlineImages: inlineImages
     });
   } catch (err) {
     Logger.log('sendDecisionNotification_ error: ' + err);
@@ -4295,11 +4297,13 @@ function sendSaleDecisionNotification_(saleObj, decision, comment, isAdminOverri
     const statusThai = decision === STATUS.APPROVED ? (saleObj.Channel === 'ประมูล' ? 'รอประมูล' : 'รอขาย (รอ Admin ยืนยันขายแล้ว)') : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
     const banner = '<p style="font-size:16px;">ใบขายออกทรัพย์สินนี้ได้รับการพิจารณาแล้ว สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>';
-    const html = buildSalePdfHtml_(saleObj, isAdminOverride).replace('<body>', '<body>' + banner);
+    const inlineImages = {};
+    const html = buildSalePdfHtml_(saleObj, isAdminOverride, inlineImages).replace('<body>', '<body>' + banner);
     MailApp.sendEmail({
       to: saleObj.CreatedByEmail,
       subject: '[' + statusThai + '] ใบขายออกทรัพย์สิน ' + saleObj.RunningNo,
-      htmlBody: html
+      htmlBody: html,
+      inlineImages: inlineImages
     });
   } catch (err) {
     Logger.log('sendSaleDecisionNotification_ error: ' + err);
@@ -4354,10 +4358,12 @@ function sendWriteOffDecisionNotification_(writeOffObj, decision, comment, isAdm
     const statusThai = decision === STATUS.APPROVED ? 'อนุมัติ' : 'ไม่อนุมัติ';
     const color = decision === STATUS.APPROVED ? '#1a7d3c' : '#c0392b';
     const banner = '<p style="font-size:16px;">ใบตัดชำรุดทรัพย์สินนี้ได้รับการพิจารณาแล้ว สถานะ: <b style="color:' + color + ';">' + statusThai + '</b></p>';
-    const html = buildWriteOffPdfHtml_(writeOffObj, isAdminOverride).replace('<body>', '<body>' + banner);
+    const inlineImages = {};
+    const html = buildWriteOffPdfHtml_(writeOffObj, isAdminOverride, inlineImages).replace('<body>', '<body>' + banner);
     MailApp.sendEmail({
       to: writeOffObj.CreatedByEmail,
       subject: '[' + statusThai + '] ใบตัดชำรุดทรัพย์สิน ' + writeOffObj.RunningNo,
+      inlineImages: inlineImages,
       htmlBody: html
     });
   } catch (err) {
@@ -4503,10 +4509,37 @@ function pdfDocStyle_() {
     '</style>';
 }
 
-function pdfImgGallery_(images) {
+// เมื่อมี inlineImages (object เปล่าที่ผู้เรียกเตรียมไว้ก่อน) ให้ดึงไฟล์รูปจาก Drive มาฝัง (cid:) ในอีเมลแทนการ
+// ลิงก์ตรงไปที่ https://drive.google.com/thumbnail?id=... — เพราะพบว่า Gmail/mail client หลายตัวไม่สามารถโหลด
+// รูปจาก thumbnail endpoint นี้ได้เวลาฝังในอีเมล (ขึ้นไอคอนรูปเสีย) ทั้งที่เปิดดูได้ปกติในหน้าเว็บแอป ถ้าดึงไฟล์
+// ไม่สำเร็จ (ไม่พบไฟล์/ไม่มีสิทธิ์) ให้ fallback กลับไปเป็นลิงก์ตรงเหมือนเดิมสำหรับรูปนั้น ไม่ทำให้ทั้งอีเมลพัง
+function pdfImgGallery_(images, inlineImages) {
   const list = (images || []).filter(Boolean);
   if (!list.length) return '-';
-  return '<div class="doc-img-gallery">' + list.map(u => '<img src="' + escapeHtml_(u) + '">').join('') + '</div>';
+  return '<div class="doc-img-gallery">' + list.map(u => {
+    if (inlineImages) {
+      const fileId = extractDriveFileId_(u);
+      if (fileId) {
+        try {
+          const blob = DriveApp.getFileById(fileId).getBlob();
+          const cid = 'docimg' + Object.keys(inlineImages).length;
+          inlineImages[cid] = blob;
+          return '<img src="cid:' + cid + '">';
+        } catch (err) {
+          // ไม่พบไฟล์/ไม่มีสิทธิ์เข้าถึง — fallback เป็นลิงก์ตรงสำหรับรูปนี้
+        }
+      }
+    }
+    return '<img src="' + escapeHtml_(u) + '">';
+  }).join('') + '</div>';
+}
+
+function extractDriveFileId_(url) {
+  const s = String(url || '');
+  let m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  m = s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
 }
 
 function pdfStatusBadge_(status, isSale, approvedLabelOverride) {
@@ -4571,9 +4604,9 @@ function pdfTransferApprovalFooter_(t, isAdminOverride) {
   return html;
 }
 
-function buildTransferPdfHtml_(t, isAdminOverride) {
+function buildTransferPdfHtml_(t, isAdminOverride, inlineImages) {
   const rows = (t.Items || []).map((it, i) =>
-    '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
+    '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images, inlineImages) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
     '</td><td>' + escapeHtml_(it.FromDeptName) + '<br><span style="font-size:11px;color:#666;">' + escapeHtml_(it.FromSignName) + '</span></td>' +
     '<td>' + escapeHtml_(it.ToDeptName) + '<br><span style="font-size:11px;color:#666;">' + escapeHtml_(it.ToSignName) + '</span></td>' +
     '<td>' + escapeHtml_(it.Remark) + '</td></tr>'
@@ -4604,9 +4637,9 @@ function saleApprovedLabel_(s) {
   return s.SaleConfirmedAt ? 'ขายแล้ว' : 'รอขาย';
 }
 
-function buildSalePdfHtml_(s, isAdminOverride) {
+function buildSalePdfHtml_(s, isAdminOverride, inlineImages) {
   const rows = (s.Items || []).map((it, i) =>
-    '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
+    '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images, inlineImages) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
     '</td><td class="money">' + fmtMoneyServer_(it.ScrapPrice) + '</td><td class="money">' + fmtMoneyServer_(it.AuctionPrice) +
     '</td><td class="money">' + fmtMoneyServer_(it.SalePrice) + '</td><td>' + escapeHtml_(it.Remark) + '</td></tr>'
   ).join('');
@@ -4627,9 +4660,9 @@ function buildSalePdfHtml_(s, isAdminOverride) {
     '</body></html>';
 }
 
-function buildWriteOffPdfHtml_(w, isAdminOverride) {
+function buildWriteOffPdfHtml_(w, isAdminOverride, inlineImages) {
   const rows = (w.Items || []).map((it, i) =>
-    '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
+    '<tr><td>' + (i + 1) + '</td><td>' + pdfImgGallery_(it.Images, inlineImages) + '</td><td>' + escapeHtml_(it.AssetID) + '</td><td class="left">' + escapeHtml_(it.AssetName) +
     '</td><td class="money">' + fmtMoneyServer_(it.ScrapPrice) + '</td><td>' + escapeHtml_(it.Remark) + '</td></tr>'
   ).join('');
   const total = (w.Items || []).reduce((sum, it) => sum + (parseFloat(it.ScrapPrice) || 0), 0);
