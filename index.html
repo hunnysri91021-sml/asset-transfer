@@ -1944,10 +1944,11 @@ function renderAssetLayoutMap(root){
       </div>
       <div class="toolbar no-print" id="pinModeBar" style="display:none;flex-wrap:wrap;align-items:center;">
         <button class="btn btn-primary btn-sm" id="btnTogglePinMode">📍 โหมดปักหมุด: ปิด</button>
-        <span id="pinModeHint" style="font-size:12px;color:var(--muted);display:none;">ค้นหาทรัพย์สินด้านล่าง เลือกแล้วคลิกตำแหน่งบนภาพเพื่อปักหมุด (คลิกหมุดเดิมเพื่อถอด)</span>
+        <span id="pinModeHint" style="font-size:12px;color:var(--muted);display:none;">ค้นหาทรัพย์สินด้านล่างแล้วคลิกตำแหน่งบนภาพเพื่อปักหมุด — คลิกหมุดเดิมเพื่อเลือกย้าย (แล้วคลิกตำแหน่งใหม่) หรือกด "ถอดหมุดที่เลือก" เพื่อลบ</span>
       </div>
       <div class="toolbar no-print" id="pinAssetSearchBar" style="display:none;flex-wrap:wrap;">
         <input type="text" id="layoutAssetSearch" placeholder="ค้นหารหัส/ชื่อทรัพย์สินที่จะปัก..." style="max-width:240px;">
+        <button class="btn btn-secondary btn-sm" id="btnRemovePendingPin" style="display:none;">🗑 ถอดหมุดที่เลือก</button>
       </div>
       <div id="layoutAssetSearchResults" style="font-size:13px;margin:4px 0;"></div>
       <div id="layoutImageHost" style="margin-top:10px;"><div class="empty">กำลังโหลด...</div></div>
@@ -2005,6 +2006,7 @@ function renderAssetLayoutMap(root){
       if(!res.ok){ toast(res.error||'โหลดหมุดไม่สำเร็จ','err'); return; }
       pins = res.data || [];
       renderPinLayer();
+      updateRemovePendingPinBtn();
     });
   }
 
@@ -2022,12 +2024,11 @@ function renderAssetLayoutMap(root){
         const p = pins.find(x=>x.AssetID===el.dataset.pinid);
         if(!p) return;
         if(pinMode){
-          if(!confirm('ถอดหมุด '+p.AssetID+' ออกจากผังนี้?')) return;
-          apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: p.AssetID, clear:true }).then(res2=>{
-            if(!res2.ok){ toast(res2.error||'ถอดหมุดไม่สำเร็จ','err'); return; }
-            toast('ถอดหมุดสำเร็จ','ok');
-            loadPins();
-          });
+          pendingAssetId = p.AssetID;
+          document.getElementById('layoutAssetSearch').value = p.AssetID+' — '+p.AssetName;
+          document.getElementById('layoutAssetSearchResults').innerHTML = '';
+          updateRemovePendingPinBtn();
+          toast('เลือก '+p.AssetID+' แล้ว — คลิกตำแหน่งใหม่บนภาพเพื่อย้ายหมุด หรือกด "ถอดหมุดที่เลือก" เพื่อลบ');
         } else {
           toast(p.AssetID+' — '+p.AssetName+(p.Department?' ('+p.Department+')':''));
         }
@@ -2052,6 +2053,27 @@ function renderAssetLayoutMap(root){
       document.getElementById('layoutAssetSearchResults').innerHTML = '';
       document.getElementById('layoutAssetSearch').value = '';
     }
+    updateRemovePendingPinBtn();
+  };
+
+  // แสดงปุ่ม "ถอดหมุดที่เลือก" เฉพาะตอนทรัพย์สินที่เลือกไว้ (pendingAssetId) มีหมุดอยู่บนผังนี้แล้วจริงๆ
+  // (เลือกจากการคลิกหมุดเดิม หรือค้นหาเจอทรัพย์สินที่บังเอิญปักไว้แล้ว) — ถ้าเลือกทรัพย์สินใหม่ที่ยังไม่เคยปักจะไม่โชว์
+  function updateRemovePendingPinBtn(){
+    const btn = document.getElementById('btnRemovePendingPin');
+    if(!btn) return;
+    btn.style.display = (pinMode && pendingAssetId && pins.some(p=>p.AssetID===pendingAssetId)) ? '' : 'none';
+  }
+
+  document.getElementById('btnRemovePendingPin').onclick = function(){
+    if(!pendingAssetId) return;
+    if(!confirm('ถอดหมุด '+pendingAssetId+' ออกจากผังนี้?')) return;
+    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, clear:true }).then(res=>{
+      if(!res.ok){ toast(res.error||'ถอดหมุดไม่สำเร็จ','err'); return; }
+      toast('ถอดหมุดสำเร็จ','ok');
+      pendingAssetId = '';
+      document.getElementById('layoutAssetSearch').value = '';
+      loadPins();
+    });
   };
 
   let searchDebounce;
@@ -2073,6 +2095,7 @@ function renderAssetLayoutMap(root){
             const a = assetSearchResults.find(x=>x.AssetID===pendingAssetId);
             document.getElementById('layoutAssetSearch').value = a ? (a.AssetID+' — '+a.AssetName) : pendingAssetId;
             resHost.innerHTML = '';
+            updateRemovePendingPinBtn();
           };
         });
       });
@@ -2092,6 +2115,7 @@ function renderAssetLayoutMap(root){
       toast('ปักหมุด '+pendingAssetId+' สำเร็จ','ok');
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
+      updateRemovePendingPinBtn();
       loadPins();
     });
   }
