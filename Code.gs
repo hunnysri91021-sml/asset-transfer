@@ -528,6 +528,8 @@ function getAssetPublicView_(assetId) {
     if (String(values[i][idx.AssetID]) === id) {
       const r = rowToObj_(values[i], idx);
       const disposed = getDisposedAssetStatus_();
+      const hasLayoutPin = r.LayoutID && r.LayoutX !== '' && r.LayoutY !== '' && r.LayoutX !== undefined && r.LayoutY !== undefined;
+      const layout = hasLayoutPin ? getLayoutById_(String(r.LayoutID)) : null;
       return {
         ok: true,
         data: {
@@ -540,12 +542,29 @@ function getAssetPublicView_(assetId) {
           Location: r.Location,
           Tag: r.Tag,
           AssetStatus: disposed[String(r.AssetID)] || 'Active',
-          DisplayImage: r.ImageURLOverride || r.ImageURL || ''
+          DisplayImage: r.ImageURLOverride || r.ImageURL || '',
+          LayoutName: layout ? layout.Name : '',
+          LayoutImageURL: layout ? layout.ImageURL : '',
+          LayoutX: hasLayoutPin ? parseFloat(r.LayoutX) : '',
+          LayoutY: hasLayoutPin ? parseFloat(r.LayoutY) : ''
         }
       };
     }
   }
   return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + id };
+}
+
+// หาผังตาม LayoutID เดียว — ใช้แสดงตำแหน่งปักหมุดของทรัพย์สินหนึ่งชิ้นที่หน้าสาธารณะ (สแกน QR) ไม่ต้อง login
+// เพราะชื่อ/ภาพผังไม่ใช่ข้อมูลอ่อนไหว ต่างจาก getAssetLayouts_ ที่คืนทั้งรายการและบังคับ login ไว้
+function getLayoutById_(layoutId) {
+  const sh = getSS_().getSheetByName(SHEETS.ASSET_LAYOUTS);
+  if (!sh) return null;
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.LayoutID]) === layoutId) return rowToObj_(values[i], idx);
+  }
+  return null;
 }
 
 // ============================================================
