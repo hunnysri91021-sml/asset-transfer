@@ -4509,10 +4509,14 @@ function pdfDocStyle_() {
     '</style>';
 }
 
-// เมื่อมี inlineImages (object เปล่าที่ผู้เรียกเตรียมไว้ก่อน) ให้ดึงไฟล์รูปจาก Drive มาฝัง (cid:) ในอีเมลแทนการ
+// เมื่อมี inlineImages (object เปล่าที่ผู้เรียกเตรียมไว้ก่อน) ให้ดึง "รูปย่อ" จาก Drive มาฝัง (cid:) ในอีเมลแทนการ
 // ลิงก์ตรงไปที่ https://drive.google.com/thumbnail?id=... — เพราะพบว่า Gmail/mail client หลายตัวไม่สามารถโหลด
-// รูปจาก thumbnail endpoint นี้ได้เวลาฝังในอีเมล (ขึ้นไอคอนรูปเสีย) ทั้งที่เปิดดูได้ปกติในหน้าเว็บแอป ถ้าดึงไฟล์
-// ไม่สำเร็จ (ไม่พบไฟล์/ไม่มีสิทธิ์) ให้ fallback กลับไปเป็นลิงก์ตรงเหมือนเดิมสำหรับรูปนั้น ไม่ทำให้ทั้งอีเมลพัง
+// รูปจาก thumbnail endpoint นี้ได้เวลาฝังในอีเมล (ขึ้นไอคอนรูปเสีย) ทั้งที่เปิดดูได้ปกติในหน้าเว็บแอป
+//
+// สำคัญ: ต้องดึงผ่าน UrlFetchApp.fetch() ไปที่ URL รูปย่อ (sz=w120 เล็กพอสำหรับช่องตาราง 26x26px ในเอกสาร) ไม่ใช่
+// DriveApp.getFileById().getBlob() — getBlob() คืนไฟล์ต้นฉบับเต็มความละเอียด (อาจหลาย MB จากรูปถ่ายมือถือ) ทำให้
+// Outlook/mail client แสดงเป็นไฟล์แนบขนาดใหญ่โหลดไม่ขึ้นแทนที่จะ render แบบ inline ปกติ (พบจากการทดสอบจริง)
+// ถ้าดึงไม่สำเร็จ (ไม่พบไฟล์/ไม่มีสิทธิ์) ให้ fallback กลับไปเป็นลิงก์ตรงเหมือนเดิมสำหรับรูปนั้น ไม่ทำให้ทั้งอีเมลพัง
 function pdfImgGallery_(images, inlineImages) {
   const list = (images || []).filter(Boolean);
   if (!list.length) return '-';
@@ -4521,12 +4525,16 @@ function pdfImgGallery_(images, inlineImages) {
       const fileId = extractDriveFileId_(u);
       if (fileId) {
         try {
-          const blob = DriveApp.getFileById(fileId).getBlob();
-          const cid = 'docimg' + Object.keys(inlineImages).length;
-          inlineImages[cid] = blob;
-          return '<img src="cid:' + cid + '">';
+          const thumbUrl = 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w120';
+          const resp = UrlFetchApp.fetch(thumbUrl, { muteHttpExceptions: true });
+          if (resp.getResponseCode() === 200) {
+            const blob = resp.getBlob();
+            const cid = 'docimg' + Object.keys(inlineImages).length;
+            inlineImages[cid] = blob;
+            return '<img src="cid:' + cid + '">';
+          }
         } catch (err) {
-          // ไม่พบไฟล์/ไม่มีสิทธิ์เข้าถึง — fallback เป็นลิงก์ตรงสำหรับรูปนี้
+          // ดึงรูปย่อไม่สำเร็จ — fallback เป็นลิงก์ตรงสำหรับรูปนี้
         }
       }
     }
