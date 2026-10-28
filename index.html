@@ -163,7 +163,8 @@
     .asset-qr-card{page-break-inside:avoid;break-inside:avoid;}
   }
   .layout-pin{position:absolute;transform:translate(-50%,-100%);cursor:pointer;display:flex;flex-direction:column;align-items:center;pointer-events:auto;}
-  .layout-pin::after{content:'';display:block;width:12px;height:12px;border-radius:50%;background:var(--red,#c0392b);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);margin:0 auto;}
+  .layout-pin-dot{width:12px;height:12px;border-radius:50%;background:var(--red,#c0392b);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);margin:0 auto;}
+  .layout-pin-thumb{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:block;background:#fff;}
   .layout-pin-label{font-size:10px;font-weight:700;background:#fff;color:#1a3c6e;padding:1px 5px;border-radius:4px;border:1px solid var(--border);white-space:nowrap;margin-bottom:2px;box-shadow:0 1px 2px rgba(0,0,0,.2);}
 </style>
 </head>
@@ -466,6 +467,18 @@ function syncFlagBadge(a){
   return '';
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// หมุดบนผังทรัพย์สิน (ใช้ร่วมกันทั้งหน้า "ผังทรัพย์สิน" และหน้าสแกน QR) — แสดงรหัสทรัพย์สิน + รูปภาพ (ถ้ามี) ไม่ใช่
+// แค่จุดสีแดงเฉยๆ เหมือนเดิม ถ้าไม่มีรูปหรือรูปโหลดไม่ขึ้นจะ fallback กลับไปเป็นจุดสีแดงแทน
+function layoutPinMarkerHtml(p, x, y){
+  const img = p.DisplayImage
+    ? `<img class="layout-pin-thumb" src="${esc(p.DisplayImage)}" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><div class="layout-pin-dot" style="display:none;"></div>`
+    : `<div class="layout-pin-dot"></div>`;
+  return `<div class="layout-pin" data-pinid="${esc(p.AssetID)}" style="left:${x}%;top:${y}%;" title="${esc(p.AssetID)} — ${esc(p.AssetName||'')}">
+    <span class="layout-pin-label">${esc(p.AssetID)}</span>
+    ${img}
+  </div>`;
+}
 
 // ลิงก์หน้าดูข้อมูลทรัพย์สินสาธารณะ (ปลายทาง QR) — ต้องชี้ไปหน้าเว็บ index.html เอง (ที่ host อยู่ เช่น
 // GitHub Pages) ไม่ใช่ GAS_URL ซึ่งเป็น endpoint backend ที่ตอบกลับเป็น JSON ล้วนเท่านั้น
@@ -1553,9 +1566,7 @@ function renderAssetPublicView(root){
         <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">ปักหมุดไว้ที่ผัง "${esc(a.LayoutName||'')}"— เข้าสู่ระบบก่อนจึงจะย้าย/แก้ไขตำแหน่งได้</p>
         <div style="position:relative;display:inline-block;max-width:100%;">
           <img src="${esc(a.LayoutImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
-          <div class="layout-pin" style="left:${a.LayoutX}%;top:${a.LayoutY}%;" title="${esc(a.AssetID)} — ${esc(a.AssetName)}">
-            <span class="layout-pin-label">${esc(a.AssetID)}</span>
-          </div>
+          ${layoutPinMarkerHtml(a, a.LayoutX, a.LayoutY)}
         </div>
         ` : `<p style="color:var(--muted);font-size:12px;margin:0 0 8px;">ยังไม่ได้ปักหมุดตำแหน่งทรัพย์สินนี้ไว้ — เข้าสู่ระบบก่อนจึงจะปักหมุดได้</p>`}
         <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
@@ -1626,7 +1637,7 @@ function renderAssetPublicView(root){
         host.innerHTML = `
           <div id="alpImageWrap" style="position:relative;display:inline-block;max-width:100%;cursor:crosshair;">
             <img src="${esc(layout.ImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
-            ${pendingX!==null ? `<div class="layout-pin" style="left:${pendingX}%;top:${pendingY}%;"><span class="layout-pin-label">${esc(a.AssetID)}</span></div>` : ''}
+            ${pendingX!==null ? layoutPinMarkerHtml(a, pendingX, pendingY) : ''}
           </div>
         `;
         document.getElementById('alpImageWrap').onclick = (e)=>{
@@ -1962,11 +1973,7 @@ function renderAssetLayoutMap(root){
       const layer = wrap.querySelector('.layoutPinLayer');
       if(!layer) return;
       const layoutPins = pinsByLayout[layoutId] || [];
-      layer.innerHTML = layoutPins.map(p=>`
-        <div class="layout-pin" data-pinid="${esc(p.AssetID)}" style="left:${p.LayoutX}%;top:${p.LayoutY}%;" title="${esc(p.AssetID)} — ${esc(p.AssetName)}">
-          <span class="layout-pin-label">${esc(p.AssetID)}</span>
-        </div>
-      `).join('');
+      layer.innerHTML = layoutPins.map(p => layoutPinMarkerHtml(p, p.LayoutX, p.LayoutY)).join('');
       layer.querySelectorAll('.layout-pin').forEach(el=>{
         el.onclick = (e)=>{
           e.stopPropagation();
@@ -2014,15 +2021,32 @@ function renderAssetLayoutMap(root){
     btn.style.display = (pinMode && hasExisting) ? '' : 'none';
   }
 
+  // หาข้อมูลรหัส/ชื่อ/รูปของทรัพย์สิน จากหมุดเดิมที่เคยปักไว้ (ถ้ามี) หรือจากผลค้นหาล่าสุด — ใช้ตอนปักหมุดใหม่แบบ
+  // optimistic (วาดหมุดทันทีโดยไม่ต้องรอผลจาก loadAllPins() ซึ่งเป็น network round-trip ที่อาจช้าหลายวินาที)
+  function findAssetDisplayInfo(assetId){
+    for(const lid in pinsByLayout){
+      const found = (pinsByLayout[lid]||[]).find(p=>p.AssetID===assetId);
+      if(found) return found;
+    }
+    const found2 = assetSearchResults.find(x=>x.AssetID===assetId);
+    if(found2) return { AssetID: found2.AssetID, AssetName: found2.AssetName, Department: found2.Department||'', DisplayImage: found2.DisplayImage||'' };
+    return { AssetID: assetId, AssetName: assetId, Department: '', DisplayImage: '' };
+  }
+
   document.getElementById('btnRemovePendingPin').onclick = function(){
     if(!pendingAssetId) return;
     if(!confirm('ถอดหมุด '+pendingAssetId+' ออกจากผัง?')) return;
-    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, clear:true }).then(res=>{
+    const assetId = pendingAssetId;
+    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: assetId, clear:true }).then(res=>{
       if(!res.ok){ toast(res.error||'ถอดหมุดไม่สำเร็จ','err'); return; }
       toast('ถอดหมุดสำเร็จ','ok');
+      // ถอดออกจาก state ทันที ไม่ต้องรอ loadAllPins() กลับมาถึงจะหายจากจอ
+      Object.keys(pinsByLayout).forEach(lid=>{ pinsByLayout[lid] = (pinsByLayout[lid]||[]).filter(p=>p.AssetID!==assetId); });
+      renderAllPinLayers();
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
-      loadAllPins();
+      updateRemovePendingPinBtn();
+      loadAllPins(); // ซิงค์กับ server อีกรอบเบื้องหลัง เผื่อมีคนอื่นแก้ไขพร้อมกัน
     });
   };
 
@@ -2061,13 +2085,21 @@ function renderAssetLayoutMap(root){
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
     if(x<0||x>100||y<0||y>100) return;
-    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: pendingAssetId, layoutId: layoutId, x: x, y: y }).then(res=>{
+    const assetId = pendingAssetId;
+    apiPost({ action:'updateAssetLayoutPin', password: STATE.adminPassword, assetId: assetId, layoutId: layoutId, x: x, y: y }).then(res=>{
       if(!res.ok){ toast(res.error||'ปักหมุดไม่สำเร็จ','err'); return; }
-      toast('ปักหมุด '+pendingAssetId+' สำเร็จ','ok');
+      toast('ปักหมุด '+assetId+' สำเร็จ','ok');
+      // วาดหมุดขึ้นจอทันทีแบบ optimistic (ย้ายออกจากผังเดิมถ้ามี แล้วใส่ที่ผังใหม่) ไม่ต้องรอ loadAllPins()
+      // ซึ่งเป็น network round-trip หลายรายการที่อาจช้า ทำให้เคยดูเหมือนปักไม่ขึ้นทั้งที่บันทึกสำเร็จแล้ว
+      const info = findAssetDisplayInfo(assetId);
+      Object.keys(pinsByLayout).forEach(lid=>{ pinsByLayout[lid] = (pinsByLayout[lid]||[]).filter(p=>p.AssetID!==assetId); });
+      if(!pinsByLayout[layoutId]) pinsByLayout[layoutId] = [];
+      pinsByLayout[layoutId].push({ AssetID: assetId, AssetName: info.AssetName, Department: info.Department||'', DisplayImage: info.DisplayImage||'', LayoutX: x, LayoutY: y, AssetStatus: info.AssetStatus||'Active' });
+      renderAllPinLayers();
       pendingAssetId = '';
       document.getElementById('layoutAssetSearch').value = '';
       updateRemovePendingPinBtn();
-      loadAllPins();
+      loadAllPins(); // ซิงค์กับ server อีกรอบเบื้องหลัง เผื่อมีคนอื่นแก้ไขพร้อมกัน
     });
   }
 
