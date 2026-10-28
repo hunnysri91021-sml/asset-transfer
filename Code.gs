@@ -45,11 +45,13 @@ const SHEETS = {
   AUCTION_BIDS: 'AuctionBids',
   AUCTION_BID_ITEMS: 'AuctionBidItems',
   AUCTION_OFFLIST: 'AuctionOffListing',
-  LOG: 'ActivityLog'
+  LOG: 'ActivityLog',
+  ASSET_LAYOUTS: 'AssetLayouts'
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'Lat', 'Lng', 'LocationPinUpdatedAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'Lat', 'Lng', 'LocationPinUpdatedAt', 'LayoutID', 'LayoutX', 'LayoutY', 'LayoutPinUpdatedAt'],
+  ASSET_LAYOUTS: ['LayoutID', 'Name', 'ImageURL', 'CreatedAt', 'CreatedBy'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction', 'DisabledCategories'],
   TRANSFER_QUEUE: ['AssetID', 'Purpose', 'AddedBy', 'AddedAt'],
@@ -116,6 +118,7 @@ function setup() {
   ensureSheet_(ss, SHEETS.AUCTION_BID_ITEMS, HEADERS.AUCTION_BID_ITEMS);
   ensureSheet_(ss, SHEETS.AUCTION_OFFLIST, HEADERS.AUCTION_OFFLIST);
   ensureSheet_(ss, SHEETS.LOG, HEADERS.LOG);
+  ensureSheet_(ss, SHEETS.ASSET_LAYOUTS, HEADERS.ASSET_LAYOUTS);
   Logger.log('Setup complete. Sheets ready: ' + Object.values(SHEETS).join(', '));
 }
 
@@ -464,6 +467,21 @@ function doPost(e) {
       case 'updateAssetLocationPin':
         result = updateAssetLocationPin_(body);
         break;
+      case 'getAssetLayouts':
+        result = getAssetLayouts_(body);
+        break;
+      case 'adminSaveLayout':
+        result = adminSaveLayout_(body);
+        break;
+      case 'adminDeleteLayout':
+        result = adminDeleteLayout_(body);
+        break;
+      case 'updateAssetLayoutPin':
+        result = updateAssetLayoutPin_(body);
+        break;
+      case 'getLayoutAssetPins':
+        result = getLayoutAssetPins_(body);
+        break;
       default:
         result = { ok: false, error: 'Unknown action: ' + action };
     }
@@ -564,6 +582,127 @@ function updateAssetLocationPin_(body) {
     }
   }
   return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + assetId };
+}
+
+// ============================================================
+// ASSET LAYOUT PINS — ผังทรัพย์สินแบบกำหนดเอง (Admin อัปโหลดภาพผัง/แผนผังโรงงานเอง แล้วผู้ใช้ปักหมุดตำแหน่ง
+// ทรัพย์สินบนภาพโดยตรงด้วยพิกัดเปอร์เซ็นต์ LayoutX/LayoutY เทียบกับขนาดภาพ 0-100) ต่างจาก Lat/Lng ที่เป็น
+// พิกัด GPS จริงบนแผนที่ OpenStreetMap — ใช้กรณี GPS ไม่แม่นยำพอ (เช่น ภายในโรงงาน/คลังสินค้าเดียวกัน)
+// การจัดการผัง (เพิ่ม/ลบ) เฉพาะ Admin แต่การปักหมุดทรัพย์สินบนผังที่มีอยู่ ผู้ใช้ที่ล็อกอินแล้วทุกคนทำได้
+// (เหมือน updateAssetLocationPin_)
+// ============================================================
+function getAssetLayouts_(body) {
+  if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
+  const sh = getSS_().getSheetByName(SHEETS.ASSET_LAYOUTS);
+  if (!sh) return { ok: true, data: [] };
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  const rows = values.slice(1).filter(r => r[idx.LayoutID]).map(r => rowToObj_(r, idx));
+  return { ok: true, data: rows };
+}
+
+function adminSaveLayout_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const user = getRequestingUser_(body.password);
+  const name = String(body.name || '').trim();
+  const imageUrl = String(body.imageUrl || '').trim();
+  if (!name) return { ok: false, error: 'กรุณาระบุชื่อผัง' };
+  if (!imageUrl) return { ok: false, error: 'กรุณาอัปโหลดภาพผัง' };
+  const sh = getSS_().getSheetByName(SHEETS.ASSET_LAYOUTS);
+  if (!sh) return { ok: false, error: 'ไม่พบชีต AssetLayouts กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  const layoutId = Utilities.getUuid();
+  const newRow = values[0].map(() => '');
+  newRow[idx.LayoutID] = layoutId;
+  newRow[idx.Name] = name;
+  newRow[idx.ImageURL] = imageUrl;
+  newRow[idx.CreatedAt] = new Date();
+  newRow[idx.CreatedBy] = user ? user.username : 'admin';
+  sh.appendRow(newRow);
+  logActivity_('', 'ADMIN_SAVE_LAYOUT', user ? user.username : 'admin', 'เพิ่มผังทรัพย์สิน "' + name + '"');
+  return { ok: true, data: { layoutId: layoutId } };
+}
+
+function adminDeleteLayout_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const layoutId = String(body.layoutId || '').trim();
+  if (!layoutId) return { ok: false, error: 'กรุณาระบุผังที่ต้องการลบ' };
+  const sh = getSS_().getSheetByName(SHEETS.ASSET_LAYOUTS);
+  if (!sh) return { ok: false, error: 'ไม่พบชีต AssetLayouts' };
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.LayoutID]) === layoutId) {
+      sh.deleteRow(i + 1);
+      logActivity_('', 'ADMIN_DELETE_LAYOUT', 'admin', 'ลบผังทรัพย์สิน ' + layoutId);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'ไม่พบผังนี้' };
+}
+
+// ปักหมุดตำแหน่งทรัพย์สินบนผังที่กำหนดเอง — ผู้ใช้ที่ล็อกอินแล้วทุกคนปักได้ (ไม่จำกัด role) เหมือน
+// updateAssetLocationPin_ ส่ง clear:true เพื่อถอดหมุดออกจากผัง (เช่นย้ายไปผังอื่น หรือไม่ต้องการปักแล้ว)
+function updateAssetLayoutPin_(body) {
+  if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนปักหมุดตำแหน่ง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'ไม่พบรหัสทรัพย์สิน' };
+
+  const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const values = sh.getDataRange().getValues();
+  const idx = indexMap_(values[0]);
+  if (idx.LayoutID === undefined || idx.LayoutX === undefined || idx.LayoutY === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ Layout ในชีต Assets กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  }
+
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idx.AssetID]) === assetId) {
+      if (body.clear) {
+        sh.getRange(i + 1, idx.LayoutID + 1).setValue('');
+        sh.getRange(i + 1, idx.LayoutX + 1).setValue('');
+        sh.getRange(i + 1, idx.LayoutY + 1).setValue('');
+        if (idx.LayoutPinUpdatedAt !== undefined) sh.getRange(i + 1, idx.LayoutPinUpdatedAt + 1).setValue(new Date());
+        logActivity_(assetId, 'CLEAR_ASSET_LAYOUT_PIN', 'user', 'ถอดหมุดทรัพย์สิน ' + assetId + ' ออกจากผัง');
+        return { ok: true };
+      }
+      const layoutId = String(body.layoutId || '').trim();
+      const x = parseFloat(body.x);
+      const y = parseFloat(body.y);
+      if (!layoutId) return { ok: false, error: 'กรุณาระบุผัง' };
+      if (isNaN(x) || isNaN(y) || x < 0 || x > 100 || y < 0 || y > 100) {
+        return { ok: false, error: 'ตำแหน่งที่ปักไม่ถูกต้อง' };
+      }
+      sh.getRange(i + 1, idx.LayoutID + 1).setValue(layoutId);
+      sh.getRange(i + 1, idx.LayoutX + 1).setValue(x);
+      sh.getRange(i + 1, idx.LayoutY + 1).setValue(y);
+      if (idx.LayoutPinUpdatedAt !== undefined) sh.getRange(i + 1, idx.LayoutPinUpdatedAt + 1).setValue(new Date());
+      logActivity_(assetId, 'UPDATE_ASSET_LAYOUT_PIN', 'user', 'ปักหมุดทรัพย์สิน ' + assetId + ' บนผัง ' + layoutId + ' (' + x.toFixed(1) + '%, ' + y.toFixed(1) + '%)');
+      return { ok: true, data: { layoutId: layoutId, x: x, y: y } };
+    }
+  }
+  return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + assetId };
+}
+
+// คืนรายการทรัพย์สินทั้งหมดที่ปักหมุดไว้บนผังที่ระบุ — ใช้แสดงจุดทั้งหมดบนภาพผังในหน้า "ผังทรัพย์สิน"
+function getLayoutAssetPins_(body) {
+  if (!isValidUserPassword_(body.password)) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
+  const layoutId = String(body.layoutId || '').trim();
+  if (!layoutId) return { ok: false, error: 'กรุณาระบุผัง' };
+  const rows = getAssetsRaw_();
+  const disposed = getDisposedAssetStatus_();
+  const pins = rows
+    .filter(r => String(r.LayoutID) === layoutId && r.LayoutX !== '' && r.LayoutY !== '' && r.LayoutX !== undefined && r.LayoutY !== undefined)
+    .map(r => ({
+      AssetID: r.AssetID,
+      AssetName: r.AssetName,
+      Department: r.Department,
+      DisplayImage: r.ImageURLOverride || r.ImageURL || '',
+      LayoutX: parseFloat(r.LayoutX),
+      LayoutY: parseFloat(r.LayoutY),
+      AssetStatus: disposed[String(r.AssetID)] || 'Active'
+    }));
+  return { ok: true, data: pins };
 }
 
 function getAssetsRaw_(q) {
