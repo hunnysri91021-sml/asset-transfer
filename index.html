@@ -1533,6 +1533,17 @@ function renderAssetPublicView(root){
           <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
         </table>
       </div>
+      ${a.LayoutImageURL && a.LayoutX!=='' && a.LayoutY!=='' ? `
+      <div class="card" style="max-width:420px;margin:12px auto;">
+        <h3 style="margin:0 0 8px;font-size:15px;">📍 ตำแหน่งทรัพย์สิน — ${esc(a.LayoutName||'ผังทรัพย์สิน')}</h3>
+        <div style="position:relative;display:inline-block;max-width:100%;">
+          <img src="${esc(a.LayoutImageURL)}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border);" draggable="false">
+          <div class="layout-pin" style="left:${a.LayoutX}%;top:${a.LayoutY}%;" title="${esc(a.AssetID)} — ${esc(a.AssetName)}">
+            <span class="layout-pin-label">${esc(a.AssetID)}</span>
+          </div>
+        </div>
+      </div>
+      ` : ''}
     `;
   });
 }
