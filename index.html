@@ -3417,12 +3417,12 @@ function renderAuctionLive(root){
         clearTimeout(offSaleSearchDebounce);
         if(!qq){ document.getElementById('offSaleAssetSearchResults').innerHTML=''; return; }
         offSaleSearchDebounce = setTimeout(()=>{
-          apiGet({ action:'getAssetsFull', q: qq }).then(res=>{
+          apiGet({ action:'getOffSystemSaleCandidates', q: qq }).then(res=>{
             if(!res.ok) return;
-            offSaleSearchResults = (res.data||[]).filter(a=>a.AssetStatus!=='Sold' && a.AssetStatus!=='WrittenOff').slice(0, 8);
+            offSaleSearchResults = (res.data||[]).slice(0, 8);
             const resHost = document.getElementById('offSaleAssetSearchResults');
             resHost.innerHTML = offSaleSearchResults.length
-              ? offSaleSearchResults.map(a=>`<div class="pin-search-result" data-id="${esc(a.AssetID)}" style="cursor:pointer;padding:4px;border-bottom:1px solid var(--border);">${esc(a.AssetID)} — ${esc(a.AssetName)} (${esc(a.Department||'-')})</div>`).join('')
+              ? offSaleSearchResults.map(a=>`<div class="pin-search-result" data-id="${esc(a.AssetID)}" style="cursor:pointer;padding:4px;border-bottom:1px solid var(--border);">${esc(a.AssetID)} — ${esc(a.AssetName)}${a.HasAssetRecord ? ' ('+esc(a.Department||'-')+')' : ' <span style="color:var(--muted);">(รายการประมูล ไม่มีทะเบียน)</span>'}</div>`).join('')
               : '<div style="color:var(--muted);">ไม่พบทรัพย์สินที่ยังไม่ถูกขาย/ตัดชำรุด</div>';
             resHost.querySelectorAll('.pin-search-result').forEach(el=>{
               el.onclick = ()=>{
@@ -3447,7 +3447,9 @@ function renderAuctionLive(root){
         if(!price){ toast('กรุณาระบุราคาขาย','err'); return; }
         const btn = document.getElementById('btnSaveOffSystemSale');
         btn.disabled = true;
-        apiPost({ action:'adminRecordOffSystemSale', password: STATE.adminPassword, assetId: offSaleSelectedAssetId, buyer, price, round, remark }).then(res=>{
+        const selectedAsset = offSaleSearchResults.find(x=>x.AssetID===offSaleSelectedAssetId);
+        const assetName = selectedAsset ? selectedAsset.AssetName : '';
+        apiPost({ action:'adminRecordOffSystemSale', password: STATE.adminPassword, assetId: offSaleSelectedAssetId, assetName, buyer, price, round, remark }).then(res=>{
           btn.disabled = false;
           if(!res.ok){ toast(res.error||'บันทึกขายนอกระบบไม่สำเร็จ','err'); return; }
           toast('บันทึกขายนอกระบบ '+res.data.assetId+' สำเร็จ (รอบที่ '+res.data.round+')','ok');
