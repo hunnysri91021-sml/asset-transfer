@@ -164,6 +164,9 @@ function doGet(e) {
       case 'getAssetsFull':
         result = { ok: true, data: getAssetsFull_(e.parameter.q || '') };
         break;
+      case 'getOffSystemSaleCandidates':
+        result = { ok: true, data: getOffSystemSaleCandidates_(e.parameter.q || '') };
+        break;
       case 'getAssetListBundle':
         if (!isValidUserPassword_(e.parameter.password)) {
           result = { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
@@ -2653,6 +2656,43 @@ function getOffSystemAuctionSales_(assetById) {
   return rows;
 }
 
+// รายชื่อทรัพย์สินที่ค้นหาได้สำหรับ "บันทึกขายนอกระบบ" — รวม 2 กลุ่ม: (1) ทรัพย์สินที่มีทะเบียนในชีต Assets และยัง
+// ไม่ถูกขาย/ตัดชำรุด (เหมือนเดิม) และ (2) รายการนอกฐาน/off-listing ที่ไม่มีแถวคู่กันในชีต Assets เลย แต่มีรายการประมูล
+// (แถวใน AuctionBidItems) อยู่ — เช่น Admin คีย์เข้ามาเองตอนกรอกใบประมูลโดยไม่มีทะเบียนทรัพย์สิน — ก่อนหน้านี้ค้นหาไม่
+// เจอเลยเพราะดึงจากชีต Assets อย่างเดียว ทำให้บันทึกขายนอกระบบให้รายการกลุ่มนี้ไม่ได้ (ดู CLAUDE.md pattern ของ
+// off-listing ที่ใช้ร่วมกันใน buildAuctionWinnersList_/getValidAuctionBidItems_)
+function getOffSystemSaleCandidates_(q) {
+  const qq = (q || '').toString().trim().toLowerCase();
+  const disposed = getDisposedAssetStatus_();
+  const assetsRaw = getAssetsRaw_();
+  const registeredIds = {};
+  assetsRaw.forEach(a => { registeredIds[String(a.AssetID)] = true; });
+
+  const registered = getAssetsRaw_(q)
+    .filter(a => (disposed[String(a.AssetID)] || 'Active') === 'Active')
+    .map(a => ({ AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department || '', HasAssetRecord: true }));
+
+  const offListingById = getAuctionOffListingMap_();
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  const seen = {};
+  const offListing = [];
+  itemValues.forEach(r => {
+    const assetId = String(r[itemIdx.AssetID] || '').trim();
+    if (!assetId || registeredIds[assetId] || seen[assetId]) return;
+    seen[assetId] = true;
+    if (disposed[assetId]) return;
+    const off = offListingById[assetId];
+    if (off && String(off.AuctionSold).toLowerCase() === 'true') return;
+    const assetName = String(r[itemIdx.AssetName] || '');
+    if (qq && assetId.toLowerCase().indexOf(qq) === -1 && assetName.toLowerCase().indexOf(qq) === -1) return;
+    offListing.push({ AssetID: assetId, AssetName: assetName, Department: '', HasAssetRecord: false });
+  });
+
+  return registered.concat(offListing);
+}
+
 // บันทึกขายนอกระบบ — สำหรับทรัพย์สินตัดชำรุด/รอขายใดๆ (ไม่จำกัดว่าเคยส่งประมูลหรือไม่) ที่ขายได้จริงนอกระบบ
 // (เช่น เจรจาซื้อขายโดยตรง ไม่ผ่านการประมูลในแอป) Admin กรอกแค่ผู้ซื้อ+ราคาขายแล้วบันทึกได้เลย โดยสร้างใบขายออก
 // (Sales/SaleItems) ที่อนุมัติอัตโนมัติทันทีเบื้องหลัง (Channel='นอกระบบ') เพื่อให้ AssetStatus/Tag/คิวที่ค้างอยู่ของ
@@ -2668,14 +2708,18 @@ function adminRecordOffSystemSale_(body) {
   if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคาขายที่ถูกต้อง' };
 
   const assetsRaw = getAssetsRaw_();
+  // ไม่พบทรัพย์สินนี้ในชีต Assets เลย — อาจเป็นรายการนอกฐาน/off-listing ที่ไม่มีทะเบียน แต่มีรายการประมูล (ดู
+  // getOffSystemSaleCandidates_) ยังอนุญาตให้บันทึกขายนอกระบบได้เหมือนรายการที่มีทะเบียน เพียงแต่ต้องรับชื่อทรัพย์สิน
+  // จาก body มาเอง (asset.AssetName ไม่มีให้ใช้)
   const asset = assetsRaw.find(a => String(a.AssetID) === assetId);
-  if (!asset) return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + assetId };
+  const assetName = asset ? (asset.AssetName || '') : String(body.assetName || '').trim();
+  if (!asset && !assetName) return { ok: false, error: 'กรุณาระบุชื่อทรัพย์สิน' };
   const disposed = getDisposedAssetStatus_();
   if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถบันทึกขายนอกระบบซ้ำได้' };
 
   const round = parseInt(body.round, 10) || getAuctionCurrentRound_();
-  const fromDeptCode = getCodeForDept_(asset.Department) || 'GEN';
-  const dept = getDeptByName_(asset.Department);
+  const fromDeptCode = getCodeForDept_(asset ? asset.Department : '') || 'GEN';
+  const dept = asset ? getDeptByName_(asset.Department) : null;
   const saleId = Utilities.getUuid();
   const now = new Date();
 
@@ -2691,7 +2735,7 @@ function adminRecordOffSystemSale_(body) {
     newRow[sIdx.SaleID] = saleId;
     newRow[sIdx.RunningNo] = rn;
     newRow[sIdx.CreatedAt] = now;
-    newRow[sIdx.FromDept] = asset.Department || '';
+    newRow[sIdx.FromDept] = asset ? (asset.Department || '') : '';
     newRow[sIdx.FromDeptCode] = fromDeptCode;
     newRow[sIdx.Buyer] = buyer;
     newRow[sIdx.Remark] = body.remark || 'บันทึกขายนอกระบบ';
@@ -2712,11 +2756,11 @@ function adminRecordOffSystemSale_(body) {
   itemRow[iIdx.SaleID] = saleId;
   itemRow[iIdx.LineNo] = 1;
   itemRow[iIdx.AssetID] = assetId;
-  itemRow[iIdx.AssetName] = asset.AssetName || '';
-  itemRow[iIdx.ScrapPrice] = asset.ScrapPrice || 0;
+  itemRow[iIdx.AssetName] = assetName;
+  itemRow[iIdx.ScrapPrice] = asset ? (asset.ScrapPrice || 0) : 0;
   itemRow[iIdx.SalePrice] = price;
   itemRow[iIdx.Remark] = body.remark || '';
-  itemRow[iIdx.ImageURL] = imagesToCell_(asset.DisplayImage ? [asset.DisplayImage] : []);
+  itemRow[iIdx.ImageURL] = imagesToCell_(asset && asset.DisplayImage ? [asset.DisplayImage] : []);
   iSheet.getRange(iSheet.getLastRow() + 1, 1, 1, iHeaders.length).setValues([itemRow]);
 
   purgeAssetFromAllQueues_([assetId]);
