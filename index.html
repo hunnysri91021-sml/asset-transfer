@@ -3195,9 +3195,12 @@ function renderAuctionLive(root){
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
           <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (w.BelowReferencePrice ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
-          ${isAdmin ? `<td class="no-print">${w.OffSystemSale ? '<span style="color:var(--muted);font-size:12px;">บันทึกขายนอกระบบแล้ว</span>' : (w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.Sold
-            ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
-            : (w.BidderName ? `
+          ${isAdmin ? `<td class="no-print">${w.OffSystemSale
+            ? `<button class="btn btn-secondary btn-sm winnerCancelOffSystemBtn" data-id="${esc(w.AssetID)}">🗑 ยกเลิก</button>`
+            : (w.Sold
+              // "ยกเลิก Confirm" เปิดให้กดได้ทุกรอบ (ไม่จำกัดแค่รอบปัจจุบัน) เผื่อพบว่ารายการของรอบที่ปิดไปแล้วบันทึกผิด
+              ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
+              : (w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.BidderName ? `
             <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
             <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
           ` : '-')))}</td>` : ''}
@@ -3219,6 +3222,9 @@ function renderAuctionLive(root){
         });
         host.querySelectorAll('.winnerUnconfirmBtn').forEach(btn=>{
           btn.onclick = ()=> unconfirmWinner(btn.dataset.id, btn);
+        });
+        host.querySelectorAll('.winnerCancelOffSystemBtn').forEach(btn=>{
+          btn.onclick = ()=> cancelOffSystemSale(btn.dataset.id, btn);
         });
         const selectAllEl = document.getElementById('winnersSelectAll');
         if(selectAllEl) selectAllEl.onchange = (e)=>{
@@ -3274,6 +3280,20 @@ function renderAuctionLive(root){
         if(btn) btn.disabled = false;
         if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
         toast('ยกเลิก Confirm ของ '+assetId+' สำเร็จ — กลับเป็นรอประมูล','ok');
+        loadWinners();
+      });
+    }
+
+    // ปุ่ม "ยกเลิก" ของรายการ "ขายนอกระบบ" — ยกเลิกใบขายออกที่สร้างไว้ตอนบันทึก (Voided) ทรัพย์สินกลับไปเป็น "ใช้งาน
+    // ปกติ" ให้แก้ไข/บันทึกขายนอกระบบใหม่ หรือดำเนินการอื่นได้อีกครั้ง — ใช้ action adminRestoreAsset เดียวกับปุ่ม
+    // "คืนสถานะใช้งาน" ที่หน้ารายการทรัพย์สิน เพราะโครงสร้างข้อมูลเหมือนกันทุกประการ (ใบขายออกที่อนุมัติแล้ว)
+    function cancelOffSystemSale(assetId, btn){
+      if(!confirm('ยืนยันยกเลิกรายการขายนอกระบบของ '+assetId+'? (ทรัพย์สินจะกลับไปเป็น "ใช้งานปกติ" ให้บันทึกขายนอกระบบใหม่ หรือดำเนินการอื่นได้)')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId, destination:'active' }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+        toast('ยกเลิกรายการขายนอกระบบของ '+assetId+' สำเร็จ','ok');
         loadWinners();
       });
     }
