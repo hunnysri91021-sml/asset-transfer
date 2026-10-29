@@ -522,6 +522,21 @@ window.closeImageLightbox = function(){
   document.getElementById('modalHost').innerHTML = '';
 };
 
+/* ================= PIN INFO CARD (click a pin on the Asset Layout Map to see its photo + code) ================= */
+window.openPinInfoCard = function(assetId, assetName, department, imageUrl){
+  document.getElementById('modalHost').innerHTML = `
+    <div class="lightbox-overlay no-print" onclick="closeImageLightbox()">
+      <div style="background:#fff;border-radius:10px;padding:16px;max-width:320px;width:90%;text-align:center;" onclick="event.stopPropagation()">
+        ${imageUrl ? `<img src="${esc(imageUrl)}" style="max-width:100%;max-height:260px;border-radius:8px;object-fit:cover;" onerror="this.style.display='none';">` : ''}
+        <div style="font-weight:700;font-size:18px;margin-top:10px;color:#1a3c6e;">${esc(assetId)}</div>
+        <div style="color:var(--muted);margin-top:2px;">${esc(assetName||'')}</div>
+        ${department ? `<div style="color:var(--muted);font-size:13px;margin-top:2px;">${esc(department)}</div>` : ''}
+      </div>
+      <button class="lightbox-close no-print" onclick="closeImageLightbox()">✕</button>
+    </div>
+  `;
+};
+
 /* ================= AUTH (login gate: User / Admin, shared password) ================= */
 const AUTH_SESSION_KEY = 'assetTransferAuthSession';
 
@@ -2011,7 +2026,7 @@ function renderAssetLayoutMap(root){
             updateRemovePendingPinBtn();
             toast('เลือก '+p.AssetID+' แล้ว — คลิกตำแหน่งใหม่บนภาพผังใดก็ได้เพื่อย้ายหมุด หรือกด "ถอดหมุดที่เลือก" เพื่อลบ');
           } else {
-            toast(p.AssetID+' — '+p.AssetName+(p.Department?' ('+p.Department+')':''));
+            openPinInfoCard(p.AssetID, p.AssetName, p.Department, p.DisplayImage);
           }
         };
       });
