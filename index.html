@@ -3200,10 +3200,12 @@ function renderAuctionLive(root){
             : (w.Sold
               // "ยกเลิก Confirm" เปิดให้กดได้ทุกรอบ (ไม่จำกัดแค่รอบปัจจุบัน) เผื่อพบว่ารายการของรอบที่ปิดไปแล้วบันทึกผิด
               ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
-              : (w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.BidderName ? `
+              // ยังไม่ขาย: รอบปัจจุบันกด Confirm/CC ได้ทั้งคู่ตามปกติ ส่วนรอบที่ปิดไปแล้วเปิดให้กดได้แค่ "❌ CC" เพื่อ
+              // ลบรายการที่พนักงานมีชื่อประมูลได้แต่ภายหลังไม่รับทรัพย์สิน (ไม่เปิด Confirm ย้อนหลัง เพราะรอบนั้นปิดไปแล้วจริง)
+              : (w.BidderName ? (w.Round===currentRound ? `
             <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
             <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
-          ` : '-')))}</td>` : ''}
+          ` : `<button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC (ไม่รับทรัพย์สิน)</button>`) : '-'))}</td>` : ''}
         </tr>`;
       });
       // แถวรวมท้ายตาราง — รวมเฉพาะ "ราคาที่ประมูลได้" (ยอดเงินที่เก็บได้จริง) ไม่รวมราคากลาง/มูลค่าทางบัญชี
