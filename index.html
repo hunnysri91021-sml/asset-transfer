@@ -3095,6 +3095,14 @@ function renderAuctionLive(root){
         <input type="text" id="offSaleAssetSearch" placeholder="ค้นหารหัส/ชื่อทรัพย์สิน...">
         <div id="offSaleAssetSearchResults" style="font-size:13px;margin:4px 0;"></div>
         <div id="offSaleSelectedAsset" style="font-size:13px;color:var(--muted);margin:4px 0;"></div>
+        <div style="margin:4px 0;"><a href="javascript:void(0)" id="offSaleManualToggle" style="font-size:13px;">➕ หรือเพิ่มรายการใหม่ที่ไม่มีในทะเบียนทรัพย์สิน</a></div>
+        <div id="offSaleManualBox" style="display:none;background:var(--bg-soft,#f7f9fc);padding:8px;border-radius:6px;margin-bottom:8px;">
+          <div class="row">
+            <div><label>รหัสทรัพย์สิน *</label><input type="text" id="offSaleManualId" placeholder="เช่น โต๊ะกระจกเล็ก-01"></div>
+            <div><label>ชื่อทรัพย์สิน *</label><input type="text" id="offSaleManualName" placeholder="ชื่อทรัพย์สิน"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btnOffSaleManualUse" style="margin-top:6px;">ใช้รายการนี้</button>
+        </div>
         <div class="row">
           <div><label>ชื่อผู้ซื้อ *</label><input type="text" id="offSaleBuyer" placeholder="ชื่อผู้ซื้อ"></div>
           <div><label>ราคาขาย *</label><input type="text" inputmode="decimal" id="offSalePrice" placeholder="0.00"></div>
@@ -3438,6 +3446,29 @@ function renderAuctionLive(root){
             });
           });
         }, 250);
+      };
+
+      // "เพิ่มรายการใหม่ที่ไม่มีในทะเบียนทรัพย์สิน" — สำหรับรายการที่ไม่เคยมีทะเบียนและไม่เคยมีในใบประมูลเลย (ค้นหา
+      // ด้านบนไม่เจอแน่นอน) ให้ Admin กรอกรหัส+ชื่อเองได้ตรงๆ แล้วใช้เป็นรายการที่เลือกไว้เหมือนผลค้นหาปกติ — backend
+      // adminRecordOffSystemSale_ รองรับรายการไม่มีทะเบียนอยู่แล้ว (ดู getOffSystemSaleCandidates_)
+      const manualBox = document.getElementById('offSaleManualBox');
+      document.getElementById('offSaleManualToggle').onclick = function(){
+        manualBox.style.display = manualBox.style.display === 'none' ? '' : 'none';
+      };
+      document.getElementById('btnOffSaleManualUse').onclick = function(){
+        const manualId = document.getElementById('offSaleManualId').value.trim();
+        const manualName = document.getElementById('offSaleManualName').value.trim();
+        if(!manualId){ toast('กรุณาระบุรหัสทรัพย์สิน','err'); return; }
+        if(!manualName){ toast('กรุณาระบุชื่อทรัพย์สิน','err'); return; }
+        offSaleSelectedAssetId = manualId;
+        offSaleSearchResults = offSaleSearchResults.filter(x=>x.AssetID!==manualId);
+        offSaleSearchResults.push({ AssetID: manualId, AssetName: manualName, HasAssetRecord: false });
+        document.getElementById('offSaleAssetSearch').value = manualId+' — '+manualName;
+        document.getElementById('offSaleAssetSearchResults').innerHTML = '';
+        document.getElementById('offSaleSelectedAsset').textContent = 'เลือกแล้ว (รายการใหม่ ไม่มีทะเบียน): '+manualId;
+        document.getElementById('offSaleManualId').value = '';
+        document.getElementById('offSaleManualName').value = '';
+        manualBox.style.display = 'none';
       };
 
       document.getElementById('btnSaveOffSystemSale').onclick = function(){
