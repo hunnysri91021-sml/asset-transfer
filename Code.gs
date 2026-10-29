@@ -329,6 +329,9 @@ function doPost(e) {
       case 'heartbeat':
         result = heartbeat_(body);
         break;
+      case 'logout':
+        result = logout_(body);
+        break;
       case 'adminGetOnlineUsers':
         result = adminGetOnlineUsers_(body);
         break;
@@ -1211,15 +1214,23 @@ function normalizeRole_(raw) {
 }
 
 // เข้าสู่ระบบด้วยชื่อผู้ใช้ + รหัสผ่านที่ Admin ตั้งไว้ในชีต Users เท่านั้น
+// จำกัด 1 ผู้ใช้ต่อ 1 อุปกรณ์ — ดู checkSingleDeviceLogin_/heartbeat_ ด้านล่าง: ใช้ CacheService key เดียวกับที่
+// heartbeat_ ใช้ปักหมุด "ออนไลน์" อยู่แล้ว (ONLINE_USER_CACHE_PREFIX) เก็บ deviceId ของอุปกรณ์ที่ถืออยู่แทนค่า '1'
 function login_(body) {
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
+  const deviceId = String(body.deviceId || '').trim();
   if (!username || !password) return { ok: false, error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' };
 
   const { values, idx } = getUsersRowsCached_();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][idx.Username]) === username && String(values[i][idx.Password]) === password) {
       const role = normalizeRole_(values[i][idx.Role]);
+      const deviceCheck = claimSingleDeviceSlot_(username, deviceId);
+      if (!deviceCheck.ok) {
+        logActivity_('', 'LOGIN_BLOCKED_DEVICE', username, 'ปฏิเสธเข้าสู่ระบบซ้ำ มีอุปกรณ์อื่นใช้งานบัญชีนี้อยู่');
+        return deviceCheck;
+      }
       logActivity_('', 'LOGIN', username, 'เข้าสู่ระบบสำเร็จ (' + role + ')');
       return { ok: true, data: {
         username,
@@ -1234,6 +1245,18 @@ function login_(body) {
   // บันทึกเฉพาะชื่อผู้ใช้ที่พยายาม ไม่บันทึกรหัสผ่านที่กรอกผิด
   logActivity_('', 'LOGIN_FAILED', username, 'เข้าสู่ระบบไม่สำเร็จ (ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง)');
   return { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' };
+}
+
+// ออกจากระบบ — ปล่อย slot อุปกรณ์ (ดู claimSingleDeviceSlot_) ทันทีแทนที่จะรอให้หมดอายุเอง (2 นาที) เพื่อให้ผู้ใช้ที่
+// ตั้งใจกด "ออกจากระบบ" แล้วไปล็อกอินที่อุปกรณ์อื่นทันทีทำได้เลยโดยไม่ต้องรอ ไม่ใช่ critical operation จึงไม่ error
+// ทั้งก้อนถ้าแคชใช้ไม่ได้ — แค่ไม่ได้ปล่อย slot ให้ ผู้ใช้ก็ยัง login อุปกรณ์เดิมได้ตามปกติอยู่ดี
+function logout_(body) {
+  const user = getRequestingUser_(body.password);
+  if (user) {
+    try { CacheService.getScriptCache().remove(ONLINE_USER_CACHE_PREFIX + user.username); } catch (err) { /* ไม่ critical */ }
+    logActivity_('', 'LOGOUT', user.username, 'ออกจากระบบ');
+  }
+  return { ok: true };
 }
 
 function parseDepartments_(v) {
@@ -1281,11 +1304,38 @@ function getRequestingUser_(pw) {
 const ONLINE_USER_CACHE_PREFIX = 'online_';
 const ONLINE_USER_CACHE_TTL_SEC = 120; // ถือว่า "ออนไลน์" ถ้ามี heartbeat ภายใน 2 นาทีล่าสุด
 
+// จำกัด 1 ผู้ใช้ (username) ต่อ 1 อุปกรณ์ในเวลาเดียวกัน — ใช้ค่าเดียวกับหมุด "ออนไลน์" ของ heartbeat_ (ประหยัดไม่ต้อง
+// เก็บคีย์แยก): เดิมค่าที่ put ไว้คือ '1' เฉยๆ ตอนนี้เปลี่ยนเป็น deviceId ของอุปกรณ์ที่ถือ slot อยู่แทน
+// - ยังไม่มีใครถือ slot อยู่ (ไม่มีหมุด/หมดอายุไปแล้วเพราะไม่ส่ง heartbeat เกิน 2 นาที) → อนุญาต claim ได้เสมอ
+// - อุปกรณ์เดิม (deviceId ตรงกัน) login ซ้ำ เช่น รีเฟรชหน้า/ปิดเปิดเบราว์เซอร์ใหม่ → อนุญาตตามปกติ
+// - อุปกรณ์อื่นที่ยังออนไลน์อยู่ถือ slot ไว้ → ปฏิเสธ ไม่เตะผู้ใช้เดิมออก (ตามที่ผู้ใช้ต้องการ "แจ้งเตือนว่ามีคนใช้งานอยู่")
+// - ไม่ได้ส่ง deviceId มาเลย (ไคลเอนต์เก่า/เบราว์เซอร์ที่บล็อก localStorage) → ยังอนุญาตให้เข้าได้ตามเดิม ไม่บังคับ
+//   ฟีเจอร์นี้กับไคลเอนต์ที่ไม่รองรับ เพื่อไม่ให้ login ใช้งานไม่ได้เลยในกรณีนั้น
+function claimSingleDeviceSlot_(username, deviceId) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const activeDevice = cache.get(ONLINE_USER_CACHE_PREFIX + username);
+    if (deviceId && activeDevice && activeDevice !== deviceId) {
+      return { ok: false, error: 'บัญชีนี้กำลังถูกใช้งานอยู่ที่อุปกรณ์อื่น กรุณาออกจากระบบที่อุปกรณ์เดิมก่อน' };
+    }
+    cache.put(ONLINE_USER_CACHE_PREFIX + username, deviceId || '1', ONLINE_USER_CACHE_TTL_SEC);
+  } catch (err) { /* แคชใช้ไม่ได้ก็ยังให้ล็อกอินได้ตามปกติ ไม่ critical ต่อการเข้าสู่ระบบ */ }
+  return { ok: true };
+}
+
 function heartbeat_(body) {
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  const deviceId = String(body.deviceId || '').trim();
   try {
-    CacheService.getScriptCache().put(ONLINE_USER_CACHE_PREFIX + user.username, '1', ONLINE_USER_CACHE_TTL_SEC);
+    const cache = CacheService.getScriptCache();
+    const activeDevice = cache.get(ONLINE_USER_CACHE_PREFIX + user.username);
+    // มีอุปกรณ์อื่นเข้ามาแย่ง slot ไปแล้ว (เช่น อุปกรณ์นี้หยุดส่ง heartbeat นานเกิน 2 นาทีจนอุปกรณ์อื่น login แทนได้)
+    // แจ้งให้ frontend บังคับออกจากระบบของอุปกรณ์นี้แทนที่จะยิง heartbeat ทับ slot คืนไปเรื่อยๆ
+    if (deviceId && activeDevice && activeDevice !== deviceId) {
+      return { ok: false, deviceTakenOver: true, error: 'บัญชีนี้ถูกใช้งานที่อุปกรณ์อื่นแล้ว' };
+    }
+    cache.put(ONLINE_USER_CACHE_PREFIX + user.username, deviceId || '1', ONLINE_USER_CACHE_TTL_SEC);
   } catch (err) { /* ปักหมุดออนไลน์ไม่สำเร็จก็ไม่ critical ต่อการใช้งานจริง */ }
   return { ok: true };
 }

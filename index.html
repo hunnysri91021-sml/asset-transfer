@@ -525,6 +525,21 @@ window.closeImageLightbox = function(){
 /* ================= AUTH (login gate: User / Admin, shared password) ================= */
 const AUTH_SESSION_KEY = 'assetTransferAuthSession';
 
+// รหัสประจำเบราว์เซอร์นี้ — ใช้จำกัด 1 ผู้ใช้ต่อ 1 อุปกรณ์ (ดู claimSingleDeviceSlot_ ใน Code.gs) เก็บถาวรใน
+// localStorage (ไม่ใช่ sessionStorage เหมือน AUTH_SESSION_KEY) จึงอยู่ข้ามรอบ login/logout/ปิดเปิดเบราว์เซอร์ใหม่
+// เพื่อให้อุปกรณ์เดียวกันล็อกอินซ้ำได้โดยไม่ถูกระบบนับว่าเป็น "อุปกรณ์อื่น" ของตัวเอง
+const DEVICE_ID_KEY = 'assetTransferDeviceId';
+function getDeviceId(){
+  try{
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if(!id){
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('dev-'+Date.now()+'-'+Math.random().toString(36).slice(2));
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  }catch(e){ return ''; }
+}
+
 function checkAuth(){
   const saved = sessionStorage.getItem(AUTH_SESSION_KEY);
   if(!saved) return false;
@@ -572,7 +587,7 @@ function renderLogin(){
     if(!username || !pw){ toast('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน','err'); return; }
     const btn = document.getElementById('btnLogin');
     btn.disabled = true;
-    apiPost({ action:'login', username, password: pw }).then(res=>{
+    apiPost({ action:'login', username, password: pw, deviceId: getDeviceId() }).then(res=>{
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'เข้าสู่ระบบไม่สำเร็จ','err'); return; }
       STATE.adminPassword = pw;
@@ -589,8 +604,11 @@ function renderLogin(){
   }
 }
 
-function logout(){
+// skipDeviceRelease: true เมื่อถูกบังคับออกจากระบบเพราะอุปกรณ์อื่นแย่ง slot ไปแล้ว (ดู sendHeartbeat) — ห้ามยิง
+// action 'logout' ไปปล่อย slot ตรงนั้น เพราะ slot นั้นเป็นของอุปกรณ์อื่นไปแล้ว ไม่ใช่ของอุปกรณ์นี้อีกต่อไป
+function logout(skipDeviceRelease){
   stopHeartbeat();
+  if(STATE.adminPassword && !skipDeviceRelease){ apiPost({ action:'logout', password: STATE.adminPassword }); } // ปล่อย slot อุปกรณ์ทันที ไม่ต้องรอผล
   sessionStorage.removeItem(AUTH_SESSION_KEY);
   STATE.adminPassword = null;
   STATE.role = null;
@@ -650,7 +668,14 @@ function stopHeartbeat(){
   if(heartbeatIntervalId){ clearInterval(heartbeatIntervalId); heartbeatIntervalId = null; }
 }
 function sendHeartbeat(){
-  apiPost({ action:'heartbeat', password: STATE.adminPassword }).then(res=>{
+  apiPost({ action:'heartbeat', password: STATE.adminPassword, deviceId: getDeviceId() }).then(res=>{
+    // อุปกรณ์อื่นแย่ง slot ไปแล้ว (ดู claimSingleDeviceSlot_ ใน Code.gs) — บังคับออกจากระบบของอุปกรณ์นี้พร้อมแจ้งเตือน
+    // แทนที่จะยิง heartbeat ทับ slot คืนไปเรื่อยๆ
+    if(res && res.deviceTakenOver){
+      toast('บัญชีนี้ถูกใช้งานที่อุปกรณ์อื่นแล้ว ระบบจะออกจากระบบอัตโนมัติ','err');
+      logout(true);
+      return;
+    }
     setOnlineStatus(!!(res && res.ok));
   });
 }
@@ -742,7 +767,7 @@ document.getElementById('mainNav').addEventListener('click', (e)=>{
     render();
   }
 });
-document.getElementById('btnLogout').onclick = logout;
+document.getElementById('btnLogout').onclick = ()=> logout();
 
 function render(){
   showAppChrome();
@@ -1587,7 +1612,7 @@ function renderAssetPublicView(root){
         btn.disabled = true;
         statusEl.style.color = 'var(--muted)';
         statusEl.textContent = 'กำลังเข้าสู่ระบบ...';
-        apiPost({ action:'login', username, password: pw }).then(lres=>{
+        apiPost({ action:'login', username, password: pw, deviceId: getDeviceId() }).then(lres=>{
           btn.disabled = false;
           if(!lres.ok){ statusEl.style.color = 'var(--red)'; statusEl.textContent = lres.error||'เข้าสู่ระบบไม่สำเร็จ'; return; }
           STATE.adminPassword = pw;
