@@ -62,7 +62,7 @@ const HEADERS = {
   // (ทั้ง 2 ฝ่ายอนุมัติครบ หรือถูกปฏิเสธ)
   TRANSFERS: ['TransferID', 'RunningNo', 'CreatedAt', 'Subject', 'SubjectOther', 'Purpose', 'FromDept', 'FromDeptCode', 'ToDept', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'ToSignEmail', 'ToApproverName', 'ToApproverEmail', 'ToApprovalToken', 'ToApproverComment', 'FromDecision', 'FromDecidedAt', 'ToDecision', 'ToDecidedAt', 'FromSignEmail'],
   ITEMS: ['TransferID', 'LineNo', 'AssetID', 'AssetName', 'FromDeptName', 'FromSignName', 'ToDeptName', 'ToSignName', 'Remark', 'ImageURL'],
-  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt'],
+  SALES: ['SaleID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Buyer', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt', 'Channel', 'SaleConfirmedAt', 'OffSystemRound'],
   SALE_ITEMS: ['SaleID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'AuctionPrice', 'SalePrice', 'Remark', 'ImageURL', 'Voided'],
   WRITEOFFS: ['WriteOffID', 'RunningNo', 'CreatedAt', 'FromDept', 'FromDeptCode', 'Reason', 'Remark', 'Status', 'ApproverName', 'ApproverEmail', 'ApprovalToken', 'ApprovedAt', 'ApproverComment', 'CreatedBy', 'CreatedByEmail', 'NotifiedAt'],
   WRITEOFF_ITEMS: ['WriteOffID', 'LineNo', 'AssetID', 'AssetName', 'ScrapPrice', 'Remark', 'ImageURL', 'Voided'],
@@ -379,6 +379,9 @@ function doPost(e) {
         break;
       case 'adminCancelAuctionWinner':
         result = adminCancelAuctionWinner_(body);
+        break;
+      case 'adminRecordOffSystemSale':
+        result = adminRecordOffSystemSale_(body);
         break;
       case 'adminStartNewAuctionRound':
         result = adminStartNewAuctionRound_(body);
@@ -2591,10 +2594,138 @@ function buildAuctionWinnersList_(roundFilter) {
         // มีทะเบียน = รหัสสินค้านี้มีแถวตรงกันจริงในชีต Assets (ทรัพย์สินที่ลงทะเบียนไว้ในระบบ)
         // ไม่มีทะเบียน = รายการนอกฐาน/off-listing ที่ Admin คีย์บันทึกเข้ามาเองตอนกรอกใบประมูล ไม่มีทรัพย์สินคู่กันในระบบ
         // (สถานะ Confirm/CC ของรายการเหล่านี้อ่านจาก offListingById แทน ดู getAuctionOffListingMap_)
-        HasAssetRecord: !!assetById[assetId]
+        HasAssetRecord: !!assetById[assetId],
+        OffSystemSale: false
       };
     });
-  return winners.sort((a, b) => (b.Round - a.Round) || String(a.AssetID).localeCompare(String(b.AssetID)));
+
+  // รวมรายการ "ขายนอกระบบ" (ดู adminRecordOffSystemSale_) เข้ากับผลประมูลจริงด้วย — ทรัพย์สินตัดชำรุด/รอขายที่ขายได้
+  // นอกระบบ (ไม่ผ่านการประมูลในแอปเลย) แต่ Admin ต้องการให้ไปรวมยอดเงิน/แสดงอยู่ในหน้าประกาศผลของรอบที่เลือกด้วย
+  const offSystemSales = getOffSystemAuctionSales_(assetById).filter(w => roundFilter == null || w.Round === roundFilter);
+  const winnersAll = winners.concat(offSystemSales);
+  return winnersAll.sort((a, b) => (b.Round - a.Round) || String(a.AssetID).localeCompare(String(b.AssetID)));
+}
+
+// ทรัพย์สินที่ Admin บันทึก "ขายนอกระบบ" ไว้ (ผ่านใบขายออกที่สร้าง+อนุมัติอัตโนมัติ Channel='นอกระบบ' — ดู
+// adminRecordOffSystemSale_) แปลงเป็นแถวแบบเดียวกับผลประมูลจริง เพื่อเอาไปรวมในหน้า/อีเมล "ประกาศผล" ได้
+// OffSystemSale:true ใช้แยกฝั่ง frontend ไม่ให้มีปุ่ม Confirm/CC/ยกเลิก Confirm (ขายเสร็จสมบูรณ์แล้วผ่านใบขายออก
+// ไม่ได้ผูกกับกลไก AuctionSold ของการประมูลจริง)
+function getOffSystemAuctionSales_(assetById) {
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues.shift());
+  if (saleIdx.Channel === undefined || saleIdx.OffSystemRound === undefined) return [];
+  const offSales = {};
+  saleValues.forEach(r => {
+    if (r[saleIdx.Status] === STATUS.APPROVED && String(r[saleIdx.Channel]) === 'นอกระบบ') {
+      offSales[String(r[saleIdx.SaleID])] = {
+        Buyer: r[saleIdx.Buyer] || '',
+        Round: parseInt(r[saleIdx.OffSystemRound], 10) || 1
+      };
+    }
+  });
+  if (!Object.keys(offSales).length) return [];
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  const rows = [];
+  itemValues.forEach(r => {
+    const saleId = String(r[itemIdx.SaleID]);
+    const sale = offSales[saleId];
+    if (!sale) return;
+    const assetId = String(r[itemIdx.AssetID]);
+    const asset = assetById[assetId] || {};
+    const salePrice = Number(r[itemIdx.SalePrice]) || 0;
+    const referencePrice = computeEffectiveReferencePrice_(asset.AuctionReferencePrice, asset.BookValue);
+    rows.push({
+      AssetID: assetId, Round: sale.Round, AssetName: r[itemIdx.AssetName] || asset.AssetName || '',
+      MaxPrice: salePrice, BidderName: sale.Buyer, BidCount: 0,
+      PurchasePrice: asset.PurchasePrice || '', ReferencePrice: referencePrice, BookValue: asset.BookValue || '',
+      BelowReferencePrice: false,
+      Custodian: asset.Custodian || '', Location: asset.Location || '',
+      DisplayImage: asset.DisplayImage || r[itemIdx.ImageURL] || '',
+      Sold: true,
+      HasAssetRecord: !!assetById[assetId],
+      OffSystemSale: true
+    });
+  });
+  return rows;
+}
+
+// บันทึกขายนอกระบบ — สำหรับทรัพย์สินตัดชำรุด/รอขายใดๆ (ไม่จำกัดว่าเคยส่งประมูลหรือไม่) ที่ขายได้จริงนอกระบบ
+// (เช่น เจรจาซื้อขายโดยตรง ไม่ผ่านการประมูลในแอป) Admin กรอกแค่ผู้ซื้อ+ราคาขายแล้วบันทึกได้เลย โดยสร้างใบขายออก
+// (Sales/SaleItems) ที่อนุมัติอัตโนมัติทันทีเบื้องหลัง (Channel='นอกระบบ') เพื่อให้ AssetStatus/Tag/คิวที่ค้างอยู่ของ
+// ทรัพย์สินนี้ถูกต้องตรงกันทั้งระบบเหมือนใบขายออกปกติทุกประการ (ดู CLAUDE.md: AssetStatus คำนวณสดจากใบขายออกที่
+// อนุมัติแล้วเท่านั้น) แล้วค่อยให้ buildAuctionWinnersList_ ดึงไปรวมแสดง/รวมยอดในหน้า "ประกาศผล" ของรอบที่เลือกอีกที
+function adminRecordOffSystemSale_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  const buyer = String(body.buyer || '').trim();
+  const price = parseFloat(body.price);
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  if (!buyer) return { ok: false, error: 'กรุณาระบุชื่อผู้ซื้อ' };
+  if (isNaN(price) || price < 0) return { ok: false, error: 'กรุณาระบุราคาขายที่ถูกต้อง' };
+
+  const assetsRaw = getAssetsRaw_();
+  const asset = assetsRaw.find(a => String(a.AssetID) === assetId);
+  if (!asset) return { ok: false, error: 'ไม่พบทรัพย์สินรหัส ' + assetId };
+  const disposed = getDisposedAssetStatus_();
+  if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถบันทึกขายนอกระบบซ้ำได้' };
+
+  const round = parseInt(body.round, 10) || getAuctionCurrentRound_();
+  const fromDeptCode = getCodeForDept_(asset.Department) || 'GEN';
+  const dept = getDeptByName_(asset.Department);
+  const saleId = Utilities.getUuid();
+  const now = new Date();
+
+  const runningNo = withLock_(() => {
+    const rn = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
+    const sSheet = getSS_().getSheetByName(SHEETS.SALES);
+    const sValues = sSheet.getDataRange().getValues();
+    const sIdx = indexMap_(sValues[0]);
+    if (sIdx.Channel === undefined || sIdx.OffSystemRound === undefined) {
+      throw new Error('ไม่พบคอลัมน์ Channel/OffSystemRound ในชีต Sales กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน');
+    }
+    const newRow = sValues[0].map(() => '');
+    newRow[sIdx.SaleID] = saleId;
+    newRow[sIdx.RunningNo] = rn;
+    newRow[sIdx.CreatedAt] = now;
+    newRow[sIdx.FromDept] = asset.Department || '';
+    newRow[sIdx.FromDeptCode] = fromDeptCode;
+    newRow[sIdx.Buyer] = buyer;
+    newRow[sIdx.Remark] = body.remark || 'บันทึกขายนอกระบบ';
+    newRow[sIdx.Status] = STATUS.APPROVED;
+    newRow[sIdx.ApprovedAt] = now;
+    newRow[sIdx.ApproverComment] = 'บันทึกขายนอกระบบโดย Admin';
+    newRow[sIdx.CreatedBy] = 'admin';
+    newRow[sIdx.Channel] = 'นอกระบบ';
+    newRow[sIdx.OffSystemRound] = round;
+    sSheet.appendRow(newRow);
+    return rn;
+  });
+
+  const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const itemRow = iHeaders.map(() => '');
+  itemRow[iIdx.SaleID] = saleId;
+  itemRow[iIdx.LineNo] = 1;
+  itemRow[iIdx.AssetID] = assetId;
+  itemRow[iIdx.AssetName] = asset.AssetName || '';
+  itemRow[iIdx.ScrapPrice] = asset.ScrapPrice || 0;
+  itemRow[iIdx.SalePrice] = price;
+  itemRow[iIdx.Remark] = body.remark || '';
+  itemRow[iIdx.ImageURL] = imagesToCell_(asset.DisplayImage ? [asset.DisplayImage] : []);
+  iSheet.getRange(iSheet.getLastRow() + 1, 1, 1, iHeaders.length).setValues([itemRow]);
+
+  purgeAssetFromAllQueues_([assetId]);
+  setAssetsTag_([assetId], 'ขาย');
+  invalidateDisposedAssetStatusCache_();
+  exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
+  logActivity_(saleId, 'ADMIN_RECORD_OFFSYSTEM_SALE', 'admin', 'บันทึกขายนอกระบบ ' + assetId + ' ผู้ซื้อ ' + buyer + ' ราคา ' + price + ' (รอบที่ ' + round + ')');
+
+  return { ok: true, data: { saleId: saleId, runningNo: runningNo, assetId: assetId, round: round } };
 }
 
 // รวมใบเสนอราคาทุกใบที่ "ยังมีผล" อยู่ (BidID + AssetID + ราคา + ชื่อผู้เสนอ + เวลาที่ยื่น + รอบ) — ไม่รวมรายการที่ถูก Admin
@@ -2775,7 +2906,7 @@ function sendAuctionWinnersEmail_(body) {
   const message = String(body.message || '').trim();
   const belowReferenceLabel = 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่';
   const isBelowReference = w => Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
-  const registeredLabel = w => w.HasAssetRecord ? 'มีทะเบียน' : 'ไม่มีทะเบียน';
+  const registeredLabel = w => w.OffSystemSale ? 'ขายนอกระบบ' : (w.HasAssetRecord ? 'มีทะเบียน' : 'ไม่มีทะเบียน');
   const roundLabel = roundFilter != null ? ('รอบที่ ' + roundFilter) : 'ทุกรอบ';
   // รวมจำนวนเงินของ "ราคาประมูลได้" (ยอดที่ขายได้จริงต่อรายการ) ทุกรายการในผลที่ส่ง — ใช้ทั้งในตัวเลขหัวข้อ, แถวรวม
   // ท้ายตารางของอีเมล และหน้า "ประกาศผล" ในแอป (ไม่รวมราคากลาง/มูลค่าทางบัญชี เพราะนั่นไม่ใช่เงินที่เก็บได้จริง)
@@ -2794,7 +2925,7 @@ function sendAuctionWinnersEmail_(body) {
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.ReferencePrice) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.BookValue) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(w.MaxPrice) + '</td>' +
-    '<td style="border:1px solid #ddd;padding:6px;color:#c0392b;font-weight:600;">' + (isBelowReference(w) ? escapeHtml_(belowReferenceLabel) : '') + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;color:' + (w.OffSystemSale ? '#1a7d3c' : '#c0392b') + ';font-weight:600;">' + (w.OffSystemSale ? 'ขายนอกระบบ' : (isBelowReference(w) ? escapeHtml_(belowReferenceLabel) : '')) + '</td>' +
     '</tr>'
   )).join('');
   const totalRowHtml =
@@ -2823,7 +2954,7 @@ function sendAuctionWinnersEmail_(body) {
     const xlsxBlob = buildXlsxBlob_('ประกาศผลผู้ประมูลได้', [{
       name: 'ประกาศผล',
       headers: ['รหัส', 'รายการ', 'รอบ', 'ประเภท', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
-      rows: winners.map(w => [w.AssetID, w.AssetName, w.Round, registeredLabel(w), w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
+      rows: winners.map(w => [w.AssetID, w.AssetName, w.Round, registeredLabel(w), w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, w.OffSystemSale ? 'ขายนอกระบบ' : (isBelowReference(w) ? belowReferenceLabel : '')])
         .concat([['', '', '', '', '', '', 'รวมจำนวนเงิน (ราคาประมูลได้)', '', '', '', totalMaxPrice, '']])
     }]);
 

@@ -3062,6 +3062,26 @@ function renderAuctionLive(root){
         <div id="winnersTableHost"><div class="empty">กำลังโหลด...</div></div>
       </div>
 
+      ${isAdmin ? `
+      <div class="card no-print">
+        <h2>➕ บันทึกขายนอกระบบ</h2>
+        <p style="color:var(--muted);font-size:13px;">สำหรับทรัพย์สินตัดชำรุด/รอขายใดๆ ที่ขายได้จริงนอกระบบ (ไม่ผ่านการประมูลในแอป) — บันทึกแล้วจะไปรวมแสดง/รวมยอดเงินในตารางและอีเมลประกาศผลของรอบที่เลือกด้วย (ระบบจะสร้างใบขายออกและอัปเดตสถานะทรัพย์สินให้อัตโนมัติ)</p>
+        <label>ค้นหาทรัพย์สิน *</label>
+        <input type="text" id="offSaleAssetSearch" placeholder="ค้นหารหัส/ชื่อทรัพย์สิน...">
+        <div id="offSaleAssetSearchResults" style="font-size:13px;margin:4px 0;"></div>
+        <div id="offSaleSelectedAsset" style="font-size:13px;color:var(--muted);margin:4px 0;"></div>
+        <div class="row">
+          <div><label>ชื่อผู้ซื้อ *</label><input type="text" id="offSaleBuyer" placeholder="ชื่อผู้ซื้อ"></div>
+          <div><label>ราคาขาย *</label><input type="text" inputmode="decimal" id="offSalePrice" placeholder="0.00"></div>
+        </div>
+        <label>รอบที่</label>
+        <select id="offSaleRound" style="max-width:200px;"></select>
+        <label style="margin-top:8px;">หมายเหตุ</label>
+        <input type="text" id="offSaleRemark" placeholder="(ถ้ามี)">
+        <button class="btn btn-primary btn-sm" id="btnSaveOffSystemSale" style="margin-top:10px;">บันทึกขายนอกระบบ</button>
+      </div>
+      ` : ''}
+
       ${canManage ? `
       <div class="card no-print">
         <h2>📧 ส่งประกาศผลทางอีเมล</h2>
@@ -3087,6 +3107,12 @@ function renderAuctionLive(root){
         sel.value = prevValue || '';
         const banner = document.getElementById('winnersRoundBanner');
         if(banner) banner.textContent = '🔄 รอบการประมูลปัจจุบัน: รอบที่ '+currentRound+' — สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ';
+        const offSaleRoundSel = document.getElementById('offSaleRound');
+        if(offSaleRoundSel){
+          let roundOpts = `<option value="${currentRound}">รอบที่ ${currentRound} (ปัจจุบัน)</option>`;
+          for(let r = currentRound - 1; r >= 1; r--){ roundOpts += `<option value="${r}">รอบที่ ${r}</option>`; }
+          offSaleRoundSel.innerHTML = roundOpts;
+        }
       });
     }
 
@@ -3147,13 +3173,13 @@ function renderAuctionLive(root){
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
       // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว มีผู้ประมูลได้ และเป็นผลของรอบปัจจุบันเท่านั้น
       // — รอบเก่าที่ปิดไปแล้วดูได้อย่างเดียว แก้ไข/ยืนยันซ้ำไม่ได้)
-      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && w.Round===currentRound).map(w=>w.AssetID);
+      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && w.Round===currentRound && !w.OffSystemSale).map(w=>w.AssetID);
       const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
       // Admin ปิดสวิตช์ "แสดงราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชี" ไว้สำหรับสาธารณะ — ซ่อนคอลัมน์ราคากลางไปเลย (ไม่ใช่แค่ค่าว่าง)
       const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
       let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รูป</th><th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th>${showRefCol ? '<th>ราคากลาง</th>' : ''}<th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
-        const actionable = !w.Sold && w.BidderName && w.Round===currentRound;
+        const actionable = !w.Sold && w.BidderName && w.Round===currentRound && !w.OffSystemSale;
         const checked = selectedWinnerAssetIds.indexOf(w.AssetID)!==-1 ? 'checked' : '';
         html += `<tr>
           ${isAdmin ? `<td class="no-print">${actionable ? `<input type="checkbox" class="winnerRowChk" data-id="${esc(w.AssetID)}" ${checked}>` : ''}</td>` : ''}
@@ -3161,7 +3187,7 @@ function renderAuctionLive(root){
           <td><b>${esc(w.AssetID)}</b></td>
           <td>${esc(w.AssetName)}</td>
           <td style="text-align:center;">${w.Round===currentRound ? `<b>${w.Round}</b>` : w.Round}</td>
-          <td>${w.HasAssetRecord ? '<span class="badge badge-approved">มีทะเบียน</span>' : '<span class="badge badge-pending">ไม่มีทะเบียน</span>'}</td>
+          <td>${w.OffSystemSale ? '<span class="badge badge-pending">📝 ขายนอกระบบ</span>' : (w.HasAssetRecord ? '<span class="badge badge-approved">มีทะเบียน</span>' : '<span class="badge badge-pending">ไม่มีทะเบียน</span>')}</td>
           <td>${esc(w.Custodian||'-')}</td>
           <td>${esc(w.Location||'-')}</td>
           <td>${esc(w.BidderName||'-')}</td>
@@ -3169,12 +3195,15 @@ function renderAuctionLive(root){
           <td class="money"><b>${fmtMoney(w.MaxPrice)}</b></td>
           <td style="text-align:center;">${w.BidCount}</td>
           <td>${w.Sold ? '<span class="badge badge-approved">✅ ขายแล้ว</span>' : (w.BelowReferencePrice ? '<span class="badge badge-rejected">⚠ ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่</span>' : '')}</td>
-          ${isAdmin ? `<td class="no-print">${w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.Sold
-            ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
-            : (w.BidderName ? `
+          ${isAdmin ? `<td class="no-print">${w.OffSystemSale
+            ? `<button class="btn btn-secondary btn-sm winnerCancelOffSystemBtn" data-id="${esc(w.AssetID)}">🗑 ยกเลิก</button>`
+            : (w.Sold
+              // "ยกเลิก Confirm" เปิดให้กดได้ทุกรอบ (ไม่จำกัดแค่รอบปัจจุบัน) เผื่อพบว่ารายการของรอบที่ปิดไปแล้วบันทึกผิด
+              ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
+              : (w.Round!==currentRound ? '<span style="color:var(--muted);font-size:12px;">รอบปิดแล้ว</span>' : (w.BidderName ? `
             <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
             <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
-          ` : '-'))}</td>` : ''}
+          ` : '-')))}</td>` : ''}
         </tr>`;
       });
       // แถวรวมท้ายตาราง — รวมเฉพาะ "ราคาที่ประมูลได้" (ยอดเงินที่เก็บได้จริง) ไม่รวมราคากลาง/มูลค่าทางบัญชี
@@ -3193,6 +3222,9 @@ function renderAuctionLive(root){
         });
         host.querySelectorAll('.winnerUnconfirmBtn').forEach(btn=>{
           btn.onclick = ()=> unconfirmWinner(btn.dataset.id, btn);
+        });
+        host.querySelectorAll('.winnerCancelOffSystemBtn').forEach(btn=>{
+          btn.onclick = ()=> cancelOffSystemSale(btn.dataset.id, btn);
         });
         const selectAllEl = document.getElementById('winnersSelectAll');
         if(selectAllEl) selectAllEl.onchange = (e)=>{
@@ -3248,6 +3280,20 @@ function renderAuctionLive(root){
         if(btn) btn.disabled = false;
         if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
         toast('ยกเลิก Confirm ของ '+assetId+' สำเร็จ — กลับเป็นรอประมูล','ok');
+        loadWinners();
+      });
+    }
+
+    // ปุ่ม "ยกเลิก" ของรายการ "ขายนอกระบบ" — ยกเลิกใบขายออกที่สร้างไว้ตอนบันทึก (Voided) ทรัพย์สินกลับไปเป็น "ใช้งาน
+    // ปกติ" ให้แก้ไข/บันทึกขายนอกระบบใหม่ หรือดำเนินการอื่นได้อีกครั้ง — ใช้ action adminRestoreAsset เดียวกับปุ่ม
+    // "คืนสถานะใช้งาน" ที่หน้ารายการทรัพย์สิน เพราะโครงสร้างข้อมูลเหมือนกันทุกประการ (ใบขายออกที่อนุมัติแล้ว)
+    function cancelOffSystemSale(assetId, btn){
+      if(!confirm('ยืนยันยกเลิกรายการขายนอกระบบของ '+assetId+'? (ทรัพย์สินจะกลับไปเป็น "ใช้งานปกติ" ให้บันทึกขายนอกระบบใหม่ หรือดำเนินการอื่นได้)')) return;
+      if(btn) btn.disabled = true;
+      apiPost({ action:'adminRestoreAsset', password: STATE.adminPassword, assetId, destination:'active' }).then(res=>{
+        if(btn) btn.disabled = false;
+        if(!res.ok){ toast(res.error||'ยกเลิกไม่สำเร็จ','err'); return; }
+        toast('ยกเลิกรายการขายนอกระบบของ '+assetId+' สำเร็จ','ok');
         loadWinners();
       });
     }
@@ -3309,8 +3355,8 @@ function renderAuctionLive(root){
       const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
       const header = ['รหัสสินค้า','รายการ','รอบ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้', ...(showRefCol?['ราคากลาง']:[]), 'ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
       const dataRows = winners.map(w=>{
-        return [w.AssetID, w.AssetName, w.Round, w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน', w.Custodian||'', w.Location||'', w.BidderName||'', ...(showRefCol?[Number(w.ReferencePrice)||0]:[]), Number(w.MaxPrice)||0, w.BidCount,
-          w.BelowReferencePrice ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : ''];
+        return [w.AssetID, w.AssetName, w.Round, w.OffSystemSale?'ขายนอกระบบ':(w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน'), w.Custodian||'', w.Location||'', w.BidderName||'', ...(showRefCol?[Number(w.ReferencePrice)||0]:[]), Number(w.MaxPrice)||0, w.BidCount,
+          w.OffSystemSale ? 'ขายนอกระบบ' : (w.BelowReferencePrice ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : '')];
       });
       exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
     };
@@ -3331,6 +3377,63 @@ function renderAuctionLive(root){
         toast('ส่งอีเมลประกาศผล '+res.data.count+' รายการสำเร็จ รวมจำนวนเงิน '+fmtMoney(res.data.totalAmount)+' บาท (แนบไฟล์ Excel + PDF)','ok');
       });
     };
+
+    // "บันทึกขายนอกระบบ" — ทรัพย์สินตัดชำรุด/รอขายใดๆ ที่ขายได้จริงนอกระบบ ให้ Admin ค้นหา+เลือกทรัพย์สิน แล้วกรอก
+    // ผู้ซื้อ/ราคาขาย/รอบที่ให้ไปรวมแสดงด้วย — บันทึกสำเร็จแล้ว refresh ตารางผลประมูลทันที
+    if(isAdmin){
+      let offSaleSelectedAssetId = '';
+      let offSaleSearchResults = [];
+      let offSaleSearchDebounce;
+      document.getElementById('offSaleAssetSearch').oninput = function(){
+        const qq = this.value.trim();
+        offSaleSelectedAssetId = '';
+        clearTimeout(offSaleSearchDebounce);
+        if(!qq){ document.getElementById('offSaleAssetSearchResults').innerHTML=''; return; }
+        offSaleSearchDebounce = setTimeout(()=>{
+          apiGet({ action:'getAssetsFull', q: qq }).then(res=>{
+            if(!res.ok) return;
+            offSaleSearchResults = (res.data||[]).filter(a=>a.AssetStatus!=='Sold' && a.AssetStatus!=='WrittenOff').slice(0, 8);
+            const resHost = document.getElementById('offSaleAssetSearchResults');
+            resHost.innerHTML = offSaleSearchResults.length
+              ? offSaleSearchResults.map(a=>`<div class="pin-search-result" data-id="${esc(a.AssetID)}" style="cursor:pointer;padding:4px;border-bottom:1px solid var(--border);">${esc(a.AssetID)} — ${esc(a.AssetName)} (${esc(a.Department||'-')})</div>`).join('')
+              : '<div style="color:var(--muted);">ไม่พบทรัพย์สินที่ยังไม่ถูกขาย/ตัดชำรุด</div>';
+            resHost.querySelectorAll('.pin-search-result').forEach(el=>{
+              el.onclick = ()=>{
+                offSaleSelectedAssetId = el.dataset.id;
+                const a = offSaleSearchResults.find(x=>x.AssetID===offSaleSelectedAssetId);
+                document.getElementById('offSaleAssetSearch').value = a ? (a.AssetID+' — '+a.AssetName) : offSaleSelectedAssetId;
+                document.getElementById('offSaleSelectedAsset').textContent = 'เลือกแล้ว: '+offSaleSelectedAssetId;
+                resHost.innerHTML = '';
+              };
+            });
+          });
+        }, 250);
+      };
+
+      document.getElementById('btnSaveOffSystemSale').onclick = function(){
+        if(!offSaleSelectedAssetId){ toast('กรุณาค้นหาและเลือกทรัพย์สินก่อน','err'); return; }
+        const buyer = document.getElementById('offSaleBuyer').value.trim();
+        const price = document.getElementById('offSalePrice').value.trim();
+        const round = document.getElementById('offSaleRound').value;
+        const remark = document.getElementById('offSaleRemark').value.trim();
+        if(!buyer){ toast('กรุณาระบุชื่อผู้ซื้อ','err'); return; }
+        if(!price){ toast('กรุณาระบุราคาขาย','err'); return; }
+        const btn = document.getElementById('btnSaveOffSystemSale');
+        btn.disabled = true;
+        apiPost({ action:'adminRecordOffSystemSale', password: STATE.adminPassword, assetId: offSaleSelectedAssetId, buyer, price, round, remark }).then(res=>{
+          btn.disabled = false;
+          if(!res.ok){ toast(res.error||'บันทึกขายนอกระบบไม่สำเร็จ','err'); return; }
+          toast('บันทึกขายนอกระบบ '+res.data.assetId+' สำเร็จ (รอบที่ '+res.data.round+')','ok');
+          offSaleSelectedAssetId = '';
+          document.getElementById('offSaleAssetSearch').value = '';
+          document.getElementById('offSaleSelectedAsset').textContent = '';
+          document.getElementById('offSaleBuyer').value = '';
+          document.getElementById('offSalePrice').value = '';
+          document.getElementById('offSaleRemark').value = '';
+          loadWinners();
+        });
+      };
+    }
 
     loadRoundFilterOptions().then(loadWinners);
   }
