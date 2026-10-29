@@ -3141,7 +3141,8 @@ function renderAuctionLive(root){
         String(w.AssetName).toLowerCase().indexOf(qq)!==-1 ||
         String(w.BidderName).toLowerCase().indexOf(qq)!==-1
       ) && (!typeFilter || (typeFilter==='registered') === !!w.HasAssetRecord));
-      document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ';
+      const totalMaxPrice = rows.reduce((sum,w)=> sum + (Number(w.MaxPrice)||0), 0);
+      document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ — รวมจำนวนเงิน (ราคาประมูลได้) '+fmtMoney(totalMaxPrice)+' บาท';
       const host = document.getElementById('winnersTableHost');
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
       // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว มีผู้ประมูลได้ และเป็นผลของรอบปัจจุบันเท่านั้น
@@ -3176,6 +3177,10 @@ function renderAuctionLive(root){
           ` : '-'))}</td>` : ''}
         </tr>`;
       });
+      // แถวรวมท้ายตาราง — รวมเฉพาะ "ราคาที่ประมูลได้" (ยอดเงินที่เก็บได้จริง) ไม่รวมราคากลาง/มูลค่าทางบัญชี
+      const preTotalColspan = 8 + (isAdmin?1:0) + (showRefCol?1:0); // รูป,รหัส,รายการ,รอบ,ประเภท,ผู้ดูแล,สถานที่,ผู้ประมูลได้ (+checkbox +ราคากลาง ถ้ามี)
+      const postTotalColspan = 2 + (isAdmin?1:0); // จำนวนผู้เสนอราคา,สถานะ (+จัดการ ถ้ามี)
+      html += `<tr style="font-weight:700;background:#f7f9fc;"><td colspan="${preTotalColspan}" style="text-align:right;">รวมจำนวนเงิน (ราคาประมูลได้)</td><td class="money">${fmtMoney(totalMaxPrice)}</td><td colspan="${postTotalColspan}"></td></tr>`;
       html += '</table></div>';
       host.innerHTML = html;
 
@@ -3323,7 +3328,7 @@ function renderAuctionLive(root){
       apiPost({ action:'sendAuctionWinnersEmail', password: STATE.adminPassword, recipients, message, round }).then(res=>{
         sendBtn.disabled = false;
         if(!res.ok){ toast(res.error||'ส่งอีเมลไม่สำเร็จ','err'); return; }
-        toast('ส่งอีเมลประกาศผล '+res.data.count+' รายการสำเร็จ','ok');
+        toast('ส่งอีเมลประกาศผล '+res.data.count+' รายการสำเร็จ รวมจำนวนเงิน '+fmtMoney(res.data.totalAmount)+' บาท (แนบไฟล์ Excel + PDF)','ok');
       });
     };
 
