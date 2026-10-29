@@ -2842,7 +2842,7 @@ function renderAuctionLive(root){
     const rows = [];
     bidDocs.forEach(d=>{
       (d.Items||[]).forEach(it=>{
-        rows.push({ BidID: d.BidID, LineNo: it.LineNo, CreatedAt: d.CreatedAt, BidderName: d.BidderName, AssetID: it.AssetID, AssetName: it.AssetName, Price: it.Price });
+        rows.push({ BidID: d.BidID, LineNo: it.LineNo, CreatedAt: d.CreatedAt, BidderName: d.BidderName, AssetID: it.AssetID, AssetName: it.AssetName, Price: it.Price, Round: parseInt(d.Round, 10) || 1 });
       });
     });
     return rows;
@@ -2858,6 +2858,7 @@ function renderAuctionLive(root){
 
   function renderAdminTab(){
     let editingKey = null; // 'BidID__LineNo' ของแถวที่กำลังแก้ไขราคาอยู่ (ถ้ามี) — reset ทุกครั้งที่เข้าแท็บนี้ใหม่
+    let adminBidCurrentRound = 1;
 
     tabHost.innerHTML = `
       <div class="card no-print">
@@ -2871,21 +2872,44 @@ function renderAuctionLive(root){
         <div class="toolbar no-print" style="margin-top:12px;">
           <button class="btn btn-primary btn-sm" id="btnOpenBidModal">＋ กรอกใบประมูล</button>
           <input type="text" id="adminBidSearch" placeholder="ค้นหารหัสสินค้า / ผู้ยื่น..." style="max-width:220px;">
+          <select id="adminBidRoundFilter" style="max-width:170px;"><option value="">รอบปัจจุบัน</option></select>
           <button class="btn btn-secondary btn-sm" id="btnAdminBidRefresh">↻ รีเฟรช</button>
         </div>
         <div id="adminBidTableHost" style="margin-top:8px;"><div class="empty">กำลังโหลด...</div></div>
       </div>
     `;
 
+    // ตัวกรอง "รอบ" — เริ่มต้นแสดงเฉพาะรอบปัจจุบัน (ตัดรายการของรอบเก่าที่คีย์ค้างไว้ออกไปก่อน กันตารางรกเวลามีหลาย
+    // รอบสะสมมาก) เลือก "ทุกรอบ" หรือรอบย้อนหลังอื่นได้เสมอ — ค่า "" หมายถึงรอบปัจจุบัน ณ ตอนโหลด (ไม่ขยับตามถ้าปิด
+    // รอบใหม่ระหว่างที่ค้างอยู่หน้านี้ ต้องกดรีเฟรชเพื่ออัปเดต เหมือนตัวกรองรอบที่หน้า "ประกาศผล")
+    function loadRoundFilterOptions(){
+      return apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
+        adminBidCurrentRound = (res.ok && res.data && res.data.currentRound) || 1;
+        const sel = document.getElementById('adminBidRoundFilter');
+        const prevValue = sel.value;
+        let opts = `<option value="">รอบปัจจุบัน (รอบ ${adminBidCurrentRound})</option>`;
+        for(let r = adminBidCurrentRound - 1; r >= 1; r--){ opts += `<option value="${r}">รอบที่ ${r}</option>`; }
+        opts += `<option value="all">ทุกรอบ</option>`;
+        sel.innerHTML = opts;
+        sel.value = prevValue || '';
+      });
+    }
+
     function renderAdminTable(){
-      const rows0 = flattenBidRows();
-      const maxMap = maxPriceByAsset(rows0);
+      const roundFilterValue = document.getElementById('adminBidRoundFilter').value;
+      const rows1 = roundFilterValue === 'all'
+        ? flattenBidRows()
+        : flattenBidRows().filter(r => r.Round === (roundFilterValue ? parseInt(roundFilterValue, 10) : adminBidCurrentRound));
+      const maxMap = maxPriceByAsset(rows1);
       const qq = (document.getElementById('adminBidSearch').value||'').trim().toLowerCase();
-      const rows = rows0.filter(r => !qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.BidderName).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1)
+      const rows = rows1.filter(r => !qq || String(r.AssetID).toLowerCase().indexOf(qq)!==-1 || String(r.BidderName).toLowerCase().indexOf(qq)!==-1 || String(r.AssetName).toLowerCase().indexOf(qq)!==-1)
         .slice().sort((a,b)=> new Date(b.CreatedAt) - new Date(a.CreatedAt));
 
-      document.getElementById('adminBidderCount').textContent = new Set(bidDocs.map(d=>d.BidderName)).size;
-      document.getElementById('adminDocCount').textContent = bidDocs.length;
+      const docsInRound = roundFilterValue === 'all'
+        ? bidDocs
+        : bidDocs.filter(d => (parseInt(d.Round, 10) || 1) === (roundFilterValue ? parseInt(roundFilterValue, 10) : adminBidCurrentRound));
+      document.getElementById('adminBidderCount').textContent = new Set(docsInRound.map(d=>d.BidderName)).size;
+      document.getElementById('adminDocCount').textContent = docsInRound.length;
       document.getElementById('adminAssetCount').textContent = Object.keys(maxMap).length;
 
       const tblHost = document.getElementById('adminBidTableHost');
@@ -2948,8 +2972,9 @@ function renderAuctionLive(root){
 
     document.getElementById('btnOpenBidModal').onclick = openBidEntryModal;
     document.getElementById('adminBidSearch').oninput = renderAdminTable;
-    document.getElementById('btnAdminBidRefresh').onclick = ()=> loadBidDocs().then(renderAdminTable);
-    loadBidDocs().then(renderAdminTable);
+    document.getElementById('adminBidRoundFilter').onchange = renderAdminTable;
+    document.getElementById('btnAdminBidRefresh').onclick = ()=> Promise.all([loadRoundFilterOptions(), loadBidDocs()]).then(renderAdminTable);
+    Promise.all([loadRoundFilterOptions(), loadBidDocs()]).then(renderAdminTable);
   }
 
   /* ---------- Tab 3: รายการใบประมูล — ประวัติทุกใบที่เคยคีย์ ใช้ตรวจสอบย้อนหลัง ---------- */
