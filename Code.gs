@@ -1993,12 +1993,15 @@ function adminSetAuctionSold_(body) {
 // Admin กด "Confirm" ที่หน้าประกาศผล — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (เท่ากับ adminSetAuctionSold_
 // แต่ auto-fill ชื่อ/ราคาจากผู้ชนะรอบล่าสุดให้อัตโนมัติ ไม่ต้องพิมพ์เอง) ถ้ามีคนเสนอราคาสูงสุดเท่ากันหลายคน (เสมอ) ต้องให้ Admin
 // ไปแก้ไขราคาในใบประมูลให้ต่างกันก่อน ยืนยันตรงนี้ไม่ได้ เพราะไม่รู้ว่าจะระบุชื่อผู้ซื้อเป็นใครในบันทึกขายแล้ว
+// body.round: รอบที่ต้องการ Confirm (ไม่ระบุ = รอบปัจจุบัน) — รองรับ Confirm รายการของรอบที่ปิดไปแล้วด้วย เพื่อให้ Admin
+// ยืนยันผู้ประมูลได้ย้อนหลังได้โดยไม่ต้องผ่านฟอร์ม "บันทึกขายนอกระบบ"
 function adminConfirmAuctionWinner_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const round = body.round != null && body.round !== '' ? (parseInt(body.round, 10) || getAuctionCurrentRound_()) : getAuctionCurrentRound_();
 
-  const winner = buildAuctionWinnersList_(getAuctionCurrentRound_()).find(w => w.AssetID === assetId);
+  const winner = buildAuctionWinnersList_(round).find(w => w.AssetID === assetId);
   if (!winner || !winner.BidderName) return { ok: false, error: 'ยังไม่มีผู้ประมูลในรอบนี้ ไม่สามารถยืนยันได้' };
   if (winner.BidderName.indexOf(',') !== -1) {
     return { ok: false, error: 'มีผู้เสนอราคาสูงสุดเท่ากันหลายคน (' + winner.BidderName + ') กรุณาแก้ไขราคาในใบประมูลให้ต่างกันก่อนยืนยัน' };

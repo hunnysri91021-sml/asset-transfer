@@ -3198,13 +3198,13 @@ function renderAuctionLive(root){
       if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
       // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว มีผู้ประมูลได้ และเป็นผลของรอบปัจจุบันเท่านั้น
       // — รอบเก่าที่ปิดไปแล้วดูได้อย่างเดียว แก้ไข/ยืนยันซ้ำไม่ได้)
-      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && w.Round===currentRound && !w.OffSystemSale).map(w=>w.AssetID);
+      const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && !w.OffSystemSale).map(w=>w.AssetID);
       const allSelected = isAdmin && actionableIds.length>0 && actionableIds.every(id=>selectedWinnerAssetIds.indexOf(id)!==-1);
       // Admin ปิดสวิตช์ "แสดงราคาทรัพย์สิน/ราคากลาง/มูลค่าทางบัญชี" ไว้สำหรับสาธารณะ — ซ่อนคอลัมน์ราคากลางไปเลย (ไม่ใช่แค่ค่าว่าง)
       const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
       let html = `<div style="overflow-x:auto;"><table><tr>${isAdmin ? `<th class="no-print" style="width:3%;"><input type="checkbox" id="winnersSelectAll" ${allSelected?'checked':''}></th>` : ''}<th>รูป</th><th>รหัสสินค้า</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th>${showRefCol ? '<th>ราคากลาง</th>' : ''}<th>ราคาที่ประมูลได้</th><th>จำนวนผู้เสนอราคา</th><th>สถานะ</th>${isAdmin ? '<th class="no-print">จัดการ</th>' : ''}</tr>`;
       rows.forEach(w=>{
-        const actionable = !w.Sold && w.BidderName && w.Round===currentRound && !w.OffSystemSale;
+        const actionable = !w.Sold && w.BidderName && !w.OffSystemSale;
         const checked = selectedWinnerAssetIds.indexOf(w.AssetID)!==-1 ? 'checked' : '';
         html += `<tr>
           ${isAdmin ? `<td class="no-print">${actionable ? `<input type="checkbox" class="winnerRowChk" data-id="${esc(w.AssetID)}" ${checked}>` : ''}</td>` : ''}
@@ -3225,12 +3225,12 @@ function renderAuctionLive(root){
             : (w.Sold
               // "ยกเลิก Confirm" เปิดให้กดได้ทุกรอบ (ไม่จำกัดแค่รอบปัจจุบัน) เผื่อพบว่ารายการของรอบที่ปิดไปแล้วบันทึกผิด
               ? `<button class="btn btn-secondary btn-sm winnerUnconfirmBtn" data-id="${esc(w.AssetID)}">↩ ยกเลิก Confirm</button>`
-              // ยังไม่ขาย: รอบปัจจุบันกด Confirm/CC ได้ทั้งคู่ตามปกติ ส่วนรอบที่ปิดไปแล้วเปิดให้กดได้แค่ "❌ CC" เพื่อ
-              // ลบรายการที่พนักงานมีชื่อประมูลได้แต่ภายหลังไม่รับทรัพย์สิน (ไม่เปิด Confirm ย้อนหลัง เพราะรอบนั้นปิดไปแล้วจริง)
-              : (w.BidderName ? (w.Round===currentRound ? `
-            <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}">✅ Confirm</button>
+              // ยังไม่ขาย: เปิดให้กด Confirm/CC ได้ทุกรอบ (ไม่จำกัดแค่รอบปัจจุบัน) — Confirm ของรอบที่ปิดไปแล้วส่ง
+              // round ของแถวนั้นไปด้วย (ดู adminConfirmAuctionWinner_) เพื่อยืนยันผู้ประมูลได้ย้อนหลังได้โดยตรง
+              : (w.BidderName ? `
+            <button class="btn btn-primary btn-sm winnerConfirmBtn" data-id="${esc(w.AssetID)}" data-round="${esc(w.Round)}">✅ Confirm</button>
             <button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC</button>
-          ` : `<button class="btn btn-secondary btn-sm winnerCcBtn" data-id="${esc(w.AssetID)}">❌ CC (ไม่รับทรัพย์สิน)</button>`) : '-'))}</td>` : ''}
+          ` : '-'))}</td>` : ''}
         </tr>`;
       });
       // แถวรวมท้ายตาราง — รวมเฉพาะ "ราคาที่ประมูลได้" (ยอดเงินที่เก็บได้จริง) ไม่รวมราคากลาง/มูลค่าทางบัญชี
@@ -3242,7 +3242,7 @@ function renderAuctionLive(root){
 
       if(isAdmin){
         host.querySelectorAll('.winnerConfirmBtn').forEach(btn=>{
-          btn.onclick = ()=> confirmWinner(btn.dataset.id, btn);
+          btn.onclick = ()=> confirmWinner(btn.dataset.id, btn, btn.dataset.round);
         });
         host.querySelectorAll('.winnerCcBtn').forEach(btn=>{
           btn.onclick = ()=> ccWinner(btn.dataset.id, btn);
@@ -3274,11 +3274,12 @@ function renderAuctionLive(root){
       }
     }
 
-    // ปุ่ม Confirm — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (ระบบเติมชื่อ/ราคาผู้ชนะให้อัตโนมัติ)
-    function confirmWinner(assetId, btn){
+    // ปุ่ม Confirm — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (ระบบเติมชื่อ/ราคาผู้ชนะให้อัตโนมัติ) — ใช้ได้
+    // ทั้งรอบปัจจุบันและรอบที่ปิดไปแล้ว (ส่ง round ของแถวนั้นไปด้วย)
+    function confirmWinner(assetId, btn, round){
       if(!confirm('ยืนยันว่าผู้เสนอราคาสูงสุดของรายการ '+assetId+' เป็นผู้ประมูลได้ และทำเครื่องหมายว่าขายแล้ว?')) return;
       if(btn) btn.disabled = true;
-      apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId }).then(res=>{
+      apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId, round }).then(res=>{
         if(btn) btn.disabled = false;
         if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); return; }
         toast('ยืนยันผู้ประมูลได้ '+assetId+' สำเร็จ — ทำเครื่องหมายขายแล้ว','ok');
@@ -3338,7 +3339,9 @@ function renderAuctionLive(root){
           loadWinners();
           return;
         }
-        apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId: ids[done+failed] }).then(res=>{
+        const id = ids[done+failed];
+        const row = winners.find(w=>w.AssetID===id && !w.Sold && w.BidderName && !w.OffSystemSale);
+        apiPost({ action:'adminConfirmAuctionWinner', password: STATE.adminPassword, assetId: id, round: row ? row.Round : undefined }).then(res=>{
           if(res.ok) done++; else failed++;
           next();
         });
