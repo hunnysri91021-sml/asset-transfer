@@ -2777,6 +2777,9 @@ function sendAuctionWinnersEmail_(body) {
   const isBelowReference = w => Number(w.ReferencePrice) > 0 && Number(w.MaxPrice) < Number(w.ReferencePrice);
   const registeredLabel = w => w.HasAssetRecord ? 'มีทะเบียน' : 'ไม่มีทะเบียน';
   const roundLabel = roundFilter != null ? ('รอบที่ ' + roundFilter) : 'ทุกรอบ';
+  // รวมจำนวนเงินของ "ราคาประมูลได้" (ยอดที่ขายได้จริงต่อรายการ) ทุกรายการในผลที่ส่ง — ใช้ทั้งในตัวเลขหัวข้อ, แถวรวม
+  // ท้ายตารางของอีเมล และหน้า "ประกาศผล" ในแอป (ไม่รวมราคากลาง/มูลค่าทางบัญชี เพราะนั่นไม่ใช่เงินที่เก็บได้จริง)
+  const totalMaxPrice = winners.reduce((sum, w) => sum + (Number(w.MaxPrice) || 0), 0);
   const rowsHtml = winners.map((w, i) => (
     '<tr>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
@@ -2794,15 +2797,25 @@ function sendAuctionWinnersEmail_(body) {
     '<td style="border:1px solid #ddd;padding:6px;color:#c0392b;font-weight:600;">' + (isBelowReference(w) ? escapeHtml_(belowReferenceLabel) : '') + '</td>' +
     '</tr>'
   )).join('');
+  const totalRowHtml =
+    '<tr style="background:#f7f9fc;font-weight:700;">' +
+    '<td colspan="11" style="border:1px solid #ddd;padding:6px;text-align:right;">รวมจำนวนเงิน (ราคาประมูลได้)</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(totalMaxPrice) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:6px;"></td>' +
+    '</tr>';
+
+  const tableHeadHtml =
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">รอบ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>';
 
   const html =
     '<div style="font-family:Sarabun,Arial,sans-serif;max-width:680px;margin:auto;">' +
     '<h2 style="color:#1a3c6e;">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</h2>' +
-    '<h3>ประกาศผลผู้ประมูลได้ — ' + escapeHtml_(roundLabel) + ' (' + winners.length + ' รายการ)</h3>' +
+    '<h3>ประกาศผลผู้ประมูลได้ — ' + escapeHtml_(roundLabel) + ' (' + winners.length + ' รายการ รวม ' + fmtMoneyServer_(totalMaxPrice) + ' บาท)</h3>' +
     (message ? '<p style="white-space:pre-wrap;">' + escapeHtml_(message) + '</p>' : '') +
     '<table style="border-collapse:collapse;width:100%;font-size:13px;">' +
-    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">รอบ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>' +
+    tableHeadHtml +
     rowsHtml +
+    totalRowHtml +
     '</table>' +
     '</div>';
 
@@ -2811,10 +2824,32 @@ function sendAuctionWinnersEmail_(body) {
       name: 'ประกาศผล',
       headers: ['รหัส', 'รายการ', 'รอบ', 'ประเภท', 'ผู้ดูแล', 'สถานที่', 'ผู้ประมูลได้', 'ราคาทรัพย์สิน', 'ราคากลาง', 'มูลค่าทางบัญชี', 'ราคาประมูลได้', 'สถานะ'],
       rows: winners.map(w => [w.AssetID, w.AssetName, w.Round, registeredLabel(w), w.Custodian || '', w.Location || '', w.BidderName || '', Number(w.PurchasePrice) || 0, Number(w.ReferencePrice) || 0, Number(w.BookValue) || 0, Number(w.MaxPrice) || 0, isBelowReference(w) ? belowReferenceLabel : ''])
+        .concat([['', '', '', '', '', '', 'รวมจำนวนเงิน (ราคาประมูลได้)', '', '', '', totalMaxPrice, '']])
     }]);
-    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ (' + roundLabel + ') — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: [xlsxBlob] });
-    logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ (' + roundLabel + ') ' + winners.length + ' รายการ ให้ ' + recipients.join(', '));
-    return { ok: true, data: { count: winners.length, recipients: recipients } };
+
+    const attachments = [xlsxBlob];
+    // แนบ PDF ไปด้วย (เพิ่มเติมจาก xlsx เดิม) — ใช้ htmlToPdfBlob_ ตัวเดียวกับที่ export เอกสารขึ้น SharePoint
+    // ต้องเปิด Advanced Service "Drive API" ไว้ก่อน ถ้าแปลงไม่สำเร็จ (เช่นยังไม่เปิด Drive API) ให้ข้ามไปเงียบๆ
+    // ส่งแค่ xlsx ต่อ ไม่ทำให้การส่งอีเมลทั้งฉบับล้มเหลว
+    try {
+      const pdfHtml =
+        '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
+        '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
+        '<div class="doc-title">ประกาศผลผู้ประมูลได้ — ' + escapeHtml_(roundLabel) + '</div>' +
+        '<div class="doc-field"><b>จำนวน</b> ' + winners.length + ' รายการ &nbsp;&nbsp;&nbsp; <b>รวมจำนวนเงิน</b> ' + fmtMoneyServer_(totalMaxPrice) + ' บาท</div>' +
+        (message ? '<div class="doc-field">' + escapeHtml_(message) + '</div>' : '') +
+        '<table class="doc-table"><tr>' +
+        '<th>#</th><th>รหัส</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคาทรัพย์สิน</th><th>ราคากลาง</th><th>มูลค่าทางบัญชี</th><th>ราคาประมูลได้</th><th>สถานะ</th>' +
+        '</tr>' + rowsHtml + totalRowHtml + '</table>' +
+        '</body></html>';
+      attachments.push(htmlToPdfBlob_(pdfHtml, 'ประกาศผลผู้ประมูลได้_' + roundLabel));
+    } catch (pdfErr) {
+      logActivity_('', 'AUCTION_WINNERS_PDF_FAILED', 'admin', String(pdfErr));
+    }
+
+    MailApp.sendEmail({ to: recipients.join(','), subject: 'ประกาศผลผู้ประมูลได้ (' + roundLabel + ') — รวม ' + fmtMoneyServer_(totalMaxPrice) + ' บาท — ' + CONFIG.COMPANY_NAME, htmlBody: html, attachments: attachments });
+    logActivity_('', 'ADMIN_SEND_AUCTION_WINNERS_EMAIL', 'admin', 'ส่งอีเมลประกาศผลผู้ประมูลได้ (' + roundLabel + ') ' + winners.length + ' รายการ รวม ' + fmtMoneyServer_(totalMaxPrice) + ' บาท ให้ ' + recipients.join(', '));
+    return { ok: true, data: { count: winners.length, totalAmount: totalMaxPrice, recipients: recipients } };
   } catch (err) {
     return { ok: false, error: String(err) };
   }
