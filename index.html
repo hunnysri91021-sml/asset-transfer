@@ -6239,6 +6239,11 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:13px;">ระบบจะติดแท็ก "ขาย"/"ชำรุด" ให้ทรัพย์สินอัตโนมัติเฉพาะใบขาย/ใบตัดชำรุดที่อนุมัติ<b>นับจากนี้ไป</b> — ถ้ามีรายการที่ขาย/ตัดชำรุดไปแล้วก่อนหน้านี้และแท็กยังไม่ตรง กดปุ่มนี้เพื่อไล่ตรวจสอบเอกสารที่อนุมัติแล้วทั้งหมดแล้วปรับแท็กในชีต Assets ให้ตรงกับความจริงย้อนหลัง</p>
         <button class="btn btn-secondary btn-sm" id="btnBackfillTags">🔄 ซิงค์แท็กสถานะย้อนหลัง</button>
       </div>
+      <div class="card">
+        <h2>เอารายการขายนอกระบบเก่าออกจากหน้าประมูลขาย</h2>
+        <p style="color:var(--muted);font-size:13px;">ก่อนหน้านี้ระบบ "บันทึกขายนอกระบบ" มีบั๊ก — บันทึกขายสำเร็จแต่ไม่ได้ปักว่า "ขายแล้ว" ในชีตทรัพย์สิน ทำให้รายการที่บันทึกขายนอกระบบไปแล้วก่อนแก้บั๊กนี้ ยังค้างแสดงอยู่ในหน้าประมูลขายสาธารณะและตาราง "รายการที่ส่งประมูลแล้ว" (หน้าคัดเลือกรายการประมูล) ต่อไป ทั้งที่ขายไปแล้วจริง กดปุ่มนี้เพื่อไล่ตรวจสอบเฉพาะรายการขายนอกระบบเก่าเหล่านี้แล้วปรับให้ถูกต้องย้อนหลัง (ไม่กระทบรายการที่กำลังเปิดประมูลอยู่จริงตามปกติ)</p>
+        <button class="btn btn-secondary btn-sm" id="btnBackfillOffSystemAuctionSold">🔄 ซิงค์สถานะขายนอกระบบย้อนหลัง</button>
+      </div>
     </div>
   `;
 
@@ -6290,6 +6295,7 @@ function renderSettings(root){
   document.getElementById('btnSaveAuctionClosedNotice').onclick = saveAuctionClosedNotice;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
+  document.getElementById('btnBackfillOffSystemAuctionSold').onclick = backfillOffSystemAuctionSold;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
   document.getElementById('btnRefreshOnlineUsers').onclick = ()=> loadOnlineUsers();
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
@@ -6325,6 +6331,16 @@ function renderSettings(root){
       btn.disabled = false; btn.innerHTML = '🔄 ซิงค์แท็กสถานะย้อนหลัง';
       if(!res.ok){ toast(res.error||'ซิงค์ไม่สำเร็จ','err'); return; }
       toast('ซิงค์สำเร็จ — ขาย '+res.data.soldCount+' รายการ ตัดชำรุด '+res.data.writtenOffCount+' รายการ ไปดูผลได้ที่หน้า "ข้อมูลรวม"','ok');
+    });
+  }
+
+  function backfillOffSystemAuctionSold(){
+    const btn = document.getElementById('btnBackfillOffSystemAuctionSold');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังซิงค์...';
+    apiPost({ action:'adminBackfillOffSystemAuctionSold', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '🔄 ซิงค์สถานะขายนอกระบบย้อนหลัง';
+      if(!res.ok){ toast(res.error||'ซิงค์ไม่สำเร็จ','err'); return; }
+      toast('ซิงค์สำเร็จ — แก้ไข '+res.data.fixedCount+' รายการ'+(res.data.fixedIds&&res.data.fixedIds.length?' ('+res.data.fixedIds.join(', ')+')':''),'ok');
     });
   }
 
