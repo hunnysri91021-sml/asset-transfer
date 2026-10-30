@@ -2799,7 +2799,60 @@ function getOffSystemSaleCandidates_(q) {
     offListing.push({ AssetID: assetId, AssetName: assetName, Department: '', HasAssetRecord: false });
   });
 
-  return registered.concat(offListing);
+  const items = registered.concat(offListing);
+
+  // ค้นหาแล้วไม่เจอเลย (และพิมพ์คำค้นหามา) — เช็คว่ามีทรัพย์สินที่ตรงกับคำค้นหาอยู่จริงในระบบหรือไม่ (ทั้งในชีต Assets
+  // และรายการนอกฐานที่เคยมีในใบประมูล แบบไม่กรองสถานะ) เพื่อแจ้งสถานะจริงกลับไปแทนให้ Admin เดาเอาเอง ("ไม่พบ" เฉยๆ
+  // ไม่บอกว่าเพราะพิมพ์ผิด หรือเพราะทรัพย์สินนี้ถูกบันทึกขายไปแล้วจริง)
+  let excludedInfo = null;
+  if (qq && !items.length) {
+    const matchFn = (id, name) => String(id).toLowerCase().indexOf(qq) !== -1 || String(name || '').toLowerCase().indexOf(qq) !== -1;
+    const matchedAsset = assetsRaw.find(a => matchFn(a.AssetID, a.AssetName));
+    if (matchedAsset) {
+      const id = String(matchedAsset.AssetID);
+      excludedInfo = { AssetID: id, AssetName: matchedAsset.AssetName, Status: disposed[id] || 'Active', SaleInfo: findApprovedSaleInfoForAsset_(id) };
+    } else {
+      const matchedRow = itemValues.find(r => { const id = String(r[itemIdx.AssetID] || '').trim(); return id && matchFn(id, r[itemIdx.AssetName]); });
+      if (matchedRow) {
+        const id = String(matchedRow[itemIdx.AssetID]).trim();
+        excludedInfo = { AssetID: id, AssetName: String(matchedRow[itemIdx.AssetName] || ''), Status: disposed[id] || (lifecycleMeta.channelByAsset[id] ? 'Sold' : 'Active'), SaleInfo: findApprovedSaleInfoForAsset_(id) };
+      }
+    }
+  }
+
+  return { items: items, excludedInfo: excludedInfo };
+}
+
+// หาใบขายออกที่อนุมัติแล้ว (ยังไม่ถูก void) ล่าสุดของทรัพย์สิน assetId ถ้ามี — ใช้แสดงรายละเอียด (ผู้ซื้อ/ราคา/ช่องทาง)
+// ประกอบข้อความแจ้งเตือนตอนค้นหาไม่พบใน getOffSystemSaleCandidates_ เพื่อให้ Admin เห็นเหตุผลที่แท้จริงว่าทรัพย์สินนี้
+// ถูกขายไปแล้วเมื่อไหร่/ให้ใคร แทนที่จะต้องไปไล่หาเองในหน้าอื่น
+function findApprovedSaleInfoForAsset_(assetId) {
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues.shift());
+  const approvedSaleDocs = {};
+  saleValues.forEach(r => {
+    if (r[saleIdx.Status] === STATUS.APPROVED) {
+      approvedSaleDocs[String(r[saleIdx.SaleID])] = {
+        Buyer: r[saleIdx.Buyer] || '',
+        Channel: saleIdx.Channel !== undefined ? String(r[saleIdx.Channel] || '') : ''
+      };
+    }
+  });
+  if (!Object.keys(approvedSaleDocs).length) return null;
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  for (let i = 0; i < itemValues.length; i++) {
+    const r = itemValues[i];
+    if (String(r[itemIdx.AssetID]) !== assetId) continue;
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) continue;
+    const sale = approvedSaleDocs[String(r[itemIdx.SaleID])];
+    if (sale) return { Buyer: sale.Buyer, Channel: sale.Channel, SalePrice: r[itemIdx.SalePrice] || '' };
+  }
+  return null;
 }
 
 // บันทึกขายนอกระบบ — สำหรับทรัพย์สินตัดชำรุด/รอขายใดๆ (ไม่จำกัดว่าเคยส่งประมูลหรือไม่) ที่ขายได้จริงนอกระบบ
