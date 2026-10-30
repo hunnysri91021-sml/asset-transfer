@@ -332,6 +332,9 @@ function doPost(e) {
       case 'logout':
         result = logout_(body);
         break;
+      case 'exportAuctionListingPdf':
+        result = exportAuctionListingPdf_(body);
+        break;
       case 'adminGetOnlineUsers':
         result = adminGetOnlineUsers_(body);
         break;
@@ -1263,6 +1266,50 @@ function parseDepartments_(v) {
   return String(v || '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
+// Export หน้า "ประมูลขาย" (รายการประมูล) เป็น PDF พร้อมรูปภาพจริง — ต่างจากปุ่ม "⬇ Export Excel" เดิมที่ export
+// ฝั่ง client ล้วนๆ (ไม่เรียก backend เลย) เพราะไลบรารี Excel ที่ใช้ (SheetJS รุ่นฟรี) ไม่รองรับฝังรูปภาพจริงลงไฟล์
+// .xlsx ได้ คอลัมน์รูปจึงเป็นแค่ลิงก์ข้อความ ส่วน PDF นี้ใช้ htmlToPdfBlob_ ตัวเดียวกับที่ export เอกสารขึ้น SharePoint
+// (แปลง HTML ผ่าน Google Docs) จึงฝังรูปจริงได้ — รับ items ที่ frontend กรอง/ค้นหาไว้แล้วจาก body.items ตรงๆ แทนที่
+// จะ query ใหม่ฝั่งนี้ เพื่อให้ตรงกับสิ่งที่ผู้ใช้เห็นอยู่บนหน้าจอขณะกด export เป๊ะๆ (เหมือนพฤติกรรม Export Excel เดิม)
+function exportAuctionListingPdf_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
+  if (user.role !== 'admin' && !user.canExportAuction) return { ok: false, error: 'ไม่มีสิทธิ์ export หน้านี้' };
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!items.length) return { ok: false, error: 'ไม่มีข้อมูลให้ export' };
+  const showBookValue = !!body.showBookValue;
+
+  const rowsHtml = items.map(it => {
+    const refPrice = it.ReferencePrice !== '' && it.ReferencePrice != null ? fmtMoneyServer_(it.ReferencePrice) : '-';
+    return '<tr>' +
+      '<td>' + (it.DisplayImage ? '<img src="' + escapeHtml_(String(it.DisplayImage)) + '" width="50" style="border-radius:4px;object-fit:cover;">' : '-') + '</td>' +
+      '<td class="left"><b>' + escapeHtml_(String(it.AssetID || '')) + '</b></td>' +
+      '<td class="left">' + escapeHtml_(String(it.AssetName || '')) + '</td>' +
+      '<td class="left">' + escapeHtml_(String(it.Department || '')) + '</td>' +
+      '<td class="left">' + escapeHtml_(String(it.Custodian || '')) + '</td>' +
+      '<td class="left">' + escapeHtml_(String(it.Location || '')) + '</td>' +
+      '<td>' + escapeHtml_(String(it.Status || '')) + '</td>' +
+      '<td class="money">' + refPrice + '</td>' +
+      (showBookValue ? '<td class="money">' + fmtMoneyServer_(it.BookValue || 0) + '</td>' : '') +
+      '</tr>';
+  }).join('');
+
+  const html = '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
+    '<div class="doc-header">รายการประมูลขาย</div>' +
+    '<div class="doc-title">รวม ' + items.length + ' รายการ</div>' +
+    '<table class="doc-table"><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ประเภท</th><th>ราคากลาง</th>' +
+    (showBookValue ? '<th>มูลค่าตามบัญชี</th>' : '') + '</tr>' +
+    rowsHtml +
+    '</table></body></html>';
+
+  try {
+    const blob = htmlToPdfBlob_(html, 'ประมูลขาย');
+    return { ok: true, data: { base64: Utilities.base64Encode(blob.getBytes()), fileName: 'ประมูลขาย.pdf' } };
+  } catch (err) {
+    return { ok: false, error: 'สร้าง PDF ไม่สำเร็จ: ' + err + ' — ตรวจสอบว่าเปิดใช้งาน Advanced Service "Drive API" แล้วหรือยัง' };
+  }
+}
+
 // ตรวจว่า user (เฉพาะ role='user' — Admin/ผู้บริหารไม่ถูกจำกัดเลย) ถูก Admin ปิดการใช้งาน "ทั้งหมวด"
 // โอนย้าย/ขายออก/ตัดชำรุดไว้หรือไม่ (เก็บใน Users.DisabledCategories คั่นด้วยคอมมา ค่าที่ใช้ตรงกับ
 // QUEUE_PURPOSES: 'Transfer'/'Sale'/'WriteOff') ใช้คุม "บันทึกเอกสาร" เท่านั้น (createTransfer_/
@@ -1289,6 +1336,7 @@ function getRequestingUser_(pw) {
         role,
         departments: parseDepartments_(values[i][idx.Departments]),
         canViewPrices: role === 'admin' || role === 'executive' || String(values[i][idx.CanViewPrices]).toLowerCase() === 'true',
+        canExportAuction: role === 'admin' || (idx.CanExportAuction !== undefined && String(values[i][idx.CanExportAuction]).toLowerCase() === 'true'),
         disabledCategories: parseDepartments_(idx.DisabledCategories !== undefined ? values[i][idx.DisabledCategories] : '')
       };
     }

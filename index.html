@@ -500,6 +500,16 @@ function exportExcel(filename, sheetDefs){
   XLSX.writeFile(wb, filename);
 }
 
+// ดาวน์โหลดไฟล์จาก base64 ที่ backend ส่งกลับมา (ใช้กับ PDF ที่สร้างผ่าน htmlToPdfBlob_)
+function downloadBase64File(base64, fileName, mimeType){
+  const link = document.createElement('a');
+  link.href = 'data:'+mimeType+';base64,'+base64;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 /* ================= ITEM IMAGES (up to 5 images per asset line item) ================= */
 const ITEM_IMAGE_LIMIT = 5;
 function docImgGallery(images){
@@ -2343,6 +2353,7 @@ function renderAuction(root){
           <select id="auctionDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
           ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnAuctionToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
           ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExport">⬇ Export Excel</button>` : ''}
+          ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnAuctionExportPdf">⬇ Export PDF (มีรูปภาพ)</button>` : ''}
         </div>
         <div id="auctionCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
         <div id="auctionTableHost"><div class="empty">กำลังโหลด...</div></div>
@@ -2376,6 +2387,8 @@ function renderAuction(root){
     document.getElementById('auctionDeptFilter').onchange = renderAuctionTable;
     const exportBtn = document.getElementById('btnAuctionExport');
     if(exportBtn) exportBtn.onclick = exportAuction;
+    const exportPdfBtn = document.getElementById('btnAuctionExportPdf');
+    if(exportPdfBtn) exportPdfBtn.onclick = exportAuctionPdf;
     const toggleBtn = document.getElementById('btnAuctionToggleBookValue');
     if(toggleBtn){
       toggleBtn.onclick = ()=>{
@@ -2574,6 +2587,28 @@ function renderAuction(root){
       a.DisplayImage||''
     ]);
     exportExcel('ประมูลขาย.xlsx', [{ name:'ประมูลขาย', header, rows: dataRows }]);
+  }
+
+  // Export PDF พร้อมรูปภาพจริง (ต่างจาก Export Excel ที่มีแค่ "ลิงก์รูปภาพ" เป็นข้อความ เพราะไลบรารี Excel ที่ใช้
+  // ไม่รองรับฝังรูปจริงลงไฟล์ .xlsx ได้) — ส่งรายการที่กรอง/ค้นหาไว้แล้วบนหน้าจอไปให้ backend แปลงเป็น PDF ผ่าน
+  // htmlToPdfBlob_ ตัวเดียวกับที่ export เอกสารขึ้น SharePoint แล้วรับกลับมาเป็น base64 เพื่อดาวน์โหลด
+  function exportAuctionPdf(){
+    if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
+    const rows = baseFilteredRows();
+    if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const items = rows.map(a => ({
+      AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department, Custodian: a.Custodian||'',
+      Location: a.Location||'', Status: typeLabel[a.AssetStatus]||a.AssetStatus,
+      ReferencePrice: effectiveReferencePrice(a) || '', BookValue: showBookValue ? (Number(a.BookValue)||0) : '',
+      DisplayImage: a.DisplayImage||''
+    }));
+    const btn = document.getElementById('btnAuctionExportPdf');
+    if(btn) btn.disabled = true;
+    apiPost({ action:'exportAuctionListingPdf', password: STATE.adminPassword, items, showBookValue }).then(res=>{
+      if(btn) btn.disabled = false;
+      if(!res.ok){ toast(res.error||'สร้าง PDF ไม่สำเร็จ','err'); return; }
+      downloadBase64File(res.data.base64, res.data.fileName, 'application/pdf');
+    });
   }
 
   showIntro();
