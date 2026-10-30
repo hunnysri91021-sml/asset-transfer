@@ -3504,12 +3504,15 @@ function renderAuctionLive(root){
         if(!qq){ document.getElementById('offSaleAssetSearchResults').innerHTML=''; return; }
         offSaleSearchDebounce = setTimeout(()=>{
           apiGet({ action:'getOffSystemSaleCandidates', q: qq }).then(res=>{
-            if(!res.ok) return;
-            offSaleSearchResults = (res.data||[]).slice(0, 8);
             const resHost = document.getElementById('offSaleAssetSearchResults');
+            if(!res.ok){ toast(res.error||'ค้นหาทรัพย์สินไม่สำเร็จ','err'); resHost.innerHTML = '<div style="color:var(--red);">ค้นหาไม่สำเร็จ: '+esc(res.error||'')+'</div>'; return; }
+            offSaleSearchResults = (res.data||[]).slice(0, 8);
+            // ทรัพย์สินที่ "ตัดชำรุดแล้ว" (ยังไม่ได้ขาย) ก็ค้นหาเจอด้วย — บล็อกเฉพาะที่ขายไปแล้วจริงเท่านั้น (ดู
+            // getOffSystemSaleCandidates_ ใน Code.gs) ข้อความตอนไม่พบจึงต้องบอกเหตุผลที่เป็นไปได้ชัดเจน ไม่ให้เข้าใจผิด
+            // ว่าทรัพย์สินตัดชำรุดแล้วค้นหาไม่ได้
             resHost.innerHTML = offSaleSearchResults.length
               ? offSaleSearchResults.map(a=>`<div class="pin-search-result" data-id="${esc(a.AssetID)}" style="cursor:pointer;padding:4px;border-bottom:1px solid var(--border);">${esc(a.AssetID)} — ${esc(a.AssetName)}${a.HasAssetRecord ? ' ('+esc(a.Department||'-')+')' : ' <span style="color:var(--muted);">(รายการประมูล ไม่มีทะเบียน)</span>'}</div>`).join('')
-              : '<div style="color:var(--muted);">ไม่พบทรัพย์สินที่ยังไม่ถูกขาย/ตัดชำรุด</div>';
+              : '<div style="color:var(--muted);">ไม่พบทรัพย์สินที่ตรงกับคำค้นหา (ถ้ารหัส/ชื่อถูกต้อง อาจเป็นเพราะทรัพย์สินนี้มีการบันทึกขายไปแล้ว) — หรือกด "เพิ่มรายการใหม่ที่ไม่มีในทะเบียนทรัพย์สิน" ด้านล่างได้</div>';
             resHost.querySelectorAll('.pin-search-result').forEach(el=>{
               el.onclick = ()=>{
                 offSaleSelectedAssetId = el.dataset.id;
