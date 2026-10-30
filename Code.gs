@@ -2762,15 +2762,23 @@ function getOffSystemAuctionSales_(assetById) {
 // (แถวใน AuctionBidItems) อยู่ — เช่น Admin คีย์เข้ามาเองตอนกรอกใบประมูลโดยไม่มีทะเบียนทรัพย์สิน — ก่อนหน้านี้ค้นหาไม่
 // เจอเลยเพราะดึงจากชีต Assets อย่างเดียว ทำให้บันทึกขายนอกระบบให้รายการกลุ่มนี้ไม่ได้ (ดู CLAUDE.md pattern ของ
 // off-listing ที่ใช้ร่วมกันใน buildAuctionWinnersList_/getValidAuctionBidItems_)
+// เงื่อนไข "ยังบันทึกขายนอกระบบได้" คือ "ยังไม่เคยขาย" เท่านั้น (disposed[id]==='Sold') — ไม่ใช่ "ยังไม่ถูกขาย/ตัดชำรุด"
+// ตามที่ข้อความอธิบายฟีเจอร์บอกไว้เฉยๆ เพราะทรัพย์สินที่ "ตัดชำรุดแล้ว" (disposed[id]==='WrittenOff') คือกลุ่มเป้าหมาย
+// หลักของฟีเจอร์นี้เลย (ตัดชำรุด/รอขายใดๆ ที่ขายได้จริงนอกระบบ — ดู adminRecordOffSystemSale_) ถ้ากันออกไปด้วยจะทำให้
+// ค้นหาทรัพย์สินตัดชำรุดที่ต้องการบันทึกขายไม่เจอเลย (บั๊กที่พบจริง — ผู้ใช้ยืนยันว่ารหัสทรัพย์สินมีอยู่จริงแต่ค้นไม่เจอ)
 function getOffSystemSaleCandidates_(q) {
   const qq = (q || '').toString().trim().toLowerCase();
   const disposed = getDisposedAssetStatus_();
+  // channelByAsset ถูกตั้งไว้ทุกครั้งที่มีใบขายออกอนุมัติแล้วของทรัพย์สินนั้น (ไม่ว่า status สุดท้ายจะโดน WriteOff
+  // ทับเป็น 'WrittenOff' หรือไม่ก็ตาม — ดู computeDisposalData_) ใช้เช็คแยกจาก disposed เพื่อกันทรัพย์สินตัดชำรุดที่
+  // บันทึกขายนอกระบบไปแล้วครั้งหนึ่ง (status ยังคงเป็น WrittenOff ไม่ใช่ Sold) ขึ้นมาให้เลือกขายซ้ำได้อีก
+  const lifecycleMeta = getAssetLifecycleMeta_();
   const assetsRaw = getAssetsRaw_();
   const registeredIds = {};
   assetsRaw.forEach(a => { registeredIds[String(a.AssetID)] = true; });
 
   const registered = getAssetsRaw_(q)
-    .filter(a => (disposed[String(a.AssetID)] || 'Active') === 'Active')
+    .filter(a => disposed[String(a.AssetID)] !== 'Sold' && !lifecycleMeta.channelByAsset[String(a.AssetID)])
     .map(a => ({ AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department || '', HasAssetRecord: true }));
 
   const offListingById = getAuctionOffListingMap_();
@@ -2783,7 +2791,7 @@ function getOffSystemSaleCandidates_(q) {
     const assetId = String(r[itemIdx.AssetID] || '').trim();
     if (!assetId || registeredIds[assetId] || seen[assetId]) return;
     seen[assetId] = true;
-    if (disposed[assetId]) return;
+    if (disposed[assetId] === 'Sold' || lifecycleMeta.channelByAsset[assetId]) return;
     const off = offListingById[assetId];
     if (off && String(off.AuctionSold).toLowerCase() === 'true') return;
     const assetName = String(r[itemIdx.AssetName] || '');
@@ -2816,7 +2824,16 @@ function adminRecordOffSystemSale_(body) {
   const assetName = asset ? (asset.AssetName || '') : String(body.assetName || '').trim();
   if (!asset && !assetName) return { ok: false, error: 'กรุณาระบุชื่อทรัพย์สิน' };
   const disposed = getDisposedAssetStatus_();
-  if (disposed[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ถูกขาย/ตัดชำรุดไปแล้ว ไม่สามารถบันทึกขายนอกระบบซ้ำได้' };
+  // บล็อกเฉพาะที่ "ขายไปแล้ว" (disposed[id]==='Sold') หรือมีใบขายออกอนุมัติแล้วของทรัพย์สินนี้อยู่ก่อนแล้วจริงๆ
+  // (lifecycleMeta.channelByAsset — ดู getOffSystemSaleCandidates_) เท่านั้น — ทรัพย์สิน "ตัดชำรุดแล้ว"
+  // (disposed[id]==='WrittenOff') ที่ยังไม่เคยมีใบขายออกมาก่อน ยังต้องบันทึกขายนอกระบบได้ตามปกติ เพราะเป็นกลุ่ม
+  // เป้าหมายหลักของฟีเจอร์นี้ — เช็ค channelByAsset แยกไว้ด้วยเพราะ computeDisposalData_ ให้ WriteOff ทับ status
+  // เป็น WrittenOff เสมอแม้จะมีใบขายออกอนุมัติแล้วซ้อนอยู่ ถ้าเช็คแค่ disposed[assetId]==='Sold' เฉยๆ จะกันการขาย
+  // ซ้ำทรัพย์สินตัดชำรุดที่บันทึกขายนอกระบบไปแล้วไม่ได้เลย
+  const lifecycleMeta = getAssetLifecycleMeta_();
+  if (disposed[assetId] === 'Sold' || lifecycleMeta.channelByAsset[assetId]) {
+    return { ok: false, error: 'ทรัพย์สินนี้ถูกขายไปแล้ว ไม่สามารถบันทึกขายนอกระบบซ้ำได้' };
+  }
 
   const round = parseInt(body.round, 10) || getAuctionCurrentRound_();
   const fromDeptCode = getCodeForDept_(asset ? asset.Department : '') || 'GEN';
@@ -2865,7 +2882,11 @@ function adminRecordOffSystemSale_(body) {
   iSheet.getRange(iSheet.getLastRow() + 1, 1, 1, iHeaders.length).setValues([itemRow]);
 
   purgeAssetFromAllQueues_([assetId]);
-  setAssetsTag_([assetId], 'ขาย');
+  // AssetStatus คำนวณสดจากเอกสารขาย/ตัดชำรุดที่อนุมัติแล้ว โดย WriteOff มีผลทับ Sale เสมอถ้าทรัพย์สินนั้นมีทั้งคู่
+  // (ดู computeDisposalData_ — ประมวลผล Sale ก่อนแล้วค่อยให้ WriteOff ทับ) เหมือนกับที่ทรัพย์สินตัดชำรุดแล้วขายผ่าน
+  // ประมูลในแอปปกติ (adminSetAuctionSold_) ก็ยังคงสถานะ WrittenOff ต่อไปเช่นกัน ไม่ได้กลายเป็น Sold — Tag ที่เขียน
+  // กลับไปที่ชีต Assets จึงต้องสอดคล้องกับผลลัพธ์จริงตรงนี้ด้วย ไม่ใช่ตั้งเป็น 'ขาย' เสมอแบบเดิม
+  setAssetsTag_([assetId], disposed[assetId] === 'WrittenOff' ? 'ชำรุด' : 'ขาย');
   invalidateDisposedAssetStatusCache_();
   exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
   logActivity_(saleId, 'ADMIN_RECORD_OFFSYSTEM_SALE', 'admin', 'บันทึกขายนอกระบบ ' + assetId + ' ผู้ซื้อ ' + buyer + ' ราคา ' + price + ' (รอบที่ ' + round + ')');
