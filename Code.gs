@@ -928,6 +928,14 @@ function setAssetsTag_(assetIds, tagValue) {
   if (dirty) sh.getRange(2, idx.Tag + 1, tagCol.length, 1).setValues(tagCol);
 }
 
+// แปลงสถานะที่คำนวณสด ('Sold'/'WrittenOff'/อื่นๆ) ให้เป็นค่า Tag ที่ตรงกัน — ใช้ตรงๆ ไม่ได้ทุกจุด เพราะบางจุด (เช่น
+// adminSetAuctionSold_ ตอนยกเลิกเครื่องหมายขายแล้ว) ต้องคำนวณสถานะใหม่หลังเปลี่ยนแปลงก่อนค่อยแปลงเป็น Tag
+function tagForDisposedStatus_(status) {
+  if (status === 'Sold') return 'ขาย';
+  if (status === 'WrittenOff') return 'ชำรุด';
+  return 'ใช้งาน';
+}
+
 // ทรัพย์สินที่มีใบขายออก หรือใบตัดชำรุด ซึ่งอนุมัติแล้ว ถือว่าสิ้นสภาพการใช้งานจริง จึงซ่อนจากรายการหลัก
 // คืนค่า map ของ AssetID -> 'Sold' | 'WrittenOff' (เฉพาะรายการที่สิ้นสภาพแล้ว)
 // getDisposedAssetStatus_ อ่านเต็ม 4 ชีต (Sales/SaleItems/WriteOffs/WriteOffItems) ทุกครั้ง เป็นการคำนวณที่หนักที่สุด
@@ -1008,6 +1016,24 @@ function computeDisposalData_() {
     if (approvedWoDocs[woId]) status[assetId] = 'WrittenOff';
     else if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[assetId] = true;
   });
+
+  // "ขายแล้ว" ต้องทับ "ตัดชำรุด" เสมอ ไม่ว่าจะขายผ่านช่องทางไหน — ทรัพย์สินที่ตัดชำรุดไปแล้ว (WrittenOff) แล้วภายหลัง
+  // ขายได้จริงผ่าน Confirm ที่หน้า Live ประมูล/ประกาศผล (adminSetAuctionSold_ ปักแค่คอลัมน์ AuctionSold ดิบตรงๆ ไม่ได้
+  // สร้างใบขายออกเลย) หรือบันทึกขายนอกระบบ (สร้างใบขายออกจริง แต่ลำดับลูปข้างบนให้ WriteOff ทับ Sale เสมออยู่ดี) ต้อง
+  // ถือเป็น "ขายแล้ว" ไม่ใช่ "ตัดชำรุด" ต่อไปตลอดกาล (ยืนยันกับผู้ใช้แล้วว่าต้องการแบบนี้) เช็คจากคอลัมน์ AuctionSold
+  // ดิบของชีต Assets แยกต่างหากตรงนี้ เพราะเป็นสัญญาณเดียวที่ครอบคลุมทั้ง 2 ช่องทาง (adminRecordOffSystemSale_
+  // ปักคอลัมน์นี้ไว้ด้วยเช่นกัน ดู getOffSystemSaleCandidates_)
+  const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const assetsValues = assetsSh.getDataRange().getValues();
+  const assetsIdx = indexMap_(assetsValues.shift());
+  if (assetsIdx.AuctionSold !== undefined) {
+    assetsValues.forEach(r => {
+      const assetId = String(r[assetsIdx.AssetID]);
+      if (status[assetId] === 'WrittenOff' && String(r[assetsIdx.AuctionSold]).toLowerCase() === 'true') {
+        status[assetId] = 'Sold';
+      }
+    });
+  }
 
   _disposalDataCache_ = { status: status, meta: meta };
   return _disposalDataCache_;
@@ -2071,6 +2097,11 @@ function adminSetAuctionSold_(body) {
       sh.getRange(i + 1, idx.AuctionSoldPrice + 1).setValue(sold ? soldPrice : '');
       if (idx.AuctionSoldAt !== undefined) sh.getRange(i + 1, idx.AuctionSoldAt + 1).setValue(sold ? new Date() : '');
       invalidateDisposedAssetStatusCache_(); // ล้างแคช getAuctionSoldAssetIdMap_ ที่ getWriteOffs_ ใช้โชว์ป้าย "ขายแล้ว"
+      // Tag ต้องตามสถานะที่คำนวณสดใหม่หลังเปลี่ยน AuctionSold (ดู computeDisposalData_ — "ขายแล้ว" ทับ "ตัดชำรุด" เสมอ)
+      // ไม่งั้นทรัพย์สินที่เคยตัดชำรุดมาก่อนแล้ว Confirm ว่าขายผ่านประมูลได้ จะยังค้างแท็ก "ชำรุด" ต่อไปใน Dashboard/
+      // รายการทรัพย์สิน ทั้งที่ขายไปแล้วจริง (เช็คใหม่ทุกครั้งทั้งตอน sold:true และ sold:false/ยกเลิก เพราะยกเลิกแล้ว
+      // ทรัพย์สินต้องกลับไปแท็กตามสถานะเดิมของมัน ไม่ใช่ตั้งค่าคงที่)
+      setAssetsTag_([assetId], tagForDisposedStatus_(getDisposedAssetStatus_()[assetId]));
       logActivity_('', 'ADMIN_SET_AUCTION_SOLD', 'admin', (sold ? ('ทำเครื่องหมายทรัพย์สิน ' + assetId + ' ขายแล้ว ผู้ประมูลได้ ' + buyer + ' ราคา ' + soldPrice) : ('ยกเลิกเครื่องหมายขายแล้วของทรัพย์สิน ' + assetId)));
       return { ok: true };
     }
@@ -2949,18 +2980,13 @@ function adminRecordOffSystemSale_(body) {
   iSheet.getRange(iSheet.getLastRow() + 1, 1, 1, iHeaders.length).setValues([itemRow]);
 
   purgeAssetFromAllQueues_([assetId]);
-  // AssetStatus คำนวณสดจากเอกสารขาย/ตัดชำรุดที่อนุมัติแล้ว โดย WriteOff มีผลทับ Sale เสมอถ้าทรัพย์สินนั้นมีทั้งคู่
-  // (ดู computeDisposalData_ — ประมวลผล Sale ก่อนแล้วค่อยให้ WriteOff ทับ) เหมือนกับที่ทรัพย์สินตัดชำรุดแล้วขายผ่าน
-  // ประมูลในแอปปกติ (adminSetAuctionSold_) ก็ยังคงสถานะ WrittenOff ต่อไปเช่นกัน ไม่ได้กลายเป็น Sold — Tag ที่เขียน
-  // กลับไปที่ชีต Assets จึงต้องสอดคล้องกับผลลัพธ์จริงตรงนี้ด้วย ไม่ใช่ตั้งเป็น 'ขาย' เสมอแบบเดิม
-  setAssetsTag_([assetId], disposed[assetId] === 'WrittenOff' ? 'ชำรุด' : 'ขาย');
   // ทรัพย์สินที่มีทะเบียน (ไม่ใช่รายการนอกฐาน) ต้องปักหมุด AuctionSold=true ด้วย (ใช้ adminSetAuctionSold_ ตัวเดียวกับ
-  // ที่หน้า "Live ประมูล"/"คัดเลือกรายการประมูล" ใช้) ไม่งั้นถ้าทรัพย์สินนี้เคยติ๊กส่งประมูล (SendToAuction=true) ไว้
-  // ก่อนหน้า จะยังค้างแสดงอยู่ในหน้าประมูลขายสาธารณะและตาราง "รายการที่ส่งประมูลแล้ว" ต่อไปทั้งที่ขายไปแล้วจริง
-  // (บั๊กที่พบจริง — ผู้ใช้รายงานว่ารายการที่บันทึกขายนอกระบบแล้วไม่ถูกเอาออกจากรายการคัดเลือกประมูล) รายการนอกฐาน
-  // (ไม่มีทะเบียน) ไม่ต้องทำเพราะไม่เคยปรากฏในหน้าคัดเลือกประมูล/ประมูลขายสาธารณะอยู่แล้ว (getAuctionCandidates_/
-  // getAuctionListing_ อ่านจากชีต Assets ล้วนๆ) และสถานะขายนอกระบบของรายการเหล่านี้แสดงถูกต้องอยู่แล้วผ่าน
-  // getOffSystemAuctionSales_ แยกต่างหาก
+  // ที่หน้า "Live ประมูล"/"คัดเลือกรายการประมูล" ใช้ — ฟังก์ชันนี้เขียน Tag ให้ตรงกับสถานะที่คำนวณสดใหม่เองด้วยแล้ว
+  // ไม่ต้องเรียก setAssetsTag_ แยกตรงนี้อีก) ไม่งั้นถ้าทรัพย์สินนี้เคยติ๊กส่งประมูล (SendToAuction=true) ไว้ก่อนหน้า
+  // จะยังค้างแสดงอยู่ในหน้าประมูลขายสาธารณะและตาราง "รายการที่ส่งประมูลแล้ว" ต่อไปทั้งที่ขายไปแล้วจริง (บั๊กที่พบจริง
+  // — ผู้ใช้รายงานว่ารายการที่บันทึกขายนอกระบบแล้วไม่ถูกเอาออกจากรายการคัดเลือกประมูล) รายการนอกฐาน (ไม่มีทะเบียน)
+  // ไม่ต้องทำเพราะไม่เคยปรากฏในหน้าคัดเลือกประมูล/ประมูลขายสาธารณะอยู่แล้ว (getAuctionCandidates_/getAuctionListing_
+  // อ่านจากชีต Assets ล้วนๆ) และสถานะขายนอกระบบของรายการเหล่านี้แสดงถูกต้องอยู่แล้วผ่าน getOffSystemAuctionSales_ แยก
   if (asset) {
     adminSetAuctionSold_({ password: body.password, assetId: assetId, assetName: assetName, sold: true, buyer: buyer, soldPrice: price });
   }
