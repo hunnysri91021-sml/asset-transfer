@@ -3190,6 +3190,18 @@ function renderAuctionLive(root){
       </div>
       ` : ''}
 
+      ${isAdmin ? `
+      <div class="card no-print">
+        <h2>🔀 รวมรอบประมูล</h2>
+        <p style="color:var(--muted);font-size:13px;">รวม 2 รอบเข้าด้วยกัน (เช่น รวมรอบที่ 3 เข้ากับรอบที่ 2) — ย้ายใบประมูลทั้งหมดของรอบต้นทางไปเป็นของรอบปลายทาง ถ้าทรัพย์สินชิ้นเดียวกันมีผู้ยื่นคนเดียวกันยื่นราคาไว้ทั้ง 2 รอบ จะเหลือเฉพาะราคาสูงสุดไว้ (ตัดรายการซ้ำอัตโนมัติ) หลังรวมแล้วให้เลือกตัวกรอง "รอบที่ [รอบปลายทาง]" ด้านบนเพื่อดูผลที่รวมกันแล้ว</p>
+        <div class="row">
+          <div><label>รอบต้นทาง</label><input type="text" inputmode="numeric" id="winnersMergeFromRound" placeholder="เช่น 3"></div>
+          <div><label>รอบปลายทาง</label><input type="text" inputmode="numeric" id="winnersMergeToRound" placeholder="เช่น 2"></div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnWinnersMergeRounds" style="margin-top:8px;">🔀 รวมรอบประมูล</button>
+      </div>
+      ` : ''}
+
       ${canManage ? `
       <div class="card no-print">
         <h2>📧 ส่งประกาศผลทางอีเมล</h2>
@@ -3488,6 +3500,23 @@ function renderAuctionLive(root){
         sendBtn.disabled = false;
         if(!res.ok){ toast(res.error||'ส่งอีเมลไม่สำเร็จ','err'); return; }
         toast('ส่งอีเมลประกาศผล '+res.data.count+' รายการสำเร็จ รวมจำนวนเงิน '+fmtMoney(res.data.totalAmount)+' บาท (แนบไฟล์ Excel + PDF)','ok');
+      });
+    };
+
+    const mergeRoundsBtn = document.getElementById('btnWinnersMergeRounds');
+    if(mergeRoundsBtn) mergeRoundsBtn.onclick = ()=>{
+      const fromRound = document.getElementById('winnersMergeFromRound').value.trim();
+      const toRound = document.getElementById('winnersMergeToRound').value.trim();
+      if(!fromRound || !toRound || fromRound===toRound){ toast('กรุณาระบุรอบต้นทาง/ปลายทางให้ถูกต้อง (ต้องเป็นคนละรอบกัน)','err'); return; }
+      if(!confirm('ยืนยันรวมรอบประมูลที่ '+fromRound+' เข้ากับรอบที่ '+toRound+'?\n\nใบประมูลทั้งหมดของรอบที่ '+fromRound+' จะย้ายไปเป็นของรอบที่ '+toRound+' — หากทรัพย์สินชิ้นเดียวกันมีผู้ยื่นคนเดียวกันยื่นราคาไว้ทั้ง 2 รอบ จะเหลือเฉพาะราคาสูงสุดไว้ (ลบรายการที่ราคาต่ำกว่าทิ้ง)\n\nการดำเนินการนี้ย้อนกลับไม่ได้')) return;
+      mergeRoundsBtn.disabled = true;
+      apiPost({ action:'adminMergeAuctionRounds', password: STATE.adminPassword, fromRound, toRound }).then(res=>{
+        mergeRoundsBtn.disabled = false;
+        if(!res.ok){ toast(res.error||'รวมรอบไม่สำเร็จ','err'); return; }
+        toast('รวมรอบสำเร็จ — ย้ายใบประมูล '+res.data.bidDocsMoved+' ใบ ตัดรายการซ้ำ '+res.data.duplicatesRemoved+' รายการ'+(res.data.currentRoundUpdated?' และปรับรอบปัจจุบันกลับเป็นรอบที่ '+res.data.currentRound+' (คืนรายการเปิดประมูล '+res.data.restoredCount+' รายการ)':''),'ok');
+        document.getElementById('winnersMergeFromRound').value = '';
+        document.getElementById('winnersMergeToRound').value = '';
+        Promise.all([loadRoundFilterOptions()]).then(loadWinners);
       });
     };
 
