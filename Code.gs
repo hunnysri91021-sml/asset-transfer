@@ -398,6 +398,9 @@ function doPost(e) {
       case 'adminUndoStartAuctionRound':
         result = adminUndoStartAuctionRound_(body);
         break;
+      case 'adminMergeAuctionRounds':
+        result = adminMergeAuctionRounds_(body);
+        break;
       case 'markAuctionInterest':
         result = markAuctionInterest_(body);
         break;
@@ -2456,6 +2459,115 @@ function adminUndoStartAuctionRound_(body) {
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_UNDO_START_AUCTION_ROUND', 'admin', 'ยกเลิกการเริ่มรอบที่ ' + currentRound + ' กลับไปเป็นรอบที่ ' + previousRound + ' (คืนรายการเปิดประมูล ' + restoredCount + ' รายการ)');
   return { ok: true, data: { previousRound: currentRound, currentRound: previousRound, restoredCount: restoredCount } };
+}
+
+// Admin รวมรอบประมูล 2 รอบเข้าด้วยกัน (เช่น กด "ปิดรอบและเริ่มรอบใหม่" ไปแล้วแต่ภายหลังอยากรวมกลับเป็นรอบเดียว และ
+// adminUndoStartAuctionRound_ ใช้ไม่ได้แล้วเพราะมีการบันทึกใบประมูลเข้ารอบใหม่ไปแล้ว) — ย้ายใบประมูลทั้งหมดของ
+// "รอบต้นทาง" (fromRound) ไปเป็นของ "รอบปลายทาง" (toRound) โดย:
+// 1) เปลี่ยนคอลัมน์ Round ของทุกใบประมูลในรอบต้นทางเป็นรอบปลายทาง
+// 2) ตัด "รายการซ้ำ" — กรณีทรัพย์สินชิ้นเดียวกันมีผู้ยื่นคนเดียวกันยื่นราคาไว้ทั้ง 2 รอบเดิม (ก่อนรวม) จะเหลือไว้
+//    แค่ใบที่ราคาสูงสุด ลบรายการที่ราคาต่ำกว่าทิ้ง (ผู้ยื่นคนละคนสำหรับทรัพย์สินเดียวกัน ไม่ถือเป็นรายการซ้ำ — ยัง
+//    เก็บไว้ทั้งคู่ตามปกติ ราคาสูงสุดชนะเหมือนเดิมอยู่แล้วโดยไม่ต้องตัดอะไร)
+// 3) ถ้า "รอบปัจจุบัน" ของระบบตรงกับรอบต้นทาง ให้ปรับกลับไปเป็นรอบปลายทาง พร้อมคืนสถานะ "ส่งประมูล" ให้ทรัพย์สินที่
+//    เคยถูกถอดออกตอนกด "ปิดรอบและเริ่มรอบใหม่" ครั้งนั้น (เหมือนที่ adminUndoStartAuctionRound_ ทำ)
+function adminMergeAuctionRounds_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const fromRound = parseInt(body.fromRound, 10);
+  const toRound = parseInt(body.toRound, 10);
+  if (!fromRound || fromRound <= 0 || !toRound || toRound <= 0 || fromRound === toRound) {
+    return { ok: false, error: 'กรุณาระบุรอบต้นทาง/ปลายทางให้ถูกต้อง (ต้องเป็นคนละรอบกัน)' };
+  }
+
+  const bidSh = getSS_().getSheetByName(SHEETS.AUCTION_BIDS);
+  const bidValues = bidSh.getDataRange().getValues();
+  const bidIdx = indexMap_(bidValues[0]);
+  if (bidIdx.Round === undefined) {
+    return { ok: false, error: 'ไม่พบคอลัมน์ Round ในชีต AuctionBids กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  }
+
+  // เก็บผู้ยื่น + รอบเดิม (ก่อนย้าย) ของทุกใบประมูลไว้ก่อน ใช้หารายการซ้ำข้ามรอบในขั้นตอนถัดไป
+  const bidderById = {};
+  const originalRoundById = {};
+  const rowsToReassign = [];
+  for (let i = 1; i < bidValues.length; i++) {
+    const bidId = String(bidValues[i][bidIdx.BidID]);
+    bidderById[bidId] = String(bidValues[i][bidIdx.BidderName] || '');
+    const round = bidValues[i][bidIdx.Round] ? (parseInt(bidValues[i][bidIdx.Round], 10) || 1) : 1;
+    originalRoundById[bidId] = round;
+    if (round === fromRound) rowsToReassign.push(i);
+  }
+  if (!rowsToReassign.length) return { ok: false, error: 'ไม่พบใบประมูลในรอบที่ ' + fromRound + ' ให้รวม' };
+  rowsToReassign.forEach(i => { bidSh.getRange(i + 1, bidIdx.Round + 1).setValue(toRound); });
+
+  // ตัดรายการซ้ำข้ามรอบ: กลุ่มตามรหัสทรัพย์สิน+ชื่อผู้ยื่น เฉพาะที่เดิมอยู่คนละรอบ (fromRound/toRound) กัน
+  const itemSh = getSS_().getSheetByName(SHEETS.AUCTION_BID_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues[0]);
+  const groups = {};
+  for (let i = 1; i < itemValues.length; i++) {
+    const bidId = String(itemValues[i][itemIdx.BidID]);
+    const origRound = originalRoundById[bidId];
+    if (origRound !== fromRound && origRound !== toRound) continue;
+    const assetId = String(itemValues[i][itemIdx.AssetID]);
+    const key = assetId + '::' + (bidderById[bidId] || '');
+    if (!groups[key]) groups[key] = [];
+    groups[key].push({ rowNum: i + 1, price: parseFloat(itemValues[i][itemIdx.Price]) || 0, origRound: origRound });
+  }
+  const rowsToDelete = [];
+  Object.keys(groups).forEach(key => {
+    const items = groups[key];
+    const hasFrom = items.some(it => it.origRound === fromRound);
+    const hasTo = items.some(it => it.origRound === toRound);
+    if (items.length < 2 || !hasFrom || !hasTo) return; // ไม่ใช่รายการซ้ำข้ามรอบจริงๆ ไม่ต้องตัด
+    items.sort((a, b) => b.price - a.price); // เก็บราคาสูงสุดไว้ ลบที่เหลือ
+    items.slice(1).forEach(it => rowsToDelete.push(it.rowNum));
+  });
+  rowsToDelete.sort((a, b) => b - a); // ลบจากแถวล่างขึ้นบน กันเลขแถวเพี้ยนระหว่างลบ
+  rowsToDelete.forEach(rowNum => itemSh.deleteRow(rowNum));
+
+  // ถ้ารอบปัจจุบันตรงกับรอบต้นทาง ให้ปรับกลับไปเป็นรอบปลายทาง พร้อมคืนสถานะ "ส่งประมูล" ให้ทรัพย์สินที่เคยถูกถอด
+  // ออกตอนกด "ปิดรอบและเริ่มรอบใหม่" ครั้งนั้น (เหมือน adminUndoStartAuctionRound_) — ถ้ารอบปัจจุบันไม่ใช่รอบต้นทาง
+  // (เช่น รวมรอบเก่าๆ ที่ปิดไปนานแล้วเข้าด้วยกัน) ไม่ต้องยุ่งกับรอบปัจจุบันเลย
+  const currentRound = getAuctionCurrentRound_();
+  let currentRoundUpdated = false;
+  let restoredCount = 0;
+  if (currentRound === fromRound) {
+    const props = PropertiesService.getScriptProperties();
+    const removedAssetIds = JSON.parse(props.getProperty(AUCTION_LAST_ROUND_REMOVED_IDS_PROP) || '[]');
+    if (removedAssetIds.length) {
+      const sh = getSS_().getSheetByName(SHEETS.ASSETS);
+      const values = sh.getDataRange().getValues();
+      const idx = indexMap_(values[0]);
+      if (idx.SendToAuction !== undefined && idx.AuctionSold !== undefined) {
+        const idSet = new Set(removedAssetIds);
+        for (let i = 1; i < values.length; i++) {
+          const auctionSold = String(values[i][idx.AuctionSold]).toLowerCase() === 'true';
+          if (idSet.has(String(values[i][idx.AssetID])) && !auctionSold) {
+            sh.getRange(i + 1, idx.SendToAuction + 1).setValue('TRUE');
+            restoredCount++;
+          }
+        }
+      }
+    }
+    props.setProperty(AUCTION_CURRENT_ROUND_PROP, String(toRound));
+    props.deleteProperty(AUCTION_ROUND_STARTED_AT_PROP);
+    props.deleteProperty(AUCTION_LAST_ROUND_REMOVED_IDS_PROP);
+    currentRoundUpdated = true;
+  }
+
+  invalidateDisposedAssetStatusCache_();
+  logActivity_('', 'ADMIN_MERGE_AUCTION_ROUNDS', 'admin', 'รวมรอบประมูลที่ ' + fromRound + ' เข้ากับรอบที่ ' + toRound + ' (' + rowsToReassign.length + ' ใบประมูล, ตัดรายการซ้ำ ' + rowsToDelete.length + ' รายการ)' + (currentRoundUpdated ? ' และปรับรอบปัจจุบันกลับเป็นรอบที่ ' + toRound + ' (คืนรายการเปิดประมูล ' + restoredCount + ' รายการ)' : ''));
+
+  return {
+    ok: true,
+    data: {
+      bidDocsMoved: rowsToReassign.length,
+      duplicatesRemoved: rowsToDelete.length,
+      currentRoundUpdated: currentRoundUpdated,
+      currentRound: currentRoundUpdated ? toRound : currentRound,
+      restoredCount: restoredCount
+    }
+  };
 }
 
 // ============================================================
