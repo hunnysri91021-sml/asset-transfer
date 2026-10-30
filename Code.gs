@@ -4515,23 +4515,25 @@ function createWriteOff_(body) {
   const runningNo = withLock_(() => {
     const rn = getNextRunningNo_(fromDeptCode + 'W', SHEETS.WRITEOFFS, dept && dept.StartSeqWriteOff);
     const wSheet = getSS_().getSheetByName(SHEETS.WRITEOFFS);
-    wSheet.appendRow([
-      writeOffId,
-      rn,
-      now,
-      body.fromDept || '',
-      fromDeptCode,
-      body.reason || '',
-      body.remark || '',
-      status,
-      body.approverName || '',
-      body.approverEmail || '',
-      token,
-      skipApproval ? now : '',
-      skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '',
-      body.createdBy || '',
-      body.createdByEmail || ''
-    ]);
+    const wValues = wSheet.getDataRange().getValues();
+    const wIdx = indexMap_(wValues[0]);
+    const newRow = wValues[0].map(() => '');
+    newRow[wIdx.WriteOffID] = writeOffId;
+    newRow[wIdx.RunningNo] = rn;
+    newRow[wIdx.CreatedAt] = now;
+    newRow[wIdx.FromDept] = body.fromDept || '';
+    newRow[wIdx.FromDeptCode] = fromDeptCode;
+    newRow[wIdx.Reason] = body.reason || '';
+    newRow[wIdx.Remark] = body.remark || '';
+    newRow[wIdx.Status] = status;
+    newRow[wIdx.ApproverName] = body.approverName || '';
+    newRow[wIdx.ApproverEmail] = body.approverEmail || '';
+    newRow[wIdx.ApprovalToken] = token;
+    newRow[wIdx.ApprovedAt] = skipApproval ? now : '';
+    newRow[wIdx.ApproverComment] = skipApproval ? 'อนุมัติอัตโนมัติ (หน่วยงานนี้ไม่ต้องขออนุมัติ)' : '';
+    newRow[wIdx.CreatedBy] = body.createdBy || '';
+    newRow[wIdx.CreatedByEmail] = body.createdByEmail || '';
+    wSheet.appendRow(newRow);
     return rn;
   });
 
