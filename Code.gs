@@ -452,6 +452,9 @@ function doPost(e) {
       case 'adminBackfillAssetTags':
         result = adminBackfillAssetTags_(body);
         break;
+      case 'adminBackfillOffSystemAuctionSold':
+        result = adminBackfillOffSystemAuctionSold_(body);
+        break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
         break;
@@ -3497,6 +3500,31 @@ function adminBackfillAssetTags_(body) {
   setAssetsTag_(writtenOffIds, 'ชำรุด');
   logActivity_('', 'ADMIN_BACKFILL_TAGS', 'admin', 'ซิงค์แท็กสถานะย้อนหลัง: ขาย ' + soldIds.length + ' รายการ ตัดชำรุด ' + writtenOffIds.length + ' รายการ');
   return { ok: true, data: { soldCount: soldIds.length, writtenOffCount: writtenOffIds.length } };
+}
+
+// ก่อนแก้บั๊ก adminRecordOffSystemSale_ (ดูประวัติ git) ฟังก์ชันบันทึกขายนอกระบบสร้างใบขายออกอย่างเดียว ไม่เคยปัก
+// AuctionSold=true ในชีต Assets เลย ทำให้ทรัพย์สินที่บันทึกขายนอกระบบไปแล้ว "ก่อนหน้า" ที่แก้บั๊ก ยังค้างแสดงอยู่ใน
+// หน้าประมูลขายสาธารณะ/ตาราง "รายการที่ส่งประมูลแล้ว" ต่อไปทั้งที่ขายไปแล้วจริง (ซิงค์แท็กสถานะย้อนหลังด้านบนแก้ได้
+// แค่ Tag ไม่ได้แก้ AuctionSold) ฟังก์ชันนี้ไล่หาเฉพาะทรัพย์สินที่มีใบขายออกอนุมัติแล้วช่องทาง "นอกระบบ" แต่ AuctionSold
+// ยังไม่ true แล้วปักให้ถูกต้องย้อนหลัง — เจาะจงเฉพาะช่องทาง "นอกระบบ" เท่านั้น (ไม่แตะช่องทาง "ประมูล" ที่ SendToAuction
+// =true/AuctionSold=false เป็นสถานะปกติของรายการที่ "กำลังรอผลประมูลอยู่จริง" ไม่ใช่บั๊ก — ถ้าไปปักผิดจะเท่ากับลบ
+// รายการที่ยังเปิดประมูลอยู่จริงออกจากหน้าประมูลขายสาธารณะโดยไม่ตั้งใจ)
+function adminBackfillOffSystemAuctionSold_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetsRaw = getAssetsRaw_();
+  const fixedIds = [];
+  assetsRaw.forEach(a => {
+    const assetId = String(a.AssetID);
+    if (String(a.AuctionSold).toLowerCase() === 'true') return; // ถูกต้องอยู่แล้ว ไม่ต้องแก้
+    const saleInfo = findApprovedSaleInfoForAsset_(assetId);
+    if (!saleInfo || saleInfo.Channel !== 'นอกระบบ') return; // เจาะจงเฉพาะใบขายออกช่องทาง "นอกระบบ" เท่านั้น
+    const buyer = saleInfo.Buyer || 'ไม่ระบุ';
+    const soldPrice = Number(saleInfo.SalePrice) || 0;
+    adminSetAuctionSold_({ password: body.password, assetId: assetId, assetName: a.AssetName, sold: true, buyer: buyer, soldPrice: soldPrice });
+    fixedIds.push(assetId);
+  });
+  logActivity_('', 'ADMIN_BACKFILL_OFFSYSTEM_AUCTIONSOLD', 'admin', 'ซิงค์สถานะขายแล้วย้อนหลังสำหรับรายการขายนอกระบบเก่า: ' + fixedIds.length + ' รายการ' + (fixedIds.length ? ' (' + fixedIds.join(', ') + ')' : ''));
+  return { ok: true, data: { fixedCount: fixedIds.length, fixedIds: fixedIds } };
 }
 
 function findSourceSheet_(srcSs) {
