@@ -3133,6 +3133,7 @@ function sendAuctionWinnersEmail_(body) {
   const rowsHtml = winners.map((w, i) => (
     '<tr>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + (i + 1) + '</td>' +
+    '<td style="border:1px solid #ddd;padding:4px;text-align:center;">' + (w.DisplayImage ? '<img src="' + escapeHtml_(String(w.DisplayImage)) + '" width="34" style="border-radius:3px;object-fit:cover;">' : '-') + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetID) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;">' + escapeHtml_(w.AssetName) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:center;">' + w.Round + '</td>' +
@@ -3149,13 +3150,13 @@ function sendAuctionWinnersEmail_(body) {
   )).join('');
   const totalRowHtml =
     '<tr style="background:#f7f9fc;font-weight:700;">' +
-    '<td colspan="11" style="border:1px solid #ddd;padding:6px;text-align:right;">รวมจำนวนเงิน (ราคาประมูลได้)</td>' +
+    '<td colspan="12" style="border:1px solid #ddd;padding:6px;text-align:right;">รวมจำนวนเงิน (ราคาประมูลได้)</td>' +
     '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + fmtMoneyServer_(totalMaxPrice) + '</td>' +
     '<td style="border:1px solid #ddd;padding:6px;"></td>' +
     '</tr>';
 
   const tableHeadHtml =
-    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">รอบ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>';
+    '<tr style="background:#f0f4f8;"><th style="border:1px solid #ddd;padding:6px;">#</th><th style="border:1px solid #ddd;padding:6px;">รูป</th><th style="border:1px solid #ddd;padding:6px;">รหัส</th><th style="border:1px solid #ddd;padding:6px;">รายการ</th><th style="border:1px solid #ddd;padding:6px;">รอบ</th><th style="border:1px solid #ddd;padding:6px;">ประเภท</th><th style="border:1px solid #ddd;padding:6px;">ผู้ดูแล</th><th style="border:1px solid #ddd;padding:6px;">สถานที่</th><th style="border:1px solid #ddd;padding:6px;">ผู้ประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">ราคาทรัพย์สิน</th><th style="border:1px solid #ddd;padding:6px;">ราคากลาง</th><th style="border:1px solid #ddd;padding:6px;">มูลค่าทางบัญชี</th><th style="border:1px solid #ddd;padding:6px;">ราคาประมูลได้</th><th style="border:1px solid #ddd;padding:6px;">สถานะ</th></tr>';
 
   const html =
     '<div style="font-family:Sarabun,Arial,sans-serif;max-width:680px;margin:auto;">' +
@@ -3182,14 +3183,19 @@ function sendAuctionWinnersEmail_(body) {
     // ต้องเปิด Advanced Service "Drive API" ไว้ก่อน ถ้าแปลงไม่สำเร็จ (เช่นยังไม่เปิด Drive API) ให้ข้ามไปเงียบๆ
     // ส่งแค่ xlsx ต่อ ไม่ทำให้การส่งอีเมลทั้งฉบับล้มเหลว
     try {
+      // @page landscape ไว้เฉพาะ PDF ฉบับนี้เท่านั้น (ไม่ใส่ใน pdfDocStyle_ ที่ใช้ร่วมกับ PDF เอกสารโอนย้าย/ขายออก/
+      // ตัดชำรุดแบบ portrait ปกติ) เพราะตารางมีถึง 14 คอลัมน์ (รวมคอลัมน์รูปที่เพิ่งเพิ่ม) กว้างเกินหน้ากระดาษ A4
+      // แนวตั้งปกติจนล้น/ตัดขอบ — วาง <style> ไว้หลัง pdfDocStyle_() เพื่อให้ override ลำดับ CSS เดียวกันได้
       const pdfHtml =
-        '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + '</head><body>' +
+        '<html><head><meta charset="UTF-8">' + pdfDocStyle_() +
+        '<style>@page{size:A4 landscape;margin:12mm 8mm;}body{font-size:11px;}table.doc-table{font-size:10.5px;}</style>' +
+        '</head><body>' +
         '<div class="doc-header">' + escapeHtml_(CONFIG.COMPANY_NAME) + '</div>' +
         '<div class="doc-title">ประกาศผลผู้ประมูลได้ — ' + escapeHtml_(roundLabel) + '</div>' +
         '<div class="doc-field"><b>จำนวน</b> ' + winners.length + ' รายการ &nbsp;&nbsp;&nbsp; <b>รวมจำนวนเงิน</b> ' + fmtMoneyServer_(totalMaxPrice) + ' บาท</div>' +
         (message ? '<div class="doc-field">' + escapeHtml_(message) + '</div>' : '') +
         '<table class="doc-table"><tr>' +
-        '<th>#</th><th>รหัส</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคาทรัพย์สิน</th><th>ราคากลาง</th><th>มูลค่าทางบัญชี</th><th>ราคาประมูลได้</th><th>สถานะ</th>' +
+        '<th>#</th><th>รูป</th><th>รหัส</th><th>รายการ</th><th>รอบ</th><th>ประเภท</th><th>ผู้ดูแล</th><th>สถานที่</th><th>ผู้ประมูลได้</th><th>ราคาทรัพย์สิน</th><th>ราคากลาง</th><th>มูลค่าทางบัญชี</th><th>ราคาประมูลได้</th><th>สถานะ</th>' +
         '</tr>' + rowsHtml + totalRowHtml + '</table>' +
         '</body></html>';
       attachments.push(htmlToPdfBlob_(pdfHtml, 'ประกาศผลผู้ประมูลได้_' + roundLabel));
