@@ -2777,8 +2777,12 @@ function getOffSystemSaleCandidates_(q) {
   const registeredIds = {};
   assetsRaw.forEach(a => { registeredIds[String(a.AssetID)] = true; });
 
+  // AuctionSold (คอลัมน์ดิบในชีต Assets) ต้องเช็คแยกไว้ด้วย เพราะ "Confirm" ที่หน้า Live ประมูล/ประกาศผล
+  // (adminConfirmAuctionWinner_ → adminSetAuctionSold_) ปักค่านี้ตรงๆ โดยไม่สร้างใบขายออกเลย — ไม่เข้า disposed
+  // หรือ lifecycleMeta.channelByAsset ข้างบนเลยสักทาง ถ้าไม่เช็คตรงนี้ด้วยจะบันทึกขายนอกระบบซ้ำให้ทรัพย์สินที่ Confirm
+  // ว่าขายผ่านประมูลไปแล้วได้อีก (บั๊กที่พบระหว่างทบทวนระบบ)
   const registered = getAssetsRaw_(q)
-    .filter(a => disposed[String(a.AssetID)] !== 'Sold' && !lifecycleMeta.channelByAsset[String(a.AssetID)])
+    .filter(a => disposed[String(a.AssetID)] !== 'Sold' && !lifecycleMeta.channelByAsset[String(a.AssetID)] && String(a.AuctionSold).toLowerCase() !== 'true')
     .map(a => ({ AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department || '', HasAssetRecord: true }));
 
   const offListingById = getAuctionOffListingMap_();
@@ -2810,7 +2814,14 @@ function getOffSystemSaleCandidates_(q) {
     const matchedAsset = assetsRaw.find(a => matchFn(a.AssetID, a.AssetName));
     if (matchedAsset) {
       const id = String(matchedAsset.AssetID);
-      excludedInfo = { AssetID: id, AssetName: matchedAsset.AssetName, Status: disposed[id] || 'Active', SaleInfo: findApprovedSaleInfoForAsset_(id) };
+      // ถ้าไม่มีใบขายออกอนุมัติแล้ว (SaleInfo null) แต่ AuctionSold ดิบในชีต Assets เป็น true — แสดงว่าขายผ่าน
+      // Confirm ที่หน้า Live ประมูล/ประกาศผล (adminSetAuctionSold_) ซึ่งไม่สร้างใบขายออกเลย ใช้ AuctionBuyer/
+      // AuctionSoldPrice ที่ปักไว้ตรงนั้นแทน ไม่ให้ Admin เห็นแค่สถานะเฉยๆ โดยไม่รู้รายละเอียดการขาย
+      const saleInfo = findApprovedSaleInfoForAsset_(id) ||
+        (String(matchedAsset.AuctionSold).toLowerCase() === 'true'
+          ? { Buyer: matchedAsset.AuctionBuyer || '', Channel: 'ประมูล', SalePrice: matchedAsset.AuctionSoldPrice || '' }
+          : null);
+      excludedInfo = { AssetID: id, AssetName: matchedAsset.AssetName, Status: disposed[id] || 'Active', SaleInfo: saleInfo };
     } else {
       const matchedRow = itemValues.find(r => { const id = String(r[itemIdx.AssetID] || '').trim(); return id && matchFn(id, r[itemIdx.AssetName]); });
       if (matchedRow) {
@@ -2884,7 +2895,10 @@ function adminRecordOffSystemSale_(body) {
   // เป็น WrittenOff เสมอแม้จะมีใบขายออกอนุมัติแล้วซ้อนอยู่ ถ้าเช็คแค่ disposed[assetId]==='Sold' เฉยๆ จะกันการขาย
   // ซ้ำทรัพย์สินตัดชำรุดที่บันทึกขายนอกระบบไปแล้วไม่ได้เลย
   const lifecycleMeta = getAssetLifecycleMeta_();
-  if (disposed[assetId] === 'Sold' || lifecycleMeta.channelByAsset[assetId]) {
+  // เช็ค AuctionSold ดิบของชีต Assets แยกไว้ด้วย (เหมือน getOffSystemSaleCandidates_) เพราะ Confirm ที่หน้า Live
+  // ประมูล/ประกาศผลปักค่านี้ตรงๆ โดยไม่สร้างใบขายออกเลย ไม่เข้า disposed/channelByAsset ข้างบนสักทาง
+  const alreadyAuctionSold = asset && String(asset.AuctionSold).toLowerCase() === 'true';
+  if (disposed[assetId] === 'Sold' || lifecycleMeta.channelByAsset[assetId] || alreadyAuctionSold) {
     return { ok: false, error: 'ทรัพย์สินนี้ถูกขายไปแล้ว ไม่สามารถบันทึกขายนอกระบบซ้ำได้' };
   }
 
@@ -2940,6 +2954,16 @@ function adminRecordOffSystemSale_(body) {
   // ประมูลในแอปปกติ (adminSetAuctionSold_) ก็ยังคงสถานะ WrittenOff ต่อไปเช่นกัน ไม่ได้กลายเป็น Sold — Tag ที่เขียน
   // กลับไปที่ชีต Assets จึงต้องสอดคล้องกับผลลัพธ์จริงตรงนี้ด้วย ไม่ใช่ตั้งเป็น 'ขาย' เสมอแบบเดิม
   setAssetsTag_([assetId], disposed[assetId] === 'WrittenOff' ? 'ชำรุด' : 'ขาย');
+  // ทรัพย์สินที่มีทะเบียน (ไม่ใช่รายการนอกฐาน) ต้องปักหมุด AuctionSold=true ด้วย (ใช้ adminSetAuctionSold_ ตัวเดียวกับ
+  // ที่หน้า "Live ประมูล"/"คัดเลือกรายการประมูล" ใช้) ไม่งั้นถ้าทรัพย์สินนี้เคยติ๊กส่งประมูล (SendToAuction=true) ไว้
+  // ก่อนหน้า จะยังค้างแสดงอยู่ในหน้าประมูลขายสาธารณะและตาราง "รายการที่ส่งประมูลแล้ว" ต่อไปทั้งที่ขายไปแล้วจริง
+  // (บั๊กที่พบจริง — ผู้ใช้รายงานว่ารายการที่บันทึกขายนอกระบบแล้วไม่ถูกเอาออกจากรายการคัดเลือกประมูล) รายการนอกฐาน
+  // (ไม่มีทะเบียน) ไม่ต้องทำเพราะไม่เคยปรากฏในหน้าคัดเลือกประมูล/ประมูลขายสาธารณะอยู่แล้ว (getAuctionCandidates_/
+  // getAuctionListing_ อ่านจากชีต Assets ล้วนๆ) และสถานะขายนอกระบบของรายการเหล่านี้แสดงถูกต้องอยู่แล้วผ่าน
+  // getOffSystemAuctionSales_ แยกต่างหาก
+  if (asset) {
+    adminSetAuctionSold_({ password: body.password, assetId: assetId, assetName: assetName, sold: true, buyer: buyer, soldPrice: price });
+  }
   invalidateDisposedAssetStatusCache_();
   exportDocToSharePointSafe_('sale', getSaleFull_(saleId));
   logActivity_(saleId, 'ADMIN_RECORD_OFFSYSTEM_SALE', 'admin', 'บันทึกขายนอกระบบ ' + assetId + ' ผู้ซื้อ ' + buyer + ' ราคา ' + price + ' (รอบที่ ' + round + ')');
