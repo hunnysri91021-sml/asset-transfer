@@ -1047,7 +1047,6 @@ function renderAssetList(root){
         <select id="alDivision" autocomplete="off" style="max-width:160px;"><option value="">ทุกฝ่าย</option></select>
         <select id="alWorkGroup" autocomplete="off" style="max-width:160px;"><option value="">ทุกกลุ่มงาน</option></select>
         <select id="alLocation" autocomplete="off" style="max-width:160px;"><option value="">ทุกสถานที่</option></select>
-        <button class="btn btn-secondary btn-sm" id="btnAlFilter">กรอง</button>
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExportPdf">🖨️ Export PDF (มีรูป QR)</button>
@@ -1071,8 +1070,11 @@ function renderAssetList(root){
   document.getElementById('btnAlTabAll').onclick = ()=>{ STATE.assetListTab = 'all'; render(); };
   const btnAlTabManageEl = document.getElementById('btnAlTabManage');
   if(btnAlTabManageEl) btnAlTabManageEl.onclick = ()=>{ STATE.assetListTab = 'manage'; render(); };
-  document.getElementById('btnAlFilter').onclick = load;
   document.getElementById('btnAlRefresh').onclick = load;
+  // ค้นหาแบบกรองสดทันทีที่พิมพ์ (ไม่ต้องกดปุ่ม "กรอง" อีกต่อไป) — ย้ายมากรองฝั่ง client จากข้อมูลที่โหลดมาครบแล้ว
+  // (STATE.assetsFull) แทนการยิง apiGet ไปเซิร์ฟเวอร์ใหม่ทุกครั้งที่พิมพ์ เหมือนตัวกรองอื่น (สถานะ/ฝ่าย/กลุ่มงาน/
+  // สถานที่) ที่กรองสดอยู่แล้วทุกครั้งที่เปลี่ยนค่า ไม่ต้องกดปุ่มเช่นกัน
+  document.getElementById('alSearch').oninput = renderTable;
   document.getElementById('alStatus').onchange = renderTable;
   document.getElementById('alDivision').onchange = (e)=>{ selectedDivision = e.target.value; renderTable(); };
   document.getElementById('alWorkGroup').onchange = (e)=>{ selectedWorkGroup = e.target.value; renderTable(); };
@@ -1126,9 +1128,7 @@ function renderAssetList(root){
   if(!noDeptsAssigned) load();
 
   function load(){
-    const q = document.getElementById('alSearch').value.trim();
     const params = { action:'getAssetListBundle', password: STATE.adminPassword || '' };
-    if(q) params.q = q;
     document.getElementById('alTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
     apiGet(params).then(res=>{
       if(!res.ok){ toast(res.error||'โหลดข้อมูลไม่สำเร็จ','err'); return; }
@@ -1175,7 +1175,13 @@ function renderAssetList(root){
 
   function filteredRows(){
     const statusFilter = document.getElementById('alStatus').value;
+    const qq = (document.getElementById('alSearch').value||'').trim().toLowerCase();
     let rows = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
+    if(qq) rows = rows.filter(a =>
+      String(a.AssetID).toLowerCase().indexOf(qq)!==-1 ||
+      String(a.AssetName).toLowerCase().indexOf(qq)!==-1 ||
+      String(a.Custodian||'').toLowerCase().indexOf(qq)!==-1
+    );
     if(statusFilter) rows = rows.filter(a => assetLifecycleBucket(a, queuedPurposeOf(a)) === statusFilter);
     if(selectedDivision) rows = rows.filter(a => a.Division === selectedDivision);
     if(selectedWorkGroup) rows = rows.filter(a => a.WorkGroup === selectedWorkGroup);
