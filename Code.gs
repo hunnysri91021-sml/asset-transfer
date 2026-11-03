@@ -395,6 +395,9 @@ function doPost(e) {
       case 'adminConfirmSaleChannelCompleted':
         result = adminConfirmSaleChannelCompleted_(body);
         break;
+      case 'adminVoidSaleDoc':
+        result = adminVoidSaleDoc_(body);
+        break;
       case 'adminStartNewAuctionRound':
         result = adminStartNewAuctionRound_(body);
         break;
@@ -4529,6 +4532,50 @@ function findSaleRow_(saleId) {
   return null;
 }
 
+// Admin ยกเลิกใบขายออกที่อนุมัติแล้วใบใดใบหนึ่งโดยเฉพาะเจาะจง (ต่างจาก adminRestoreAsset_ ที่ยกเลิกทุกใบขาย/ตัดชำรุด
+// ของทรัพย์สินชิ้นนั้นพร้อมกันหมด) ใช้แก้ปัญหาทรัพย์สินชิ้นเดียวมีใบขายออกอนุมัติแล้วซ้ำซ้อนกันมากกว่า 1 ใบ (เช่น สร้าง
+// ซ้ำโดยไม่ได้ตั้งใจ ไปโผล่ปนกันทั้งตาราง "ขาย" และ "ขายจากการประมูล" พร้อมกัน) — เลือกยกเลิกเฉพาะใบที่ไม่ถูกต้อง
+// เก็บใบที่ถูกต้องไว้ตามเดิม ย้อนกลับไม่ได้ (ไม่มีปุ่ม "ยกเลิกการยกเลิก")
+function adminVoidSaleDoc_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const saleId = String(body.saleId || '').trim();
+  if (!saleId) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
+  const found = findSaleRow_(saleId);
+  if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
+  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ยกเลิกได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น (สถานะปัจจุบัน: ' + found.obj.Status + ')' };
+
+  const sh = getSS_().getSheetByName(SHEETS.SALES);
+  sh.getRange(found.rowNum, found.idx.Status + 1).setValue(STATUS.VOIDED);
+  if (found.idx.ApproverComment !== undefined) {
+    sh.getRange(found.rowNum, found.idx.ApproverComment + 1).setValue(
+      (found.obj.ApproverComment ? found.obj.ApproverComment + ' | ' : '') + 'ยกเลิกโดย Admin (ใบซ้ำซ้อน)' + (body.reason ? ': ' + body.reason : '')
+    );
+  }
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  const affectedAssetIds = [];
+  if (itemIdx.Voided !== undefined) {
+    for (let i = 0; i < itemValues.length; i++) {
+      if (String(itemValues[i][itemIdx.SaleID]) === saleId) {
+        itemSh.getRange(i + 2, itemIdx.Voided + 1).setValue('TRUE');
+        affectedAssetIds.push(String(itemValues[i][itemIdx.AssetID]));
+      }
+    }
+  }
+
+  invalidateDisposedAssetStatusCache_();
+  // สถานะ/แท็กของทรัพย์สินที่ได้รับผลกระทบ ต้องคำนวณใหม่หลัง void (อาจยังเป็น Sold จากใบอื่นที่เหลืออยู่ หรือกลับเป็น Active)
+  const disposedAfter = getDisposedAssetStatus_();
+  affectedAssetIds.forEach(assetId => {
+    setAssetsTag_([assetId], tagForDisposedStatus_(disposedAfter[assetId]));
+  });
+
+  logActivity_(saleId, 'ADMIN_VOID_SALE_DOC', 'admin', 'ยกเลิกใบขายออก ' + found.obj.RunningNo + ' (ใบซ้ำซ้อน)' + (body.reason ? ' เหตุผล: ' + body.reason : ''));
+  return { ok: true, data: { saleId: saleId, runningNo: found.obj.RunningNo, affectedAssetIds: affectedAssetIds } };
+}
+
 // Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
 // เพิ่มขั้นตอนนี้เพื่อให้ระดับความมั่นใจเดียวกับช่องทาง "ประมูล" ที่ต้องรอจนมีคนประมูลได้ก่อนถึงจะนับว่าขายแล้วจริง —
 // ไม่กระทบ AssetStatus/Tag ที่ตัดสินจากการอนุมัติเอกสารเหมือนเดิม (ดู CLAUDE.md) เป็นสถานะเสริมสำหรับ Kanban หน้ารายการขายออกเท่านั้น
@@ -4561,9 +4608,19 @@ function adminConfirmSale_(body) {
   return { ok: true, data: { successCount: successCount, failedCount: errors.length, errors: errors } };
 }
 
+// กันสร้างใบขายออกซ้ำซ้อนให้ทรัพย์สินที่มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อนแล้ว (เช่น เคยขายผ่านช่องทางประมูลไปแล้ว
+// แต่มาสร้างใบขายออกปกติซ้ำอีกใบโดยไม่รู้ตัว) — เดิมฟังก์ชันนี้ไม่เช็คเลย ทำให้ทรัพย์สินชิ้นเดียวมีใบขายออกอนุมัติแล้ว
+// พร้อมกัน 2 ใบคนละช่องทางได้ (บั๊กที่พบจริง: FA-41-65-406/FA-41-66-434 ไปโผล่ซ้ำทั้งตาราง "ขาย" และ "ขายจากการ
+// ประมูล" ที่หน้า "ทรัพย์สินที่ขายแล้ว" พร้อมกัน) ใช้เงื่อนไขเดียวกับ adminQuickDisposeAsset_ ที่กันไว้อยู่แล้ว
 function createSale_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
+
+  const disposedForCreate = getDisposedAssetStatus_();
+  const alreadyDisposedIds = items.map(it => String(it.assetId || '')).filter(id => id && disposedForCreate[id]);
+  if (alreadyDisposedIds.length) {
+    return { ok: false, error: 'ทรัพย์สินต่อไปนี้มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อน ไม่สามารถสร้างใบขายออกซ้ำได้ (กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน ถ้าต้องการทำรายการใหม่): ' + alreadyDisposedIds.join(', ') };
+  }
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
@@ -4793,9 +4850,16 @@ function findWriteOffRow_(writeOffId) {
   return null;
 }
 
+// กันสร้างใบตัดชำรุดซ้ำซ้อนให้ทรัพย์สินที่มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อนแล้ว — เหตุผลเดียวกับการ์ดใน createSale_
 function createWriteOff_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
+
+  const disposedForCreate = getDisposedAssetStatus_();
+  const alreadyDisposedIds = items.map(it => String(it.assetId || '')).filter(id => id && disposedForCreate[id]);
+  if (alreadyDisposedIds.length) {
+    return { ok: false, error: 'ทรัพย์สินต่อไปนี้มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อน ไม่สามารถสร้างใบตัดชำรุดซ้ำได้ (กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน ถ้าต้องการทำรายการใหม่): ' + alreadyDisposedIds.join(', ') };
+  }
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
