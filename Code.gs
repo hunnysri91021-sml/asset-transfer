@@ -1045,14 +1045,20 @@ function computeDisposalData_() {
   // ถูกนำไปประมูลและ Admin กด Confirm ผู้ชนะ (ขายจบจริง) โดยไม่เคยผ่านใบขาย/ตัดชำรุดมาก่อนเลย เดิมจะไม่มีการตั้ง
   // status[assetId] เลย (ไม่ใช่ 'WrittenOff') ทำให้เงื่อนไขเดิมไม่ทำงาน หน้ารายการทรัพย์สินจึงยังค้างแสดง "ใช้งานปกติ"
   // ทั้งที่ประกาศผลว่าขายแล้วจริง (บั๊กที่พบจริง: GA-LB-54-020)
+  // ต้องปัก meta.channelByAsset เป็น 'ประมูล' ด้วยในกรณีนี้ (ไม่ใช่แค่ status) เพราะ assetLifecycleBucket (index.html)
+  // ใช้ a.SaleChannel แยกสาขา "ขายผ่านประมูล" ออกจาก "ขายตรง" — ถ้าไม่ปักให้ จะไม่มีจุดไหนเคยตั้งค่านี้ไว้เลยสำหรับ
+  // ทรัพย์สินที่ไม่เคยมีใบขายออกจริง (channelByAsset ปกติมาจากการไล่ SaleItems ของใบขายออกที่อนุมัติแล้วเท่านั้น)
+  // ทำให้ตกไปอยู่สาขา "ขายตรงยังไม่ยืนยัน" (AwaitingSale) แทนที่จะเป็น "ขายแล้ว" ทั้งที่ AuctionSold=true จริง
+  // (บั๊กที่พบจริง: CA-00-56-030 ค้างแสดง "รอขาย" ที่หน้ารายการทรัพย์สิน ทั้งที่ขายผ่านประมูลและ Confirm แล้ว)
   const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
   const assetsValues = assetsSh.getDataRange().getValues();
   const assetsIdx = indexMap_(assetsValues.shift());
   if (assetsIdx.AuctionSold !== undefined) {
     assetsValues.forEach(r => {
       const assetId = String(r[assetsIdx.AssetID]);
-      if (status[assetId] !== 'Sold' && String(r[assetsIdx.AuctionSold]).toLowerCase() === 'true') {
+      if (String(r[assetsIdx.AuctionSold]).toLowerCase() === 'true') {
         status[assetId] = 'Sold';
+        meta.channelByAsset[assetId] = 'ประมูล';
       }
     });
   }
