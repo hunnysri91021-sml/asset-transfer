@@ -395,6 +395,9 @@ function doPost(e) {
       case 'adminConfirmSaleChannelCompleted':
         result = adminConfirmSaleChannelCompleted_(body);
         break;
+      case 'exportGenericListPdf':
+        result = exportGenericListPdf_(body);
+        break;
       case 'adminVoidSaleDoc':
         result = adminVoidSaleDoc_(body);
         break;
@@ -1323,6 +1326,55 @@ function logout_(body) {
 
 function parseDepartments_(v) {
   return String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// Export PDF ทั่วไป คู่กับปุ่ม "⬇ Export Excel" ที่มีอยู่แล้วในหลายหน้า (รายการขายออก/ตัดชำรุด/โอนย้าย/ประวัติการใช้งาน/
+// ใบประมูล/ประกาศผล/ข้อมูลรวม/ทรัพย์สินที่ขายแล้ว ฯลฯ) — ใช้โครงสร้างเดียวกับ exportAuctionListingPdf_/htmlToPdfBlob_
+// แต่รับ headers/rows เป็น array ทั่วไปจาก frontend แทนที่จะเขียนฟังก์ชันเฉพาะทุกหน้า เพราะแต่ละหน้ามีแค่คอลัมน์ต่างกัน
+// ไม่มีหน้าไหนต้องการโครงสร้างพิเศษเกินตาราง + รูปภาพ (ถ้ามี) — body.sections: array ของ {title, headers, rows,
+// imageCol} พิมพ์ต่อกันเป็นหลายตารางในไฟล์เดียว (เทียบเท่าหลาย sheet ของ Excel) imageCol: index ของคอลัมน์ในแต่ละแถว
+// ที่เป็น URL รูปภาพ (ไม่ระบุ = ไม่มีคอลัมน์รูปในตารางนั้น) — ค่าทุกคอลัมน์ต้องเตรียมพร้อมแสดงผลแล้วจาก frontend
+// (เช่นผ่าน fmtMoney/fmtDate มาแล้ว) เพราะฝั่งนี้ไม่ query ข้อมูลใหม่ แค่แปลง HTML ที่ได้รับมาเป็น PDF เท่านั้น
+function exportGenericListPdf_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'กรุณาเข้าสู่ระบบก่อนใช้งาน' };
+  const title = String(body.title || 'รายการ').trim() || 'รายการ';
+  const sections = Array.isArray(body.sections) && body.sections.length
+    ? body.sections
+    : [{ title: '', headers: body.headers, rows: body.rows, imageCol: body.imageCol }];
+
+  let totalRows = 0;
+  const sectionsHtml = sections.map(sec => {
+    const headers = Array.isArray(sec.headers) ? sec.headers : [];
+    const rows = Array.isArray(sec.rows) ? sec.rows : [];
+    const imageCol = Number.isInteger(sec.imageCol) ? sec.imageCol : -1;
+    if (!headers.length || !rows.length) return '';
+    totalRows += rows.length;
+    const headHtml = '<tr>' + headers.map(h => '<th>' + escapeHtml_(String(h)) + '</th>').join('') + '</tr>';
+    const rowsHtml = rows.map(r => '<tr>' + r.map((cell, i) => {
+      if (i === imageCol) {
+        return '<td>' + (cell ? '<img src="' + escapeHtml_(String(cell)) + '" width="50" style="border-radius:4px;object-fit:cover;">' : '-') + '</td>';
+      }
+      return '<td class="left">' + escapeHtml_(cell == null || cell === '' ? '-' : String(cell)) + '</td>';
+    }).join('') + '</tr>').join('');
+    return (sec.title ? '<div class="doc-title" style="margin-top:14px;">' + escapeHtml_(String(sec.title)) + ' (' + rows.length + ' รายการ)</div>' : '') +
+      '<table class="doc-table">' + headHtml + rowsHtml + '</table>';
+  }).join('');
+
+  if (!totalRows) return { ok: false, error: 'ไม่มีข้อมูลให้ export' };
+
+  const landscapeStyle = body.landscape ? '<style>@page{size:A4 landscape;}</style>' : '';
+  const html = '<html><head><meta charset="UTF-8">' + pdfDocStyle_() + landscapeStyle + '</head><body>' +
+    '<div class="doc-header">' + escapeHtml_(title) + '</div>' +
+    sectionsHtml +
+    '</body></html>';
+
+  try {
+    const blob = htmlToPdfBlob_(html, title);
+    return { ok: true, data: { base64: Utilities.base64Encode(blob.getBytes()), fileName: title + '.pdf' } };
+  } catch (err) {
+    return { ok: false, error: 'สร้าง PDF ไม่สำเร็จ: ' + err + ' — ตรวจสอบว่าเปิดใช้งาน Advanced Service "Drive API" แล้วหรือยัง' };
+  }
 }
 
 // Export หน้า "ประมูลขาย" (รายการประมูล) เป็น PDF พร้อมรูปภาพจริง — ต่างจากปุ่ม "⬇ Export Excel" เดิมที่ export

@@ -510,6 +510,22 @@ function downloadBase64File(base64, fileName, mimeType){
   document.body.removeChild(link);
 }
 
+// Export PDF ทั่วไป คู่กับ exportExcel — เรียก backend exportGenericListPdf ให้สร้างไฟล์ .pdf จริงให้ดาวน์โหลด (ฝังรูป
+// ภาพจริงได้ถ้ามีคอลัมน์รูป ต่างจาก exportExcel ที่มีแค่ลิงก์รูปเป็นข้อความ) opts: { title, sections: [{title, headers,
+// rows, imageCol}], landscape, btn } — หรือรูปแบบย่อตารางเดียว { title, headers, rows, imageCol, landscape, btn }
+function exportPdfGeneric(opts){
+  const sections = opts.sections || [{ title: opts.sectionTitle||'', headers: opts.headers, rows: opts.rows, imageCol: opts.imageCol }];
+  const hasData = sections.some(s => (s.rows||[]).length);
+  if(!hasData){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+  const btn = opts.btn;
+  if(btn) btn.disabled = true;
+  apiPost({ action:'exportGenericListPdf', password: STATE.adminPassword, title: opts.title, sections, landscape: !!opts.landscape }).then(res=>{
+    if(btn) btn.disabled = false;
+    if(!res.ok){ toast(res.error||'สร้าง PDF ไม่สำเร็จ','err'); return; }
+    downloadBase64File(res.data.base64, res.data.fileName, 'application/pdf');
+  });
+}
+
 /* ================= ITEM IMAGES (up to 5 images per asset line item) ================= */
 const ITEM_IMAGE_LIMIT = 5;
 function docImgGallery(images){
@@ -1891,6 +1907,7 @@ function renderDashboard(root){
     document.getElementById('dashHost').innerHTML = `
       <div class="toolbar no-print" style="justify-content:flex-end;margin-bottom:10px;">
         <button class="btn btn-secondary btn-sm" id="btnDashExport">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnDashExportPdf">⬇ Export PDF</button>
       </div>
       ${tilesHtml}
       <div class="row" style="margin-top:24px;align-items:flex-start;">
@@ -1959,6 +1976,32 @@ function renderDashboard(root){
         rows: ASSET_TAGS.map(t=>[t, byTag[t]||0])
       };
       exportExcel('ข้อมูลรวมทรัพย์สิน.xlsx', [statusSheet, deptSheet, deptQueueSheet, tagSheet]);
+    };
+    document.getElementById('btnDashExportPdf').onclick = (e)=>{
+      const statusRows = LIFECYCLE_BUCKET_ORDER.map(st=>{
+        const d = byStatus[st] || { count:0, purchase:0, book:0 };
+        return [LIFECYCLE_BUCKET_LABELS[st], d.count, fmtMoney(d.purchase), canSeePrice() ? fmtMoney(d.book) : 'ไม่มีสิทธิ์ดู'];
+      }).concat([['ทั้งหมด', assets.length, fmtMoney(assets.reduce((s,a)=>s+(parseFloat(a.PurchasePrice)||0),0)), canSeePrice() ? fmtMoney(assets.reduce((s,a)=>s+(parseFloat(a.BookValue)||0),0)) : 'ไม่มีสิทธิ์ดู']]);
+      const deptRowsPdf = Object.keys(byDept).sort().map(d=>{
+        const v = byDept[d];
+        return [d, v.count, v.active, v.sold, v.writtenOff, v.auction, v.reauction, fmtMoney(v.purchase), canSeePrice() ? fmtMoney(v.book) : 'ไม่มีสิทธิ์ดู'];
+      });
+      const deptQueueRowsPdf = Object.keys(byDept).sort().map(d=>{
+        const v = byDept[d];
+        return [d, v.transfer, v.sale, v.writeoff, v.transfer+v.sale+v.writeoff];
+      });
+      const tagRowsPdf = ASSET_TAGS.map(t=>[t, byTag[t]||0]);
+      exportPdfGeneric({
+        title: 'ข้อมูลรวมทรัพย์สิน',
+        landscape: true,
+        btn: e.currentTarget,
+        sections: [
+          { title: 'สรุปตามสถานะ', headers: ['สถานะ','จำนวน','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'], rows: statusRows },
+          { title: 'สรุปตามหน่วยงาน', headers: ['หน่วยงาน','จำนวนทั้งหมด','ใช้งาน','ขายแล้ว','ตัดชำรุด','ประมูลขาย','ประมูลใหม่','ราคาซื้อรวม','มูลค่าตามบัญชีรวม'], rows: deptRowsPdf },
+          { title: 'สรุปการจัดการตามหน่วยงาน', headers: ['หน่วยงาน','รอโอนย้าย','รอขาย','รอตัดชำรุด','รวมที่รอคิว'], rows: deptQueueRowsPdf },
+          { title: 'สรุปตามแท็กสถานะ', headers: ['แท็กสถานะ','จำนวน'], rows: tagRowsPdf },
+        ]
+      });
     };
   }
 }
@@ -2781,6 +2824,23 @@ function renderAuctionSoldAssets(root){
     exportExcel('ทรัพย์สินที่ขายแล้ว.xlsx', sheets);
   }
 
+  function exportSoldPdf(e){
+    if(!canExport){ toast('ไม่มีสิทธิ์ export หน้านี้','err'); return; }
+    const filteredDirect = filterRows(directRows);
+    const filteredAuction = filterRows(auctionRows);
+    exportPdfGeneric({
+      title: 'ทรัพย์สินที่ขายแล้ว',
+      landscape: true,
+      btn: e.currentTarget,
+      sections: [
+        { title: 'ขาย', imageCol: 0, headers: ['รูป','รหัส','ชื่อทรัพย์สิน','หน่วยงาน','มูลค่าตามบัญชี','ผู้ซื้อ','ราคาที่ขายได้','วันที่ขาย'],
+          rows: filteredDirect.map(a => [a.DisplayImage||'', a.AssetID, a.AssetName, a.Department, showBookValue?fmtMoney(a.BookValue):'ไม่แสดง', a.Buyer||'-', fmtMoney(a.SalePrice), a.SoldAt?fmtDate(a.SoldAt):'-']) },
+        { title: 'ขายจากการประมูล', imageCol: 0, headers: ['รูป','รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ราคากลาง','มูลค่าตามบัญชี','ผู้ประมูลได้','ราคาที่ขายได้','วันที่ขาย'],
+          rows: filteredAuction.map(a => [a.DisplayImage||'', a.AssetID, a.AssetName, a.Department, a.ReferencePrice?fmtMoney(a.ReferencePrice):'-', showBookValue?fmtMoney(a.BookValue):'ไม่แสดง', a.AuctionBuyer||'-', fmtMoney(a.AuctionSoldPrice), a.AuctionSoldAt?fmtDate(a.AuctionSoldAt):'-']) },
+      ]
+    });
+  }
+
   root.innerHTML = `
     <div class="card">
       <h2>ทรัพย์สินที่ขายแล้ว</h2>
@@ -2790,6 +2850,7 @@ function renderAuctionSoldAssets(root){
         <select id="soldDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>
         ${STATE.role==='admin' ? `<button class="btn btn-secondary btn-sm" id="btnSoldToggleBookValue">👁 แสดงมูลค่าตามบัญชี</button>` : ''}
         ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnSoldExport">⬇ Export Excel</button>` : ''}
+        ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnSoldExportPdf">⬇ Export PDF</button>` : ''}
       </div>
     </div>
 
@@ -2810,6 +2871,8 @@ function renderAuctionSoldAssets(root){
   document.getElementById('soldDeptFilter').onchange = renderAllTables;
   const exportBtn = document.getElementById('btnSoldExport');
   if(exportBtn) exportBtn.onclick = exportSold;
+  const exportPdfBtn = document.getElementById('btnSoldExportPdf');
+  if(exportPdfBtn) exportPdfBtn.onclick = exportSoldPdf;
   const toggleBtn = document.getElementById('btnSoldToggleBookValue');
   if(toggleBtn){
     toggleBtn.onclick = ()=>{
@@ -3105,6 +3168,7 @@ function renderAuctionLive(root){
         <div class="toolbar no-print" style="margin-bottom:0;">
           <div id="bidDocsCount" style="font-size:13px;color:var(--muted);">รวม 0 ใบ</div>
           ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnExportBidDocs" style="margin-left:auto;">⬇ Export Excel</button>` : ''}
+          ${canExport ? `<button class="btn btn-secondary btn-sm" id="btnExportBidDocsPdf">⬇ Export PDF</button>` : ''}
         </div>
         <div id="bidDocsHost" style="margin-top:8px;"><div class="empty">กำลังโหลด...</div></div>
       </div>
@@ -3161,6 +3225,15 @@ function renderAuctionLive(root){
       });
       exportExcel('รายการใบประมูล.xlsx', [{ name:'ใบประมูล', header, rows: dataRows }]);
     };
+    const exportPdfBtn = document.getElementById('btnExportBidDocsPdf');
+    if(exportPdfBtn) exportPdfBtn.onclick = (e)=>{
+      const headers = isAdmin ? ['เลขที่','วันที่','ผู้ยื่นประมูล','เบอร์ติดต่อ','รายการที่เสนอ'] : ['เลขที่','วันที่','ผู้ยื่นประมูล','รายการที่เสนอ'];
+      const rows = bidDocs.map(d=>{
+        const itemsText = (d.Items||[]).map(it=>it.AssetID+' ('+fmtMoney(it.Price)+')').join(', ');
+        return isAdmin ? [d.RunningNo, fmtDate(d.CreatedAt), d.BidderName, d.BidderContact||'-', itemsText||'-'] : [d.RunningNo, fmtDate(d.CreatedAt), d.BidderName, itemsText||'-'];
+      });
+      exportPdfGeneric({ title:'รายการใบประมูล', headers, rows, landscape:true, btn: e.currentTarget });
+    };
 
     loadForThisTab().then(res=>{
       if(!res.ok){
@@ -3191,6 +3264,7 @@ function renderAuctionLive(root){
           </select>
           ${canManage ? `
           <button class="btn btn-secondary btn-sm" id="btnExportWinners">⬇ Export Excel</button>
+          <button class="btn btn-secondary btn-sm" id="btnExportWinnersPdf">⬇ Export PDF</button>
           <button class="btn btn-secondary btn-sm" id="btnPrintWinners">🖨 พิมพ์</button>
           ` : ''}
         </div>
@@ -3527,6 +3601,17 @@ function renderAuctionLive(root){
           w.OffSystemSale ? 'ขายนอกระบบ' : (w.BelowReferencePrice ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : '')];
       });
       exportExcel('ประกาศผลผู้ประมูลได้.xlsx', [{ name:'ประกาศผล', header, rows: dataRows }]);
+    };
+    const exportPdfBtn = document.getElementById('btnExportWinnersPdf');
+    if(exportPdfBtn) exportPdfBtn.onclick = (e)=>{
+      const showRefCol = isAdmin || !winnersMeta || winnersMeta.showPrices !== false;
+      const headers = ['รูป','รหัสสินค้า','รายการ','รอบ','ประเภท','ผู้ดูแล','สถานที่','ผู้ประมูลได้', ...(showRefCol?['ราคากลาง']:[]), 'ราคาที่ประมูลได้','จำนวนผู้เสนอราคา','สถานะ'];
+      const rows = winners.map(w => [
+        w.DisplayImage||'', w.AssetID, w.AssetName, w.Round, w.OffSystemSale?'ขายนอกระบบ':(w.HasAssetRecord?'มีทะเบียน':'ไม่มีทะเบียน'), w.Custodian||'-', w.Location||'-', w.BidderName||'-',
+        ...(showRefCol?[fmtMoney(w.ReferencePrice)]:[]), fmtMoney(w.MaxPrice), w.BidCount,
+        w.OffSystemSale ? 'ขายนอกระบบ' : (w.BelowReferencePrice ? 'ไม่เข้าเงื่อนไขประมูล ต้องประมูลไม่ต่ำกว่าราคากลาง ประมูลใหม่' : '-')
+      ]);
+      exportPdfGeneric({ title:'ประกาศผลผู้ประมูลได้', headers, rows, imageCol:0, landscape:true, btn: e.currentTarget });
     };
 
     const printBtn = document.getElementById('btnPrintWinners');
@@ -4189,6 +4274,7 @@ function renderList(root){
         <button class="btn btn-secondary btn-sm" id="btnRefresh">↻ รีเฟรช</button>
         <span id="listCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
         <button class="btn btn-secondary btn-sm" id="btnListExport">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnListExportPdf">⬇ Export PDF</button>
       </div>
       <div id="listTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -4199,6 +4285,7 @@ function renderList(root){
   document.getElementById('fFrom').onchange = loadList;
   document.getElementById('fTo').onchange = loadList;
   document.getElementById('btnListExport').onclick = exportTransferList;
+  document.getElementById('btnListExportPdf').onclick = exportTransferListPdf;
   document.getElementById('btnCreateFromQueue').onclick = createTransferFromQueue;
   document.getElementById('btnRemoveFromQueue').onclick = removeSelectedFromQueue;
   document.getElementById('btnQueueRefresh').onclick = loadQueue;
@@ -4307,6 +4394,16 @@ function renderList(root){
       t.FromDept, t.ToDept, t.ItemCount, STATUS_LABELS[t.Status]||t.Status, t.ApproverName||t.ApproverEmail||'', t.AllImages||''
     ]);
     exportExcel('รายการใบโอนย้าย.xlsx', [{ name:'ใบโอนย้าย', header, rows: dataRows }]);
+  }
+
+  function exportTransferListPdf(e){
+    if(!STATE.transfers.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const headers = ['เลขที่','วันที่','เรื่อง','จาก','ไป','จำนวนรายการ','สถานะ','ผู้อนุมัติ'];
+    const rows = STATE.transfers.map(t => [
+      t.RunningNo, fmtDate(t.CreatedAt), t.Subject==='อื่นๆ'?t.SubjectOther:t.Subject,
+      t.FromDept, t.ToDept, t.ItemCount, STATUS_LABELS[t.Status]||t.Status, t.ApproverName||t.ApproverEmail||'-'
+    ]);
+    exportPdfGeneric({ title:'รายการใบโอนย้าย', headers, rows, landscape:true, btn: e.currentTarget });
   }
 
   function loadList(){
@@ -4799,6 +4896,7 @@ function renderSaleList(root){
         <button class="btn btn-secondary btn-sm" id="btnSaleRefresh">↻ รีเฟรช</button>
         <span id="saleListCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
         <button class="btn btn-secondary btn-sm" id="btnSaleExport">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnSaleExportPdf">⬇ Export PDF</button>
       </div>
       <div class="toolbar no-print" id="saleBulkConfirmBar" style="display:none;">
         <span id="saleBulkConfirmCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
@@ -4813,6 +4911,7 @@ function renderSaleList(root){
   document.getElementById('fSaleFrom').onchange = renderSaleListTable;
   document.getElementById('fSaleTo').onchange = renderSaleListTable;
   document.getElementById('btnSaleExport').onclick = exportSaleList;
+  document.getElementById('btnSaleExportPdf').onclick = exportSaleListPdf;
   document.getElementById('btnCreateFromSaleQueue').onclick = ()=> createSaleFromQueue('ขาย');
   document.getElementById('btnCreateFromSaleQueueAuction').onclick = ()=> createSaleFromQueue('ประมูล');
   document.getElementById('btnRemoveFromSaleQueue').onclick = removeSelectedFromSaleQueue;
@@ -5011,6 +5110,16 @@ function renderSaleList(root){
       Number(s.TotalSalePrice)||0, (s.Status==='Approved'?saleApprovedLabel(s):(STATUS_LABELS[s.Status]||s.Status)), s.ApproverName||s.ApproverEmail||'', s.AllImages||''
     ]);
     exportExcel('รายการขายออก.xlsx', [{ name:'ขายออก', header, rows: dataRows }]);
+  }
+
+  function exportSaleListPdf(e){
+    if(!STATE.sales.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const headers = ['เลขที่','วันที่','หน่วยงาน','ช่องทาง','ผู้ซื้อ','จำนวนรายการ','รวมราคาขาย','สถานะ','ผู้อนุมัติ'];
+    const rows = STATE.sales.map(s => [
+      s.RunningNo, fmtDate(s.CreatedAt), s.FromDept, (s.Channel==='ประมูล'?'ประมูล':'ขาย'), s.Buyer||'-', s.ItemCount,
+      fmtMoney(s.TotalSalePrice), (s.Status==='Approved'?saleApprovedLabel(s):(STATUS_LABELS[s.Status]||s.Status)), s.ApproverName||s.ApproverEmail||'-'
+    ]);
+    exportPdfGeneric({ title:'รายการขายออก', headers, rows, landscape:true, btn: e.currentTarget });
   }
 
   function applySaleFilters(){
@@ -5506,6 +5615,7 @@ function renderWriteOffList(root){
         <button class="btn btn-secondary btn-sm" id="btnWoRefresh">↻ รีเฟรช</button>
         <span id="woListCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
         <button class="btn btn-secondary btn-sm" id="btnWoExport">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnWoExportPdf">⬇ Export PDF</button>
       </div>
       <div id="woListTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -5516,6 +5626,7 @@ function renderWriteOffList(root){
   document.getElementById('fWoFrom').onchange = loadWoList;
   document.getElementById('fWoTo').onchange = loadWoList;
   document.getElementById('btnWoExport').onclick = exportWoList;
+  document.getElementById('btnWoExportPdf').onclick = exportWoListPdf;
   document.getElementById('btnCreateFromWriteOffQueue').onclick = createWriteOffFromQueue;
   document.getElementById('btnRemoveFromWriteOffQueue').onclick = removeSelectedFromWriteOffQueue;
   document.getElementById('btnWriteOffQueueRefresh').onclick = loadWriteOffQueue;
@@ -5663,6 +5774,16 @@ function renderWriteOffList(root){
       STATUS_LABELS[w.Status]||w.Status, w.ApproverName||w.ApproverEmail||'', w.AllImages||''
     ]);
     exportExcel('รายการตัดชำรุด.xlsx', [{ name:'ตัดชำรุด', header, rows: dataRows }]);
+  }
+
+  function exportWoListPdf(e){
+    if(!STATE.writeOffs.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const headers = ['เลขที่','วันที่','หน่วยงาน','สาเหตุ','จำนวนรายการ','สถานะ','ผู้อนุมัติ'];
+    const rows = STATE.writeOffs.map(w => [
+      w.RunningNo, fmtDate(w.CreatedAt), w.FromDept, w.Reason||'-', w.ItemCount,
+      STATUS_LABELS[w.Status]||w.Status, w.ApproverName||w.ApproverEmail||'-'
+    ]);
+    exportPdfGeneric({ title:'รายการตัดชำรุด', headers, rows, landscape:true, btn: e.currentTarget });
   }
 
   function loadWoList(){
@@ -6157,6 +6278,7 @@ function renderActivityLog(root){
         <button class="btn btn-secondary btn-sm" id="btnAlogRefresh">↻ รีเฟรช</button>
         <span id="alogCount" style="font-size:13px;color:var(--muted);margin-left:auto;">รวม 0 รายการ</span>
         <button class="btn btn-secondary btn-sm" id="btnAlogExport">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlogExportPdf">⬇ Export PDF</button>
       </div>
       <div id="alogTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -6167,6 +6289,7 @@ function renderActivityLog(root){
   document.getElementById('btnAlogFilter').onclick = loadActivityLog;
   document.getElementById('btnAlogRefresh').onclick = loadActivityLog;
   document.getElementById('btnAlogExport').onclick = exportActivityLog;
+  document.getElementById('btnAlogExportPdf').onclick = exportActivityLogPdf;
 
   function loadActivityLog(){
     const host = document.getElementById('alogTableHost');
@@ -6198,6 +6321,13 @@ function renderActivityLog(root){
     const header = ['เวลา','ทำโดย','การกระทำ','รายละเอียด','เอกสารที่เกี่ยวข้อง'];
     const rows = currentRows.map(r => [fmtDate(r.Timestamp), r.By||'', r.Action||'', r.Detail||'', r.TransferID||'']);
     exportExcel('ประวัติการใช้งาน.xlsx', [{ name:'ประวัติการใช้งาน', header, rows }]);
+  }
+
+  function exportActivityLogPdf(e){
+    if(!currentRows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const headers = ['เวลา','ทำโดย','การกระทำ','รายละเอียด','เอกสารที่เกี่ยวข้อง'];
+    const rows = currentRows.map(r => [fmtDate(r.Timestamp), r.By||'-', r.Action||'-', r.Detail||'-', r.TransferID||'-']);
+    exportPdfGeneric({ title:'ประวัติการใช้งาน', headers, rows, landscape:true, btn: e.currentTarget });
   }
 
   loadActivityLog();
