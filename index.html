@@ -3913,9 +3913,13 @@ function renderAuctionSelection(root){
 
   // ไม่รวมรายการ "ตัดชำรุด" ที่ยังไม่ส่งประมูล ในที่นี้ เพราะย้ายไปให้ Admin เลือกส่งประมูล/ขาย
   // ที่แท็บ "ตัดชำรุดแล้ว รอดำเนินการ" แยกไว้แล้ว — ที่นี่เหลือแค่รายการขายออกช่องทางประมูลที่รออยู่
+  // ไม่รวมรายการที่ "ขายแล้วจริง" (AuctionSold=true) ด้วย แม้ SendToAuction จะยังเป็น false อยู่ก็ตาม (เช่น บันทึก
+  // ขายนอกระบบให้ทรัพย์สินนี้โดยตรงจากขั้นตอนนี้เลย โดยไม่เคยติ๊ก "ส่งประมูล" มาก่อน) ไม่งั้นจะค้างแสดงเป็นรายการ
+  // รอคัดเลือกตลอดไปทั้งที่ขายไปแล้วจริง (ไปโผล่ซ้ำอยู่ทั้งตารางนี้และตาราง "ประวัติทรัพย์สินที่ขายแล้ว" พร้อมกัน —
+  // บั๊กที่พบจริง ผู้ใช้รายงานว่ามี 2 รายการขายไปแล้วแต่ยังค้างอยู่ในตารางคัดเลือก)
   function filteredCandidates(){
     const qq = (document.getElementById('aselSearch').value||'').trim().toLowerCase();
-    return activeCandidates().filter(a => !a.SendToAuction && a.AssetStatus!=='WrittenOff' &&
+    return activeCandidates().filter(a => !a.SendToAuction && !a.AuctionSold && a.AssetStatus!=='WrittenOff' &&
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1)
     );
   }
