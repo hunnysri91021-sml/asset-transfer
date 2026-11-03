@@ -4166,6 +4166,7 @@ function renderList(root){
         <input type="text" id="qSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <span id="queueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnCreateFromQueue">สร้างใบโอนย้ายจากรายการที่เลือก</button>
+        <button class="btn btn-red btn-sm" id="btnRemoveFromQueue">เอาออกจากคิว (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnQueueRefresh">↻ รีเฟรช</button>
       </div>
       <div id="queueTableHost"><div class="empty">กำลังโหลด...</div></div>
@@ -4199,6 +4200,7 @@ function renderList(root){
   document.getElementById('fTo').onchange = loadList;
   document.getElementById('btnListExport').onclick = exportTransferList;
   document.getElementById('btnCreateFromQueue').onclick = createTransferFromQueue;
+  document.getElementById('btnRemoveFromQueue').onclick = removeSelectedFromQueue;
   document.getElementById('btnQueueRefresh').onclick = loadQueue;
   document.getElementById('qSearch').oninput = renderQueueTable;
   loadList();
@@ -4271,6 +4273,19 @@ function renderList(root){
   function updateQueueSelCount(){
     const el = document.getElementById('queueSelCount');
     if(el) el.textContent = 'เลือกไว้ '+STATE.selectedQueueAssetIds.length+' รายการ';
+  }
+
+  // เอารายการที่ติ๊กเลือกไว้ออกจากคิวรอโอนย้ายทีเดียวหลายรายการ (ปุ่ม "เอาออก" รายแถวเดิมทำได้ทีละรายการเท่านั้น)
+  function removeSelectedFromQueue(){
+    const ids = STATE.selectedQueueAssetIds.slice();
+    if(!ids.length){ toast('กรุณาเลือกรายการอย่างน้อย 1 รายการ','err'); return; }
+    if(!confirm('ยืนยันเอาทรัพย์สิน '+ids.length+' รายการที่เลือกออกจากคิวรอโอนย้าย?')) return;
+    apiPost({ action:'removeFromTransferQueue', assetIds: ids }).then(res=>{
+      if(!res.ok){ toast(res.error||'เอาออกจากคิวไม่สำเร็จ','err'); return; }
+      toast('เอาออกจากคิวสำเร็จ '+ids.length+' รายการ','ok');
+      STATE.selectedQueueAssetIds = STATE.selectedQueueAssetIds.filter(id=>ids.indexOf(id)===-1);
+      loadQueue();
+    });
   }
 
   function createTransferFromQueue(){
@@ -4760,6 +4775,7 @@ function renderSaleList(root){
         <span id="saleQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueue">สร้างใบขายจากรายการที่เลือก</button>
         <button class="btn btn-primary btn-sm" id="btnCreateFromSaleQueueAuction">สร้างใบประมูลจากรายการที่เลือก</button>
+        <button class="btn btn-red btn-sm" id="btnRemoveFromSaleQueue">เอาออกจากคิว (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnSaleQueueRefresh">↻ รีเฟรช</button>
       </div>
       <div id="saleQueueTableHost"><div class="empty">กำลังโหลด...</div></div>
@@ -4799,6 +4815,7 @@ function renderSaleList(root){
   document.getElementById('btnSaleExport').onclick = exportSaleList;
   document.getElementById('btnCreateFromSaleQueue').onclick = ()=> createSaleFromQueue('ขาย');
   document.getElementById('btnCreateFromSaleQueueAuction').onclick = ()=> createSaleFromQueue('ประมูล');
+  document.getElementById('btnRemoveFromSaleQueue').onclick = removeSelectedFromSaleQueue;
   document.getElementById('btnSaleQueueRefresh').onclick = loadSaleQueue;
   document.getElementById('saleQSearch').oninput = renderSaleQueueTable;
   document.getElementById('btnBulkConfirmSale').onclick = bulkConfirmSale;
@@ -4960,6 +4977,19 @@ function renderSaleList(root){
   function updateSaleQueueSelCount(){
     const el = document.getElementById('saleQueueSelCount');
     if(el) el.textContent = 'เลือกไว้ '+STATE.selectedSaleQueueAssetIds.length+' รายการ';
+  }
+
+  // เอารายการที่ติ๊กเลือกไว้ออกจากคิวรอขายออกทีเดียวหลายรายการ (ปุ่ม "เอาออก" รายแถวเดิมทำได้ทีละรายการเท่านั้น)
+  function removeSelectedFromSaleQueue(){
+    const ids = STATE.selectedSaleQueueAssetIds.slice();
+    if(!ids.length){ toast('กรุณาเลือกรายการอย่างน้อย 1 รายการ','err'); return; }
+    if(!confirm('ยืนยันเอาทรัพย์สิน '+ids.length+' รายการที่เลือกออกจากคิวรอขายออก?')) return;
+    apiPost({ action:'removeFromSaleQueue', assetIds: ids }).then(res=>{
+      if(!res.ok){ toast(res.error||'เอาออกจากคิวไม่สำเร็จ','err'); return; }
+      toast('เอาออกจากคิวสำเร็จ '+ids.length+' รายการ','ok');
+      STATE.selectedSaleQueueAssetIds = STATE.selectedSaleQueueAssetIds.filter(id=>ids.indexOf(id)===-1);
+      loadSaleQueue();
+    });
   }
 
   function createSaleFromQueue(channel){
@@ -5453,6 +5483,7 @@ function renderWriteOffList(root){
         <input type="text" id="woQSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
         <span id="writeOffQueueSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnCreateFromWriteOffQueue">สร้างใบตัดชำรุดจากรายการที่เลือก</button>
+        <button class="btn btn-red btn-sm" id="btnRemoveFromWriteOffQueue">เอาออกจากคิว (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnWriteOffQueueRefresh">↻ รีเฟรช</button>
       </div>
       <div id="writeOffQueueTableHost"><div class="empty">กำลังโหลด...</div></div>
@@ -5486,6 +5517,7 @@ function renderWriteOffList(root){
   document.getElementById('fWoTo').onchange = loadWoList;
   document.getElementById('btnWoExport').onclick = exportWoList;
   document.getElementById('btnCreateFromWriteOffQueue').onclick = createWriteOffFromQueue;
+  document.getElementById('btnRemoveFromWriteOffQueue').onclick = removeSelectedFromWriteOffQueue;
   document.getElementById('btnWriteOffQueueRefresh').onclick = loadWriteOffQueue;
   document.getElementById('woQSearch').oninput = renderWriteOffQueueTable;
   loadWoList();
@@ -5597,6 +5629,19 @@ function renderWriteOffList(root){
   function updateWriteOffQueueSelCount(){
     const el = document.getElementById('writeOffQueueSelCount');
     if(el) el.textContent = 'เลือกไว้ '+STATE.selectedWriteOffQueueAssetIds.length+' รายการ';
+  }
+
+  // เอารายการที่ติ๊กเลือกไว้ออกจากคิวรอตัดชำรุดทีเดียวหลายรายการ (ปุ่ม "เอาออก" รายแถวเดิมทำได้ทีละรายการเท่านั้น)
+  function removeSelectedFromWriteOffQueue(){
+    const ids = STATE.selectedWriteOffQueueAssetIds.slice();
+    if(!ids.length){ toast('กรุณาเลือกรายการอย่างน้อย 1 รายการ','err'); return; }
+    if(!confirm('ยืนยันเอาทรัพย์สิน '+ids.length+' รายการที่เลือกออกจากคิวรอตัดชำรุด?')) return;
+    apiPost({ action:'removeFromWriteOffQueue', assetIds: ids }).then(res=>{
+      if(!res.ok){ toast(res.error||'เอาออกจากคิวไม่สำเร็จ','err'); return; }
+      toast('เอาออกจากคิวสำเร็จ '+ids.length+' รายการ','ok');
+      STATE.selectedWriteOffQueueAssetIds = STATE.selectedWriteOffQueueAssetIds.filter(id=>ids.indexOf(id)===-1);
+      loadWriteOffQueue();
+    });
   }
 
   function createWriteOffFromQueue(){
