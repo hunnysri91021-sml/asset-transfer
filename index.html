@@ -1022,6 +1022,12 @@ function renderAssetList(root){
   // เก็บค่าตัวกรองไว้ในตัวแปร JS เอง แทนการอ่านจาก <select>.value ตรงๆ เพราะบางเบราว์เซอร์จะพยายาม
   // "จำ" ค่าฟอร์มเดิมแล้วเซ็ตกลับให้ตอนสร้าง DOM ใหม่ (เช่นตอนสลับแถบ) ทำให้ตัวกรองค้างค่าเดิมโดยไม่ได้ตั้งใจ
   let selectedDivision = '', selectedWorkGroup = '', selectedLocation = '';
+  let selectedStatuses = new Set();
+  const AL_STATUS_OPTIONS = [
+    ['Active','ใช้งานอยู่'], ['AwaitingSale','รอขาย'], ['AwaitingWriteOff','รอตัดชำรุด'],
+    ['AwaitingAuction','รอประมูล'], ['InAuction','กำลังประมูล'], ['NeedsReAuction','ประมูลใหม่'],
+    ['Sold','ขายแล้ว'], ['WrittenOff','ตัดชำรุดแล้ว']
+  ];
 
   root.innerHTML = `
     <div class="card">
@@ -1033,17 +1039,15 @@ function renderAssetList(root){
       <p style="color:var(--muted);font-size:13px;">${manageMode ? 'แก้ไข/เพิ่ม/ลบทรัพย์สิน — แสดงเฉพาะหน่วยงานที่คุณได้รับสิทธิ์ดูแล' + (isAdmin?' (Admin เห็นทุกหน่วยงาน)':' (คอลัมน์ "แท็กสถานะ" แก้ไขได้เฉพาะ Admin เท่านั้น)')  : 'ดูข้อมูลทรัพย์สินทั้งหมดของทุกหน่วยงาน (ไม่สามารถแก้ไขจากแถบนี้)'}</p>
       <div class="toolbar no-print">
         <input type="text" id="alSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน / ผู้ดูแล..." style="max-width:220px;">
-        <select id="alStatus" style="max-width:170px;">
-          <option value="">ทุกสถานะ</option>
-          <option value="Active">ใช้งานอยู่</option>
-          <option value="AwaitingSale">รอขาย</option>
-          <option value="AwaitingWriteOff">รอตัดชำรุด</option>
-          <option value="AwaitingAuction">รอประมูล</option>
-          <option value="InAuction">กำลังประมูล</option>
-          <option value="NeedsReAuction">ประมูลใหม่</option>
-          <option value="Sold">ขายแล้ว</option>
-          <option value="WrittenOff">ตัดชำรุดแล้ว</option>
-        </select>
+        <div style="position:relative;display:inline-block;">
+          <button type="button" class="btn btn-secondary btn-sm" id="alStatusBtn" style="min-width:150px;text-align:left;">ทุกสถานะ ▾</button>
+          <div id="alStatusPanel" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);padding:8px;min-width:190px;">
+            ${AL_STATUS_OPTIONS.map(([v,label])=>`<label style="display:block;padding:4px 6px;font-size:13px;white-space:nowrap;cursor:pointer;"><input type="checkbox" class="alStatusChk" value="${v}" style="margin-right:6px;">${esc(label)}</label>`).join('')}
+            <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;text-align:right;">
+              <button type="button" class="btn btn-secondary btn-sm" id="alStatusClear">ล้างตัวกรอง</button>
+            </div>
+          </div>
+        </div>
         <select id="alDivision" autocomplete="off" style="max-width:160px;"><option value="">ทุกฝ่าย</option></select>
         <select id="alWorkGroup" autocomplete="off" style="max-width:160px;"><option value="">ทุกกลุ่มงาน</option></select>
         <select id="alLocation" autocomplete="off" style="max-width:160px;"><option value="">ทุกสถานที่</option></select>
@@ -1075,7 +1079,38 @@ function renderAssetList(root){
   // (STATE.assetsFull) แทนการยิง apiGet ไปเซิร์ฟเวอร์ใหม่ทุกครั้งที่พิมพ์ เหมือนตัวกรองอื่น (สถานะ/ฝ่าย/กลุ่มงาน/
   // สถานที่) ที่กรองสดอยู่แล้วทุกครั้งที่เปลี่ยนค่า ไม่ต้องกดปุ่มเช่นกัน
   document.getElementById('alSearch').oninput = renderTable;
-  document.getElementById('alStatus').onchange = renderTable;
+  updateAlStatusButtonLabel();
+  document.getElementById('alStatusBtn').onclick = (e)=>{
+    e.stopPropagation();
+    const panel = document.getElementById('alStatusPanel');
+    panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+  };
+  document.getElementById('alStatusPanel').querySelectorAll('.alStatusChk').forEach(chk=>{
+    chk.onchange = ()=>{
+      if(chk.checked) selectedStatuses.add(chk.value); else selectedStatuses.delete(chk.value);
+      updateAlStatusButtonLabel();
+      renderTable();
+    };
+  });
+  document.getElementById('alStatusClear').onclick = ()=>{
+    selectedStatuses.clear();
+    document.getElementById('alStatusPanel').querySelectorAll('.alStatusChk').forEach(chk=>{ chk.checked = false; });
+    updateAlStatusButtonLabel();
+    renderTable();
+  };
+  document.addEventListener('click', (e)=>{
+    const panel = document.getElementById('alStatusPanel');
+    if(panel && panel.style.display!=='none' && !e.target.closest('#alStatusPanel') && e.target.id!=='alStatusBtn'){
+      panel.style.display = 'none';
+    }
+  });
+  function updateAlStatusButtonLabel(){
+    const btn = document.getElementById('alStatusBtn');
+    if(!btn) return;
+    if(!selectedStatuses.size) btn.textContent = 'ทุกสถานะ ▾';
+    else if(selectedStatuses.size===1) btn.textContent = AL_STATUS_OPTIONS.find(([v])=>selectedStatuses.has(v))[1] + ' ▾';
+    else btn.textContent = selectedStatuses.size + ' สถานะที่เลือก ▾';
+  }
   document.getElementById('alDivision').onchange = (e)=>{ selectedDivision = e.target.value; renderTable(); };
   document.getElementById('alWorkGroup').onchange = (e)=>{ selectedWorkGroup = e.target.value; renderTable(); };
   document.getElementById('alLocation').onchange = (e)=>{ selectedLocation = e.target.value; renderTable(); };
@@ -1121,7 +1156,10 @@ function renderAssetList(root){
   // มาจากการคลิกแถบสถานะที่ Dashboard — ตั้งค่าตัวกรองสถานะไว้ล่วงหน้าให้ครั้งเดียว แล้วล้างทิ้งทันที
   // ไม่งั้นจะค้างกรองสถานะเดิมทุกครั้งที่กลับมาหน้านี้ในภายหลังโดยไม่ได้ตั้งใจ
   if(STATE.assetListPresetBucket){
-    document.getElementById('alStatus').value = STATE.assetListPresetBucket;
+    selectedStatuses = new Set([STATE.assetListPresetBucket]);
+    const chk = document.querySelector('#alStatusPanel .alStatusChk[value="'+STATE.assetListPresetBucket+'"]');
+    if(chk) chk.checked = true;
+    updateAlStatusButtonLabel();
     STATE.assetListPresetBucket = '';
   }
 
@@ -1174,7 +1212,6 @@ function renderAssetList(root){
   }
 
   function filteredRows(){
-    const statusFilter = document.getElementById('alStatus').value;
     const qq = (document.getElementById('alSearch').value||'').trim().toLowerCase();
     let rows = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
     if(qq) rows = rows.filter(a =>
@@ -1182,7 +1219,7 @@ function renderAssetList(root){
       String(a.AssetName).toLowerCase().indexOf(qq)!==-1 ||
       String(a.Custodian||'').toLowerCase().indexOf(qq)!==-1
     );
-    if(statusFilter) rows = rows.filter(a => assetLifecycleBucket(a, queuedPurposeOf(a)) === statusFilter);
+    if(selectedStatuses.size) rows = rows.filter(a => selectedStatuses.has(assetLifecycleBucket(a, queuedPurposeOf(a))));
     if(selectedDivision) rows = rows.filter(a => a.Division === selectedDivision);
     if(selectedWorkGroup) rows = rows.filter(a => a.WorkGroup === selectedWorkGroup);
     if(selectedLocation) rows = rows.filter(a => a.Location === selectedLocation);
