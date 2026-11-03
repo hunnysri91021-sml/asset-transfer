@@ -1069,6 +1069,7 @@ function renderAssetList(root){
         <select id="alLocation" autocomplete="off" style="max-width:160px;"><option value="">ทุกสถานที่</option></select>
         <button class="btn btn-secondary btn-sm" id="btnAlRefresh">↻ รีเฟรช</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExport" style="margin-left:auto;">⬇ Export Excel</button>
+        <button class="btn btn-secondary btn-sm" id="btnAlExportPdfData">⬇ Export PDF</button>
         <button class="btn btn-secondary btn-sm" id="btnAlExportPdf">🖨️ Export PDF (มีรูป QR)</button>
       </div>
       ${manageMode ? `
@@ -1131,6 +1132,7 @@ function renderAssetList(root){
   document.getElementById('alWorkGroup').onchange = (e)=>{ selectedWorkGroup = e.target.value; renderTable(); };
   document.getElementById('alLocation').onchange = (e)=>{ selectedLocation = e.target.value; renderTable(); };
   document.getElementById('btnAlExport').onclick = exportAssetList;
+  document.getElementById('btnAlExportPdfData').onclick = exportAssetListPdf;
   document.getElementById('btnAlExportPdf').onclick = ()=>{
     const rows = filteredRows();
     if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
@@ -1167,6 +1169,19 @@ function renderAssetList(root){
     const header = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)','ลิงก์รูปภาพ','ลิงก์ QR (สแกนดูข้อมูล)'];
     const dataRows = rows.map(a => [a.AssetID, a.AssetName, a.Department, a.Division||'', a.WorkGroup||'', a.Custodian||'', a.Location||'', Number(a.PurchasePrice)||0, Number(a.BookValue)||0, Number(a.ScrapPrice)||0, LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a), a.DisplayImage||'', assetViewUrl(a.AssetID)]);
     exportExcel('รายการทรัพย์สิน.xlsx', [{ name:'รายการทรัพย์สิน', header, rows: dataRows }]);
+  }
+
+  function exportAssetListPdf(e){
+    const rows = filteredRows();
+    const queuePurposeLabel = { transfer:'รอโอนย้าย', sale:'รอขาย', writeoff:'รอตัดชำรุด' };
+    const queueStatusOf = a => (STATE.assetQueuedPurposes[a.AssetID]||[]).map(p=>queuePurposeLabel[p]||p).join('/') || '-';
+    const headers = ['รูป','รหัส','ชื่อทรัพย์สิน','หน่วยงาน','ฝ่าย','กลุ่มงาน','ผู้ดูแล','สถานที่','ราคาซื้อ','มูลค่าตามบัญชี','ราคาซาก','สถานะ','แท็กสถานะ','สถานะการจัดการ (คิวรอ)'];
+    const pdfRows = rows.map(a => [
+      a.DisplayImage||'', a.AssetID, a.AssetName, a.Department, a.Division||'-', a.WorkGroup||'-', a.Custodian||'-', a.Location||'-',
+      fmtMoney(a.PurchasePrice), fmtMoney(a.BookValue), fmtMoney(a.ScrapPrice),
+      LIFECYCLE_BUCKET_LABELS[assetLifecycleBucket(a, queuedPurposeOf(a))]||'ใช้งานอยู่', a.Tag||'ใช้งาน', queueStatusOf(a)
+    ]);
+    exportPdfGeneric({ title:'รายการทรัพย์สิน', headers, rows: pdfRows, imageCol:0, landscape:true, btn: e.currentTarget });
   }
 
   // มาจากการคลิกแถบสถานะที่ Dashboard — ตั้งค่าตัวกรองสถานะไว้ล่วงหน้าให้ครั้งเดียว แล้วล้างทิ้งทันที
