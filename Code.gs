@@ -1029,19 +1029,26 @@ function computeDisposalData_() {
     else if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[assetId] = true;
   });
 
-  // "ขายแล้ว" ต้องทับ "ตัดชำรุด" เสมอ ไม่ว่าจะขายผ่านช่องทางไหน — ทรัพย์สินที่ตัดชำรุดไปแล้ว (WrittenOff) แล้วภายหลัง
+  // "ขายแล้ว" ต้องทับสถานะอื่นเสมอ ไม่ว่าจะขายผ่านช่องทางไหน — ทรัพย์สินที่ตัดชำรุดไปแล้ว (WrittenOff) แล้วภายหลัง
   // ขายได้จริงผ่าน Confirm ที่หน้า Live ประมูล/ประกาศผล (adminSetAuctionSold_ ปักแค่คอลัมน์ AuctionSold ดิบตรงๆ ไม่ได้
   // สร้างใบขายออกเลย) หรือบันทึกขายนอกระบบ (สร้างใบขายออกจริง แต่ลำดับลูปข้างบนให้ WriteOff ทับ Sale เสมออยู่ดี) ต้อง
   // ถือเป็น "ขายแล้ว" ไม่ใช่ "ตัดชำรุด" ต่อไปตลอดกาล (ยืนยันกับผู้ใช้แล้วว่าต้องการแบบนี้) เช็คจากคอลัมน์ AuctionSold
   // ดิบของชีต Assets แยกต่างหากตรงนี้ เพราะเป็นสัญญาณเดียวที่ครอบคลุมทั้ง 2 ช่องทาง (adminRecordOffSystemSale_
   // ปักคอลัมน์นี้ไว้ด้วยเช่นกัน ดู getOffSystemSaleCandidates_)
+  //
+  // สำคัญ: ต้องปักเป็น 'Sold' แม้ status[assetId] ยังไม่เคยถูกตั้งเลยมาก่อน (ไม่ใช่แค่กรณี 'WrittenOff') เพราะ
+  // adminCreateAuctionBid_ (สร้างใบประมูล) ให้ Admin พิมพ์รหัสทรัพย์สินที่จะประมูลได้เองอิสระ ไม่ได้บังคับว่าต้องเป็น
+  // ทรัพย์สินที่ผ่านใบขายออก/ตัดชำรุดอนุมัติแล้วและถูกคัดเลือกส่งประมูล (SendToAuction) มาก่อนเสมอไป — ถ้าทรัพย์สิน
+  // ถูกนำไปประมูลและ Admin กด Confirm ผู้ชนะ (ขายจบจริง) โดยไม่เคยผ่านใบขาย/ตัดชำรุดมาก่อนเลย เดิมจะไม่มีการตั้ง
+  // status[assetId] เลย (ไม่ใช่ 'WrittenOff') ทำให้เงื่อนไขเดิมไม่ทำงาน หน้ารายการทรัพย์สินจึงยังค้างแสดง "ใช้งานปกติ"
+  // ทั้งที่ประกาศผลว่าขายแล้วจริง (บั๊กที่พบจริง: GA-LB-54-020)
   const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
   const assetsValues = assetsSh.getDataRange().getValues();
   const assetsIdx = indexMap_(assetsValues.shift());
   if (assetsIdx.AuctionSold !== undefined) {
     assetsValues.forEach(r => {
       const assetId = String(r[assetsIdx.AssetID]);
-      if (status[assetId] === 'WrittenOff' && String(r[assetsIdx.AuctionSold]).toLowerCase() === 'true') {
+      if (status[assetId] !== 'Sold' && String(r[assetsIdx.AuctionSold]).toLowerCase() === 'true') {
         status[assetId] = 'Sold';
       }
     });
