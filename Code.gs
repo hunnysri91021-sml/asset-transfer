@@ -458,6 +458,9 @@ function doPost(e) {
       case 'adminBackfillOffSystemAuctionSold':
         result = adminBackfillOffSystemAuctionSold_(body);
         break;
+      case 'adminCheckDuplicateAssetStatus':
+        result = adminCheckDuplicateAssetStatus_(body);
+        break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
         break;
@@ -3639,6 +3642,112 @@ function adminBackfillOffSystemAuctionSold_(body) {
   return { ok: true, data: { fixedCount: fixedIds.length, fixedIds: fixedIds } };
 }
 
+// ตรวจสอบหาทรัพย์สินที่มี "สถานะซ้ำซ้อน/ขัดแย้งกัน" ทั่วทั้งระบบ — เครื่องมือตรวจสอบเฉยๆ (ไม่แก้ไขข้อมูลให้อัตโนมัติ
+// ยกเว้นข้อ 4 ที่แนะนำให้ไปกดปุ่มซิงค์แท็กต่อ) ใช้ตรวจจับความผิดปกติที่ไม่ควรเกิดขึ้นได้ตามกติกาปกติของระบบ แต่เกิดขึ้น
+// ได้จากข้อมูลเก่าก่อนแก้บั๊ก หรือจากการแก้ไขชีตตรงๆ นอกแอป:
+// 1) ทรัพย์สินชิ้นเดียวกันมีใบขายออกที่อนุมัติแล้ว (ไม่ถูก void) มากกว่า 1 ใบพร้อมกัน — ขายซ้ำซ้อนจริง
+// 2) ทรัพย์สินชิ้นเดียวกันมีใบตัดชำรุดที่อนุมัติแล้ว (ไม่ถูก void) มากกว่า 1 ใบพร้อมกัน
+// 3) ทรัพย์สินชิ้นเดียวกันอยู่ในคิวรอ (TransferQueue) มากกว่า 1 ประเภทพร้อมกัน (โอนย้าย/ขาย/ตัดชำรุด) ทั้งที่กติกา
+//    ปกติเลือกได้ทีละประเภทเดียวเท่านั้น (ดู addToAssetQueue_)
+// 4) Tag ในชีต Assets ไม่ตรงกับสถานะที่คำนวณสดจริง (เหมือนที่ "ซิงค์แท็กสถานะย้อนหลัง" แก้ให้ แต่ตัวนี้แค่รายงาน
+//    ให้เห็นก่อนว่ามีกี่รายการและเป็นรายการไหนบ้าง)
+// 5) ทรัพย์สินที่สถานะจริงยัง "ใช้งานปกติ" (ไม่มีใบขาย/ตัดชำรุดอนุมัติแล้วเลย) แต่ยังมีธงประมูล (SendToAuction/
+//    AuctionSold) ค้างอยู่ — ปกติควรถูกล้างไปแล้วตอนคืนสถานะ (clearAuctionSelection_) ถ้ายังเจอแปลว่าผิดปกติ
+function adminCheckDuplicateAssetStatus_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const issues = [];
+
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues.shift());
+  const approvedSaleDocs = {};
+  saleValues.forEach(r => {
+    if (r[saleIdx.Status] === STATUS.APPROVED) {
+      approvedSaleDocs[String(r[saleIdx.SaleID])] = {
+        RunningNo: r[saleIdx.RunningNo] || '',
+        Buyer: r[saleIdx.Buyer] || '',
+        Channel: saleIdx.Channel !== undefined ? String(r[saleIdx.Channel] || '') : ''
+      };
+    }
+  });
+  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const saleItemValues = saleItemSh.getDataRange().getValues();
+  const saleItemIdx = indexMap_(saleItemValues.shift());
+  const saleHitsByAsset = {};
+  saleItemValues.forEach(r => {
+    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    const doc = approvedSaleDocs[String(r[saleItemIdx.SaleID])];
+    if (!doc) return;
+    const assetId = String(r[saleItemIdx.AssetID]);
+    if (!saleHitsByAsset[assetId]) saleHitsByAsset[assetId] = [];
+    saleHitsByAsset[assetId].push(doc.RunningNo + (doc.Buyer ? ' (ผู้ซื้อ ' + doc.Buyer + ')' : '') + (doc.Channel ? ' [' + doc.Channel + ']' : ''));
+  });
+  Object.keys(saleHitsByAsset).forEach(assetId => {
+    const hits = saleHitsByAsset[assetId];
+    if (hits.length > 1) issues.push({ AssetID: assetId, Type: 'DuplicateSale', Detail: 'มีใบขายออกที่อนุมัติแล้ว ' + hits.length + ' ใบพร้อมกัน: ' + hits.join(', ') });
+  });
+
+  const woSh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const woValues = woSh.getDataRange().getValues();
+  const woIdx = indexMap_(woValues.shift());
+  const approvedWoDocs = {};
+  woValues.forEach(r => {
+    if (r[woIdx.Status] === STATUS.APPROVED) approvedWoDocs[String(r[woIdx.WriteOffID])] = r[woIdx.RunningNo] || '';
+  });
+  const woItemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const woItemValues = woItemSh.getDataRange().getValues();
+  const woItemIdx = indexMap_(woItemValues.shift());
+  const woHitsByAsset = {};
+  woItemValues.forEach(r => {
+    const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    const runningNo = approvedWoDocs[String(r[woItemIdx.WriteOffID])];
+    if (runningNo === undefined) return;
+    const assetId = String(r[woItemIdx.AssetID]);
+    if (!woHitsByAsset[assetId]) woHitsByAsset[assetId] = [];
+    woHitsByAsset[assetId].push(runningNo);
+  });
+  Object.keys(woHitsByAsset).forEach(assetId => {
+    const hits = woHitsByAsset[assetId];
+    if (hits.length > 1) issues.push({ AssetID: assetId, Type: 'DuplicateWriteOff', Detail: 'มีใบตัดชำรุดที่อนุมัติแล้ว ' + hits.length + ' ใบพร้อมกัน: ' + hits.join(', ') });
+  });
+
+  const tqSh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const tqValues = tqSh.getDataRange().getValues();
+  const tqIdx = indexMap_(tqValues.shift());
+  const queuePurposesByAsset = {};
+  tqValues.forEach(r => {
+    const assetId = String(r[tqIdx.AssetID]);
+    if (!assetId) return;
+    const purpose = (tqIdx.Purpose !== undefined && r[tqIdx.Purpose]) ? String(r[tqIdx.Purpose]) : QUEUE_PURPOSES.TRANSFER;
+    if (!queuePurposesByAsset[assetId]) queuePurposesByAsset[assetId] = new Set();
+    queuePurposesByAsset[assetId].add(purpose);
+  });
+  Object.keys(queuePurposesByAsset).forEach(assetId => {
+    const purposes = Array.from(queuePurposesByAsset[assetId]);
+    if (purposes.length > 1) {
+      issues.push({ AssetID: assetId, Type: 'MultipleQueues', Detail: 'อยู่ในคิวรอพร้อมกันหลายประเภท: ' + purposes.map(p => QUEUE_PURPOSE_LABEL_TH[p] || p).join(', ') + ' (ใช้ปุ่ม "ล้างคิวซ้ำ" ที่หน้ารายการทรัพย์สินแก้ได้)' });
+    }
+  });
+
+  const disposed = getDisposedAssetStatus_();
+  const assetsRaw = getAssetsRaw_();
+  assetsRaw.forEach(a => {
+    const assetId = String(a.AssetID);
+    const status = disposed[assetId] || 'Active';
+    const expectedTag = tagForDisposedStatus_(status);
+    if (a.Tag && a.Tag !== expectedTag) {
+      issues.push({ AssetID: assetId, Type: 'TagMismatch', Detail: 'แท็กปัจจุบันคือ "' + a.Tag + '" แต่สถานะจริงควรเป็น "' + expectedTag + '" (กด "ซิงค์แท็กสถานะย้อนหลัง" เพื่อแก้)' });
+    }
+    if (status === 'Active' && (String(a.SendToAuction).toLowerCase() === 'true' || String(a.AuctionSold).toLowerCase() === 'true')) {
+      issues.push({ AssetID: assetId, Type: 'OrphanedAuctionFlag', Detail: 'สถานะจริงเป็น "ใช้งานปกติ" (ไม่มีใบขาย/ตัดชำรุดอนุมัติแล้วเลย) แต่ยังมีธงประมูลค้างอยู่ (SendToAuction=' + a.SendToAuction + ', AuctionSold=' + a.AuctionSold + ')' });
+    }
+  });
+
+  return { ok: true, data: { issues: issues, count: issues.length } };
+}
+
 function findSourceSheet_(srcSs) {
   const sheets = srcSs.getSheets();
   const matches = sheets.filter(function (s) { return s.getName().indexOf(SOURCE_SHEET_TAB_PREFIX) === 0; });
@@ -5221,6 +5330,11 @@ function pdfDocStyle_() {
 // DriveApp.getFileById().getBlob() — getBlob() คืนไฟล์ต้นฉบับเต็มความละเอียด (อาจหลาย MB จากรูปถ่ายมือถือ) ทำให้
 // Outlook/mail client แสดงเป็นไฟล์แนบขนาดใหญ่โหลดไม่ขึ้นแทนที่จะ render แบบ inline ปกติ (พบจากการทดสอบจริง)
 // ถ้าดึงไม่สำเร็จ (ไม่พบไฟล์/ไม่มีสิทธิ์) ให้ fallback กลับไปเป็นลิงก์ตรงเหมือนเดิมสำหรับรูปนั้น ไม่ทำให้ทั้งอีเมลพัง
+// ขนาดรูปใส่เป็น inline style ตรงๆ บน <img> เสมอ (ไม่พึ่ง CSS class .doc-img-gallery img ใน <style> อย่างเดียว)
+// เพราะ mail client หลายตัว (โดยเฉพาะ Outlook) strip/ไม่รองรับ CSS แบบ class ใน HTML email ทำให้รูปที่ตั้งใจ
+// ให้เป็น thumbnail เล็กๆ กลับโชว์เต็มขนาดจริงในอีเมลที่ส่งออกจริง ทั้งที่ตัว PDF (แปลงผ่าน Google Docs ซึ่ง
+// รองรับ CSS class ปกติ) ดูถูกต้องปกติ — ไม่ใช่บั๊กที่ PDF แต่เป็นบั๊กเฉพาะตอนส่งเป็นอีเมล
+const PDF_IMG_INLINE_STYLE = 'width:26px;height:26px;object-fit:cover;border-radius:3px;border:1px solid #ddd;margin:1px;';
 function pdfImgGallery_(images, inlineImages) {
   const list = (images || []).filter(Boolean);
   if (!list.length) return '-';
@@ -5235,14 +5349,14 @@ function pdfImgGallery_(images, inlineImages) {
             const blob = resp.getBlob();
             const cid = 'docimg' + Object.keys(inlineImages).length;
             inlineImages[cid] = blob;
-            return '<img src="cid:' + cid + '">';
+            return '<img src="cid:' + cid + '" style="' + PDF_IMG_INLINE_STYLE + '">';
           }
         } catch (err) {
           // ดึงรูปย่อไม่สำเร็จ — fallback เป็นลิงก์ตรงสำหรับรูปนี้
         }
       }
     }
-    return '<img src="' + escapeHtml_(u) + '">';
+    return '<img src="' + escapeHtml_(u) + '" style="' + PDF_IMG_INLINE_STYLE + '">';
   }).join('') + '</div>';
 }
 

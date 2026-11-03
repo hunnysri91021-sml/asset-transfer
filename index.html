@@ -6309,6 +6309,12 @@ function renderSettings(root){
         <p style="color:var(--muted);font-size:13px;">ก่อนหน้านี้ระบบ "บันทึกขายนอกระบบ" มีบั๊ก — บันทึกขายสำเร็จแต่ไม่ได้ปักว่า "ขายแล้ว" ในชีตทรัพย์สิน ทำให้รายการที่บันทึกขายนอกระบบไปแล้วก่อนแก้บั๊กนี้ ยังค้างแสดงอยู่ในหน้าประมูลขายสาธารณะและตาราง "รายการที่ส่งประมูลแล้ว" (หน้าคัดเลือกรายการประมูล) ต่อไป ทั้งที่ขายไปแล้วจริง กดปุ่มนี้เพื่อไล่ตรวจสอบเฉพาะรายการขายนอกระบบเก่าเหล่านี้แล้วปรับให้ถูกต้องย้อนหลัง (ไม่กระทบรายการที่กำลังเปิดประมูลอยู่จริงตามปกติ)</p>
         <button class="btn btn-secondary btn-sm" id="btnBackfillOffSystemAuctionSold">🔄 ซิงค์สถานะขายนอกระบบย้อนหลัง</button>
       </div>
+      <div class="card">
+        <h2>ตรวจสอบทรัพย์สินที่มีสถานะซ้ำซ้อน</h2>
+        <p style="color:var(--muted);font-size:13px;">ไล่ตรวจทั้งระบบหาทรัพย์สินที่มีสถานะขัดแย้ง/ซ้ำซ้อนกัน เช่น มีใบขายออกหรือใบตัดชำรุดที่อนุมัติแล้วมากกว่า 1 ใบพร้อมกัน, อยู่ในคิวรอมากกว่า 1 ประเภทพร้อมกัน, แท็กไม่ตรงกับสถานะจริง หรือมีธงส่งประมูลค้างอยู่ทั้งที่ยังไม่เคยขาย/ตัดชำรุดเลย — เครื่องมือนี้แค่รายงานให้เห็น ไม่แก้ไขข้อมูลให้อัตโนมัติ (ยกเว้นกรณีแท็กไม่ตรง ให้ไปกดปุ่ม "ซิงค์แท็กสถานะย้อนหลัง" ด้านบนต่อ)</p>
+        <button class="btn btn-secondary btn-sm" id="btnCheckDuplicateStatus">🔍 ตรวจสอบสถานะซ้ำซ้อน</button>
+        <div id="duplicateStatusResult" style="margin-top:10px;"></div>
+      </div>
     </div>
   `;
 
@@ -6361,6 +6367,7 @@ function renderSettings(root){
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnBackfillOffSystemAuctionSold').onclick = backfillOffSystemAuctionSold;
+  document.getElementById('btnCheckDuplicateStatus').onclick = checkDuplicateStatus;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
   document.getElementById('btnRefreshOnlineUsers').onclick = ()=> loadOnlineUsers();
   document.getElementById('btnUserAddNew').onclick = addBlankUserRow;
@@ -6406,6 +6413,38 @@ function renderSettings(root){
       btn.disabled = false; btn.innerHTML = '🔄 ซิงค์สถานะขายนอกระบบย้อนหลัง';
       if(!res.ok){ toast(res.error||'ซิงค์ไม่สำเร็จ','err'); return; }
       toast('ซิงค์สำเร็จ — แก้ไข '+res.data.fixedCount+' รายการ'+(res.data.fixedIds&&res.data.fixedIds.length?' ('+res.data.fixedIds.join(', ')+')':''),'ok');
+    });
+  }
+
+  const DUPLICATE_STATUS_TYPE_LABEL = {
+    DuplicateSale: '📝 มีใบขายออกซ้ำซ้อน',
+    DuplicateWriteOff: '📝 มีใบตัดชำรุดซ้ำซ้อน',
+    MultipleQueues: '📋 อยู่ในคิวรอซ้ำซ้อน',
+    TagMismatch: '🏷️ แท็กไม่ตรงกับสถานะจริง',
+    OrphanedAuctionFlag: '🚩 มีธงประมูลค้างผิดปกติ',
+  };
+  function checkDuplicateStatus(){
+    const btn = document.getElementById('btnCheckDuplicateStatus');
+    const resultHost = document.getElementById('duplicateStatusResult');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังตรวจสอบ...';
+    resultHost.innerHTML = '';
+    apiPost({ action:'adminCheckDuplicateAssetStatus', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '🔍 ตรวจสอบสถานะซ้ำซ้อน';
+      if(!res.ok){ toast(res.error||'ตรวจสอบไม่สำเร็จ','err'); return; }
+      const issues = res.data.issues || [];
+      if(!issues.length){
+        toast('ตรวจสอบเสร็จแล้ว — ไม่พบทรัพย์สินที่มีสถานะซ้ำซ้อน','ok');
+        resultHost.innerHTML = '<div style="color:var(--green,#1a7d3c);font-size:13px;">✅ ไม่พบทรัพย์สินที่มีสถานะซ้ำซ้อน</div>';
+        return;
+      }
+      toast('⚠ พบทรัพย์สิน '+issues.length+' รายการที่มีสถานะซ้ำซ้อน — ดูรายละเอียดด้านล่าง','err');
+      let html = '<div style="background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:10px;">⚠ พบทรัพย์สิน '+issues.length+' รายการที่มีสถานะซ้ำซ้อน</div>';
+      html += '<div style="overflow-x:auto;"><table><tr><th>รหัสทรัพย์สิน</th><th>ประเภทปัญหา</th><th>รายละเอียด</th></tr>';
+      issues.forEach(iss=>{
+        html += '<tr><td><b>'+esc(iss.AssetID)+'</b></td><td>'+esc(DUPLICATE_STATUS_TYPE_LABEL[iss.Type]||iss.Type)+'</td><td style="white-space:normal;">'+esc(iss.Detail)+'</td></tr>';
+      });
+      html += '</table></div>';
+      resultHost.innerHTML = html;
     });
   }
 
