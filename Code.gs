@@ -2263,12 +2263,16 @@ function getAuctionListingPublic_(password) {
 // อ่านได้โดยไม่ต้องรหัสผ่านตั้งใจ เปิดดูได้โดยไม่ต้องล็อกอินเหมือนรายการเปิดประมูล
 function getAuctionSoldListing_() {
   const disposed = getDisposedAssetStatus_();
-  const saleAuctionChannel = getSaleAuctionChannelMap_();
   const rows = getAssetsRaw_();
   return rows
     .filter(r => {
       const status = disposed[String(r.AssetID)];
-      const eligible = status === 'WrittenOff' || (status === 'Sold' && saleAuctionChannel[String(r.AssetID)]);
+      // เดิมเช็ค saleAuctionChannel (getSaleAuctionChannelMap_) ประกอบด้วยสำหรับกรณี status==='Sold' แต่ map นั้นมา
+      // จากการไล่ใบขายออกที่อนุมัติแล้วเท่านั้น ทรัพย์สินที่ขายผ่านประมูลได้จริงโดยไม่เคยมีใบขายออกมาก่อนเลย (Admin
+      // สร้างใบประมูล/Confirm ตรงๆ ผ่าน adminCreateAuctionBid_) จะไม่อยู่ใน map นั้น ทำให้ตกหล่นไม่โผล่ในตารางนี้ทั้งที่
+      // ขายผ่านประมูลจริง (บั๊กที่พบจริง: CA-00-56-030) — AuctionSold=true ที่เช็คคู่ด้านล่างอยู่แล้วเป็นสัญญาณที่เชื่อถือ
+      // ได้เพียงพอว่าขายผ่านประมูลจริง ไม่ต้องเช็ค saleAuctionChannel ซ้ำอีก
+      const eligible = status === 'WrittenOff' || status === 'Sold';
       return eligible && String(r.AuctionSold).toLowerCase() === 'true';
     })
     .map(r => ({
@@ -4568,6 +4572,30 @@ function adminVoidSaleDoc_(body) {
         itemSh.getRange(i + 2, itemIdx.Voided + 1).setValue('TRUE');
         affectedAssetIds.push(String(itemValues[i][itemIdx.AssetID]));
       }
+    }
+  }
+
+  // ใบที่ยกเลิกเป็นช่องทาง "ประมูล" — ธง AuctionSold/ผู้ประมูลได้/ราคาที่ขายได้บนชีต Assets อาจมาจากใบนี้โดยตรง (เช่น
+  // ยืนยันผ่านปุ่ม "ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)" ที่ดึงข้อมูลจากใบนี้) ถ้าไม่ล้างด้วย จะกลายเป็นข้อมูลค้าง
+  // (AuctionSold=true ชี้ไปที่ใบที่ถูกยกเลิกไปแล้ว) ทำให้ทรัพย์สินค้างแสดงอยู่ในตาราง "ขายจากการประมูล" ต่อไปทั้งที่
+  // ใบขายออกช่องทางนี้ถูกยกเลิกไปแล้ว — ล้างให้เสมอเมื่อยกเลิกใบช่องทางประมูล ถ้ายังขายจริงผ่านช่องทางอื่น (เช่นใบ "ขาย"
+  // ตรงที่เหลืออยู่) จะยังถือว่า Sold ปกติจากใบนั้น ไม่กระทบ
+  if (found.obj.Channel === 'ประมูล') {
+    const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
+    const assetsValues = assetsSh.getDataRange().getValues();
+    const assetsIdx = indexMap_(assetsValues.shift());
+    if (assetsIdx.AuctionSold !== undefined) {
+      affectedAssetIds.forEach(assetId => {
+        for (let i = 0; i < assetsValues.length; i++) {
+          if (String(assetsValues[i][assetsIdx.AssetID]) === assetId) {
+            assetsSh.getRange(i + 2, assetsIdx.AuctionSold + 1).setValue('FALSE');
+            if (assetsIdx.AuctionBuyer !== undefined) assetsSh.getRange(i + 2, assetsIdx.AuctionBuyer + 1).setValue('');
+            if (assetsIdx.AuctionSoldPrice !== undefined) assetsSh.getRange(i + 2, assetsIdx.AuctionSoldPrice + 1).setValue('');
+            if (assetsIdx.AuctionSoldAt !== undefined) assetsSh.getRange(i + 2, assetsIdx.AuctionSoldAt + 1).setValue('');
+            break;
+          }
+        }
+      });
     }
   }
 
