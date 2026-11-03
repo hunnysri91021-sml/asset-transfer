@@ -4561,9 +4561,19 @@ function adminConfirmSale_(body) {
   return { ok: true, data: { successCount: successCount, failedCount: errors.length, errors: errors } };
 }
 
+// กันสร้างใบขายออกซ้ำซ้อนให้ทรัพย์สินที่มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อนแล้ว (เช่น เคยขายผ่านช่องทางประมูลไปแล้ว
+// แต่มาสร้างใบขายออกปกติซ้ำอีกใบโดยไม่รู้ตัว) — เดิมฟังก์ชันนี้ไม่เช็คเลย ทำให้ทรัพย์สินชิ้นเดียวมีใบขายออกอนุมัติแล้ว
+// พร้อมกัน 2 ใบคนละช่องทางได้ (บั๊กที่พบจริง: FA-41-65-406/FA-41-66-434 ไปโผล่ซ้ำทั้งตาราง "ขาย" และ "ขายจากการ
+// ประมูล" ที่หน้า "ทรัพย์สินที่ขายแล้ว" พร้อมกัน) ใช้เงื่อนไขเดียวกับ adminQuickDisposeAsset_ ที่กันไว้อยู่แล้ว
 function createSale_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
+
+  const disposedForCreate = getDisposedAssetStatus_();
+  const alreadyDisposedIds = items.map(it => String(it.assetId || '')).filter(id => id && disposedForCreate[id]);
+  if (alreadyDisposedIds.length) {
+    return { ok: false, error: 'ทรัพย์สินต่อไปนี้มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อน ไม่สามารถสร้างใบขายออกซ้ำได้ (กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน ถ้าต้องการทำรายการใหม่): ' + alreadyDisposedIds.join(', ') };
+  }
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
@@ -4793,9 +4803,16 @@ function findWriteOffRow_(writeOffId) {
   return null;
 }
 
+// กันสร้างใบตัดชำรุดซ้ำซ้อนให้ทรัพย์สินที่มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อนแล้ว — เหตุผลเดียวกับการ์ดใน createSale_
 function createWriteOff_(body) {
   const items = body.items || [];
   if (!items.length) return { ok: false, error: 'ต้องมีรายการทรัพย์สินอย่างน้อย 1 รายการ' };
+
+  const disposedForCreate = getDisposedAssetStatus_();
+  const alreadyDisposedIds = items.map(it => String(it.assetId || '')).filter(id => id && disposedForCreate[id]);
+  if (alreadyDisposedIds.length) {
+    return { ok: false, error: 'ทรัพย์สินต่อไปนี้มีใบขาย/ใบตัดชำรุดที่อนุมัติแล้วอยู่ก่อน ไม่สามารถสร้างใบตัดชำรุดซ้ำได้ (กรุณากด "คืนสถานะใช้งาน (Admin)" ก่อน ถ้าต้องการทำรายการใหม่): ' + alreadyDisposedIds.join(', ') };
+  }
 
   const user = getRequestingUser_(body.password);
   if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
