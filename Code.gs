@@ -5221,6 +5221,11 @@ function pdfDocStyle_() {
 // DriveApp.getFileById().getBlob() — getBlob() คืนไฟล์ต้นฉบับเต็มความละเอียด (อาจหลาย MB จากรูปถ่ายมือถือ) ทำให้
 // Outlook/mail client แสดงเป็นไฟล์แนบขนาดใหญ่โหลดไม่ขึ้นแทนที่จะ render แบบ inline ปกติ (พบจากการทดสอบจริง)
 // ถ้าดึงไม่สำเร็จ (ไม่พบไฟล์/ไม่มีสิทธิ์) ให้ fallback กลับไปเป็นลิงก์ตรงเหมือนเดิมสำหรับรูปนั้น ไม่ทำให้ทั้งอีเมลพัง
+// ขนาดรูปใส่เป็น inline style ตรงๆ บน <img> เสมอ (ไม่พึ่ง CSS class .doc-img-gallery img ใน <style> อย่างเดียว)
+// เพราะ mail client หลายตัว (โดยเฉพาะ Outlook) strip/ไม่รองรับ CSS แบบ class ใน HTML email ทำให้รูปที่ตั้งใจ
+// ให้เป็น thumbnail เล็กๆ กลับโชว์เต็มขนาดจริงในอีเมลที่ส่งออกจริง ทั้งที่ตัว PDF (แปลงผ่าน Google Docs ซึ่ง
+// รองรับ CSS class ปกติ) ดูถูกต้องปกติ — ไม่ใช่บั๊กที่ PDF แต่เป็นบั๊กเฉพาะตอนส่งเป็นอีเมล
+const PDF_IMG_INLINE_STYLE = 'width:26px;height:26px;object-fit:cover;border-radius:3px;border:1px solid #ddd;margin:1px;';
 function pdfImgGallery_(images, inlineImages) {
   const list = (images || []).filter(Boolean);
   if (!list.length) return '-';
@@ -5235,14 +5240,14 @@ function pdfImgGallery_(images, inlineImages) {
             const blob = resp.getBlob();
             const cid = 'docimg' + Object.keys(inlineImages).length;
             inlineImages[cid] = blob;
-            return '<img src="cid:' + cid + '">';
+            return '<img src="cid:' + cid + '" style="' + PDF_IMG_INLINE_STYLE + '">';
           }
         } catch (err) {
           // ดึงรูปย่อไม่สำเร็จ — fallback เป็นลิงก์ตรงสำหรับรูปนี้
         }
       }
     }
-    return '<img src="' + escapeHtml_(u) + '">';
+    return '<img src="' + escapeHtml_(u) + '" style="' + PDF_IMG_INLINE_STYLE + '">';
   }).join('') + '</div>';
 }
 
