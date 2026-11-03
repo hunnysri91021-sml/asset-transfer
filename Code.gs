@@ -1028,7 +1028,12 @@ function computeDisposalData_() {
     const assetId = String(r[woItemIdx.AssetID]);
     const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
     if (voided) return;
-    if (approvedWoDocs[woId]) status[assetId] = 'WrittenOff';
+    // "ขายแล้ว" ต้องทับ "ตัดชำรุด" เสมอ (กติกาเดียวกับส่วน AuctionSold-override ด้านล่าง) — ลูปนี้รันหลังลูปใบขาย
+    // ออกด้านบนเสมอ เดิมเขียนทับ status[assetId] แบบไม่มีเงื่อนไข ถ้าทรัพย์สินถูกตัดชำรุดไปก่อน แล้วภายหลังขายได้จริง
+    // ผ่านใบขายออกปกติ (ไม่ใช่ประมูล จึงไม่มี AuctionSold ให้ override ที่ส่วนล่างช่วยแก้ให้) จะถูกลูปนี้เขียนทับกลับไป
+    // เป็น WrittenOff เสมอโดยไม่สนลำดับเวลาจริงของเอกสารทั้งสองใบ (บั๊กที่พบจริง: OB-00-38-003 ขายไปแล้วแต่ Tag/
+    // สถานะยังค้างเป็น "ตัดชำรุดแล้ว")
+    if (approvedWoDocs[woId] && status[assetId] !== 'Sold') status[assetId] = 'WrittenOff';
     else if (pendingWoDocs[woId]) meta.pendingWriteOffByAsset[assetId] = true;
   });
 
