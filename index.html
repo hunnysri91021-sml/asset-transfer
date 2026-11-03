@@ -3949,6 +3949,7 @@ function renderAuctionSelection(root){
             <option value="transfer">โอนย้าย</option>
           </select>
           <button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button>
+          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;">ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
         </td>
       </tr>`;
     });
@@ -3973,6 +3974,21 @@ function renderAuctionSelection(root){
         const sel = host.querySelector(`.aselRestoreDest[data-id="${CSS.escape(btn.dataset.id)}"]`);
         restoreAsset(btn.dataset.id, btn, sel ? sel.value : 'active');
       };
+    });
+    host.querySelectorAll('.aselConfirmCompletedBtn').forEach(btn=>{
+      btn.onclick = ()=> confirmSaleChannelCompleted(btn.dataset.id, btn);
+    });
+  }
+
+  // ยืนยันว่าใบขายออกช่องทาง "ประมูล" รายการนี้ ขายเสร็จสมบูรณ์แล้วจริง โดยไม่ผ่านการเปิดประมูลสาธารณะในระบบเลย (รู้ผู้ซื้อ/
+  // ราคาสุดท้ายแน่นอนตั้งแต่สร้างใบขายออกแล้ว) — ดึงผู้ซื้อ/ราคาจากใบขายออกที่อนุมัติแล้วมาปักเป็น AuctionSold ให้อัตโนมัติ
+  function confirmSaleChannelCompleted(assetId, btn){
+    if(!confirm('ยืนยันว่าทรัพย์สิน '+assetId+' ขายเสร็จสมบูรณ์แล้วจริง โดยไม่ผ่านการเปิดประมูลสาธารณะ?\n\nระบบจะดึงผู้ซื้อ/ราคาจากใบขายออกที่อนุมัติแล้วมาปักให้อัตโนมัติ และย้ายรายการนี้ไปที่ตาราง "ทรัพย์สินที่ขายแล้ว" ทันที')) return;
+    btn.disabled = true;
+    apiPost({ action:'adminConfirmSaleChannelCompleted', password: STATE.adminPassword, assetId }).then(res=>{
+      if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); btn.disabled = false; return; }
+      toast('ยืนยันขายเสร็จสมบูรณ์แล้ว','ok');
+      load();
     });
   }
 
@@ -3999,7 +4015,10 @@ function renderAuctionSelection(root){
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td><span class="badge badge-pending">รอประมูล</span></td>
-        <td class="no-print"><button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button></td>
+        <td class="no-print" style="white-space:nowrap;">
+          <button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button>
+          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;">ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
+        </td>
       </tr>`;
     });
     html += '</table></div>';
@@ -4007,6 +4026,9 @@ function renderAuctionSelection(root){
 
     host.querySelectorAll('.aselRetractBtn').forEach(btn=>{
       btn.onclick = ()=> saveSelection(btn.dataset.id, false);
+    });
+    host.querySelectorAll('.aselConfirmCompletedBtn').forEach(btn=>{
+      btn.onclick = ()=> confirmSaleChannelCompleted(btn.dataset.id, btn);
     });
   }
 

@@ -392,6 +392,9 @@ function doPost(e) {
       case 'adminRecordOffSystemSale':
         result = adminRecordOffSystemSale_(body);
         break;
+      case 'adminConfirmSaleChannelCompleted':
+        result = adminConfirmSaleChannelCompleted_(body);
+        break;
       case 'adminStartNewAuctionRound':
         result = adminStartNewAuctionRound_(body);
         break;
@@ -2126,6 +2129,23 @@ function adminSetAuctionSold_(body) {
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_SET_AUCTION_SOLD', 'admin', (sold ? ('ทำเครื่องหมายรายการนอกฐาน (ไม่มีทะเบียน) ' + assetId + ' ขายแล้ว ผู้ประมูลได้ ' + buyer + ' ราคา ' + soldPrice) : ('ยกเลิกเครื่องหมายขายแล้วของรายการนอกฐาน ' + assetId)));
   return { ok: true };
+}
+
+// ใบขายออกช่องทาง "ประมูล" บางใบ จริงๆ แล้วขายเสร็จสมบูรณ์ไปแล้ว (รู้ผู้ซื้อ/ราคาสุดท้ายแน่นอนตั้งแต่สร้างใบขายออก) โดย
+// ไม่เคยผ่านการเปิดประมูลสาธารณะในระบบเลย (ไม่เคยติ๊ก "ส่งประมูล"/ไม่เคยมีใบประมูลยื่นราคา) — ตามดีไซน์ปกติ รายการแบบนี้
+// จะค้างอยู่ที่ตาราง "คัดเลือกรายการประมูล" (รอ Admin ติ๊กส่งประมูล → รอคนประมูล → Admin กด Confirm ผู้ชนะ ถึงจะนับว่า
+// ขายจบจริง) ปุ่มนี้ให้ Admin ยืนยันลัดได้เลยว่า "ขายเสร็จสมบูรณ์แล้ว" โดยดึงผู้ซื้อ/ราคาจากใบขายออกที่อนุมัติแล้วของ
+// ทรัพย์สินนั้นมาปักเป็น AuctionSold ให้อัตโนมัติ (เหมือนผล adminConfirmAuctionWinner_/adminSetAuctionSold_ ปกติ)
+// ไม่ต้องรอผ่านขั้นตอนประมูลสาธารณะก่อน
+function adminConfirmSaleChannelCompleted_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const saleInfo = findApprovedSaleInfoForAsset_(assetId);
+  if (!saleInfo) return { ok: false, error: 'ไม่พบใบขายออกที่อนุมัติแล้วของทรัพย์สินนี้' };
+  const buyer = saleInfo.Buyer || 'ไม่ระบุ';
+  const soldPrice = Number(saleInfo.SalePrice) || 0;
+  return adminSetAuctionSold_({ password: body.password, assetId: assetId, assetName: body.assetName || '', sold: true, buyer: buyer, soldPrice: soldPrice });
 }
 
 // Admin กด "Confirm" ที่หน้าประกาศผล — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (เท่ากับ adminSetAuctionSold_
