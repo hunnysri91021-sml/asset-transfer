@@ -458,6 +458,9 @@ function doPost(e) {
       case 'adminBackfillOffSystemAuctionSold':
         result = adminBackfillOffSystemAuctionSold_(body);
         break;
+      case 'adminCheckDuplicateAssetStatus':
+        result = adminCheckDuplicateAssetStatus_(body);
+        break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
         break;
@@ -3637,6 +3640,112 @@ function adminBackfillOffSystemAuctionSold_(body) {
   });
   logActivity_('', 'ADMIN_BACKFILL_OFFSYSTEM_AUCTIONSOLD', 'admin', 'ซิงค์สถานะขายแล้วย้อนหลังสำหรับรายการขายนอกระบบเก่า: ' + fixedIds.length + ' รายการ' + (fixedIds.length ? ' (' + fixedIds.join(', ') + ')' : ''));
   return { ok: true, data: { fixedCount: fixedIds.length, fixedIds: fixedIds } };
+}
+
+// ตรวจสอบหาทรัพย์สินที่มี "สถานะซ้ำซ้อน/ขัดแย้งกัน" ทั่วทั้งระบบ — เครื่องมือตรวจสอบเฉยๆ (ไม่แก้ไขข้อมูลให้อัตโนมัติ
+// ยกเว้นข้อ 4 ที่แนะนำให้ไปกดปุ่มซิงค์แท็กต่อ) ใช้ตรวจจับความผิดปกติที่ไม่ควรเกิดขึ้นได้ตามกติกาปกติของระบบ แต่เกิดขึ้น
+// ได้จากข้อมูลเก่าก่อนแก้บั๊ก หรือจากการแก้ไขชีตตรงๆ นอกแอป:
+// 1) ทรัพย์สินชิ้นเดียวกันมีใบขายออกที่อนุมัติแล้ว (ไม่ถูก void) มากกว่า 1 ใบพร้อมกัน — ขายซ้ำซ้อนจริง
+// 2) ทรัพย์สินชิ้นเดียวกันมีใบตัดชำรุดที่อนุมัติแล้ว (ไม่ถูก void) มากกว่า 1 ใบพร้อมกัน
+// 3) ทรัพย์สินชิ้นเดียวกันอยู่ในคิวรอ (TransferQueue) มากกว่า 1 ประเภทพร้อมกัน (โอนย้าย/ขาย/ตัดชำรุด) ทั้งที่กติกา
+//    ปกติเลือกได้ทีละประเภทเดียวเท่านั้น (ดู addToAssetQueue_)
+// 4) Tag ในชีต Assets ไม่ตรงกับสถานะที่คำนวณสดจริง (เหมือนที่ "ซิงค์แท็กสถานะย้อนหลัง" แก้ให้ แต่ตัวนี้แค่รายงาน
+//    ให้เห็นก่อนว่ามีกี่รายการและเป็นรายการไหนบ้าง)
+// 5) ทรัพย์สินที่สถานะจริงยัง "ใช้งานปกติ" (ไม่มีใบขาย/ตัดชำรุดอนุมัติแล้วเลย) แต่ยังมีธงประมูล (SendToAuction/
+//    AuctionSold) ค้างอยู่ — ปกติควรถูกล้างไปแล้วตอนคืนสถานะ (clearAuctionSelection_) ถ้ายังเจอแปลว่าผิดปกติ
+function adminCheckDuplicateAssetStatus_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const issues = [];
+
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues.shift());
+  const approvedSaleDocs = {};
+  saleValues.forEach(r => {
+    if (r[saleIdx.Status] === STATUS.APPROVED) {
+      approvedSaleDocs[String(r[saleIdx.SaleID])] = {
+        RunningNo: r[saleIdx.RunningNo] || '',
+        Buyer: r[saleIdx.Buyer] || '',
+        Channel: saleIdx.Channel !== undefined ? String(r[saleIdx.Channel] || '') : ''
+      };
+    }
+  });
+  const saleItemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const saleItemValues = saleItemSh.getDataRange().getValues();
+  const saleItemIdx = indexMap_(saleItemValues.shift());
+  const saleHitsByAsset = {};
+  saleItemValues.forEach(r => {
+    const voided = saleItemIdx.Voided !== undefined && String(r[saleItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    const doc = approvedSaleDocs[String(r[saleItemIdx.SaleID])];
+    if (!doc) return;
+    const assetId = String(r[saleItemIdx.AssetID]);
+    if (!saleHitsByAsset[assetId]) saleHitsByAsset[assetId] = [];
+    saleHitsByAsset[assetId].push(doc.RunningNo + (doc.Buyer ? ' (ผู้ซื้อ ' + doc.Buyer + ')' : '') + (doc.Channel ? ' [' + doc.Channel + ']' : ''));
+  });
+  Object.keys(saleHitsByAsset).forEach(assetId => {
+    const hits = saleHitsByAsset[assetId];
+    if (hits.length > 1) issues.push({ AssetID: assetId, Type: 'DuplicateSale', Detail: 'มีใบขายออกที่อนุมัติแล้ว ' + hits.length + ' ใบพร้อมกัน: ' + hits.join(', ') });
+  });
+
+  const woSh = getSS_().getSheetByName(SHEETS.WRITEOFFS);
+  const woValues = woSh.getDataRange().getValues();
+  const woIdx = indexMap_(woValues.shift());
+  const approvedWoDocs = {};
+  woValues.forEach(r => {
+    if (r[woIdx.Status] === STATUS.APPROVED) approvedWoDocs[String(r[woIdx.WriteOffID])] = r[woIdx.RunningNo] || '';
+  });
+  const woItemSh = getSS_().getSheetByName(SHEETS.WRITEOFF_ITEMS);
+  const woItemValues = woItemSh.getDataRange().getValues();
+  const woItemIdx = indexMap_(woItemValues.shift());
+  const woHitsByAsset = {};
+  woItemValues.forEach(r => {
+    const voided = woItemIdx.Voided !== undefined && String(r[woItemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    const runningNo = approvedWoDocs[String(r[woItemIdx.WriteOffID])];
+    if (runningNo === undefined) return;
+    const assetId = String(r[woItemIdx.AssetID]);
+    if (!woHitsByAsset[assetId]) woHitsByAsset[assetId] = [];
+    woHitsByAsset[assetId].push(runningNo);
+  });
+  Object.keys(woHitsByAsset).forEach(assetId => {
+    const hits = woHitsByAsset[assetId];
+    if (hits.length > 1) issues.push({ AssetID: assetId, Type: 'DuplicateWriteOff', Detail: 'มีใบตัดชำรุดที่อนุมัติแล้ว ' + hits.length + ' ใบพร้อมกัน: ' + hits.join(', ') });
+  });
+
+  const tqSh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const tqValues = tqSh.getDataRange().getValues();
+  const tqIdx = indexMap_(tqValues.shift());
+  const queuePurposesByAsset = {};
+  tqValues.forEach(r => {
+    const assetId = String(r[tqIdx.AssetID]);
+    if (!assetId) return;
+    const purpose = (tqIdx.Purpose !== undefined && r[tqIdx.Purpose]) ? String(r[tqIdx.Purpose]) : QUEUE_PURPOSES.TRANSFER;
+    if (!queuePurposesByAsset[assetId]) queuePurposesByAsset[assetId] = new Set();
+    queuePurposesByAsset[assetId].add(purpose);
+  });
+  Object.keys(queuePurposesByAsset).forEach(assetId => {
+    const purposes = Array.from(queuePurposesByAsset[assetId]);
+    if (purposes.length > 1) {
+      issues.push({ AssetID: assetId, Type: 'MultipleQueues', Detail: 'อยู่ในคิวรอพร้อมกันหลายประเภท: ' + purposes.map(p => QUEUE_PURPOSE_LABEL_TH[p] || p).join(', ') + ' (ใช้ปุ่ม "ล้างคิวซ้ำ" ที่หน้ารายการทรัพย์สินแก้ได้)' });
+    }
+  });
+
+  const disposed = getDisposedAssetStatus_();
+  const assetsRaw = getAssetsRaw_();
+  assetsRaw.forEach(a => {
+    const assetId = String(a.AssetID);
+    const status = disposed[assetId] || 'Active';
+    const expectedTag = tagForDisposedStatus_(status);
+    if (a.Tag && a.Tag !== expectedTag) {
+      issues.push({ AssetID: assetId, Type: 'TagMismatch', Detail: 'แท็กปัจจุบันคือ "' + a.Tag + '" แต่สถานะจริงควรเป็น "' + expectedTag + '" (กด "ซิงค์แท็กสถานะย้อนหลัง" เพื่อแก้)' });
+    }
+    if (status === 'Active' && (String(a.SendToAuction).toLowerCase() === 'true' || String(a.AuctionSold).toLowerCase() === 'true')) {
+      issues.push({ AssetID: assetId, Type: 'OrphanedAuctionFlag', Detail: 'สถานะจริงเป็น "ใช้งานปกติ" (ไม่มีใบขาย/ตัดชำรุดอนุมัติแล้วเลย) แต่ยังมีธงประมูลค้างอยู่ (SendToAuction=' + a.SendToAuction + ', AuctionSold=' + a.AuctionSold + ')' });
+    }
+  });
+
+  return { ok: true, data: { issues: issues, count: issues.length } };
 }
 
 function findSourceSheet_(srcSs) {
