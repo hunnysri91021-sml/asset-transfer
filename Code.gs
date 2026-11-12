@@ -407,6 +407,9 @@ function doPost(e) {
       case 'adminVoidSaleDoc':
         result = adminVoidSaleDoc_(body);
         break;
+      case 'adminVoidSalePendingItems':
+        result = adminVoidSalePendingItems_(body);
+        break;
       case 'adminGetPendingAuctionSaleDocsForAssets':
         result = adminGetPendingAuctionSaleDocsForAssets_(body);
         break;
@@ -4733,6 +4736,70 @@ function adminVoidSaleDoc_(body) {
 
   logActivity_(saleId, 'ADMIN_VOID_SALE_DOC', 'admin', 'ยกเลิกใบขายออก ' + found.obj.RunningNo + ' (ใบซ้ำซ้อน)' + (body.reason ? ' เหตุผล: ' + body.reason : ''));
   return { ok: true, data: { saleId: saleId, runningNo: found.obj.RunningNo, affectedAssetIds: affectedAssetIds } };
+}
+
+// ใบขายออกช่องทาง "ประมูล" บางใบ มีทั้งรายการที่ "ขายสำเร็จจริงแล้ว" (AuctionSold=true) ปนกับรายการที่ "ยังไม่ขาย" อยู่
+// ในใบเดียวกัน (adminGetPendingAuctionSaleDocsForAssets_ จะกันใบแบบนี้ไว้ ไม่ให้ยกเลิกทั้งใบอัตโนมัติผ่าน
+// adminVoidSaleDoc_ เพราะจะไปกระทบรายการที่ขายสำเร็จจริงด้วย) — ฟังก์ชันนี้ให้ Admin "ตัด" เฉพาะรายการที่ "ยังไม่ขาย"
+// ออกจากใบเดิมแทน (Voided เฉพาะรายการนั้น) ส่วนรายการที่ขายสำเร็จจริงแล้วในใบเดียวกันจะไม่ถูกแตะต้องเลย ใบเดิมยังคง
+// สถานะ Approved ต่อไปตามปกติ (เพราะยังมีรายการที่ขายสำเร็จจริงเหลืออยู่ — ถ้าตัดจนไม่เหลือรายการใดเลย ค่อยปิดใบเป็น
+// Voided ไปด้วย กันใบว่างเปล่าค้างสถานะ Approved) — รายการที่ถูกตัดออกนี้ Admin นำไปสร้างใบขายใหม่ต่อได้ทันที
+function adminVoidSalePendingItems_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const saleId = String(body.saleId || '').trim();
+  if (!saleId) return { ok: false, error: 'กรุณาระบุรหัสใบขายออก' };
+  const assetIds = Array.isArray(body.assetIds) ? body.assetIds.map(String) : [];
+  if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการทรัพย์สินที่ต้องการตัดออก' };
+  const askSet = {};
+  assetIds.forEach(id => { askSet[id] = true; });
+
+  const found = findSaleRow_(saleId);
+  if (!found) return { ok: false, error: 'ไม่พบใบขายออกนี้' };
+  if (found.obj.Status !== STATUS.APPROVED) return { ok: false, error: 'ดำเนินการได้เฉพาะใบขายออกที่อนุมัติแล้วเท่านั้น (สถานะปัจจุบัน: ' + found.obj.Status + ')' };
+
+  // กันพลาด: รับเฉพาะรายการที่ "ยังไม่ขายสำเร็จจริง" (AuctionSold!=true) เท่านั้น ไม่งั้นจะกลายเป็นช่องโหว่เดียวกับที่
+  // เพิ่งแก้ไปในฟังก์ชัน adminVoidSaleDoc_ (ไปตัดรายการที่ขายสำเร็จจริงแล้วออกจากใบโดยไม่ตั้งใจ)
+  const auctionSoldMap = {};
+  getAssetsRaw_().forEach(a => { auctionSoldMap[String(a.AssetID)] = String(a.AuctionSold).toLowerCase() === 'true'; });
+  const blocked = assetIds.filter(id => auctionSoldMap[id]);
+  if (blocked.length) return { ok: false, error: 'รายการต่อไปนี้ขายสำเร็จจริงแล้ว ไม่สามารถตัดออกจากใบได้: ' + blocked.join(', ') };
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  if (itemIdx.Voided === undefined) return { ok: false, error: 'ไม่พบคอลัมน์ Voided ในชีตใบขายออก กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+
+  const affectedAssetIds = [];
+  const remainingAssetIds = [];
+  for (let i = 0; i < itemValues.length; i++) {
+    if (String(itemValues[i][itemIdx.SaleID]) !== saleId) continue;
+    const voided = String(itemValues[i][itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) continue;
+    const assetId = String(itemValues[i][itemIdx.AssetID]);
+    if (askSet[assetId]) {
+      itemSh.getRange(i + 2, itemIdx.Voided + 1).setValue('TRUE');
+      affectedAssetIds.push(assetId);
+    } else {
+      remainingAssetIds.push(assetId);
+    }
+  }
+  if (!affectedAssetIds.length) return { ok: false, error: 'ไม่พบรายการที่ระบุในใบขายออกนี้ (อาจถูกตัดออกไปแล้ว)' };
+
+  invalidateDisposedAssetStatusCache_();
+  const disposedAfter = getDisposedAssetStatus_();
+  affectedAssetIds.forEach(assetId => {
+    setAssetsTag_([assetId], tagForDisposedStatus_(disposedAfter[assetId]));
+  });
+
+  let docClosed = false;
+  if (!remainingAssetIds.length) {
+    const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+    saleSh.getRange(found.rowNum, found.idx.Status + 1).setValue(STATUS.VOIDED);
+    docClosed = true;
+  }
+
+  logActivity_(saleId, 'ADMIN_VOID_SALE_PENDING_ITEMS', 'admin', 'ตัดรายการที่ยังไม่ขายออกจากใบขายออก ' + found.obj.RunningNo + ' เพื่อนำไปสร้างใบขายใหม่: ' + affectedAssetIds.join(', ') + (docClosed ? ' (ใบเดิมไม่เหลือรายการ ปิดใบเป็น Voided ไปด้วย)' : ''));
+  return { ok: true, data: { saleId: saleId, runningNo: found.obj.RunningNo, affectedAssetIds: affectedAssetIds, docClosed: docClosed } };
 }
 
 // Admin ที่หน้า "รายการทรัพย์สิน" เลือกรวมทรัพย์สินหลายสถานะมาสร้างใบขายออกใบเดียวกัน อาจมีบางรายการที่สถานะดิบเป็น
