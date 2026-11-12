@@ -1599,6 +1599,14 @@ function renderAssetList(root){
       if(pendingAuctionIds.length){
         apiPost({ action:'adminGetPendingAuctionSaleDocsForAssets', password: STATE.adminPassword, assetIds: pendingAuctionIds }).then(res=>{
           if(!res.ok){ toast(res.error||'ตรวจสอบสถานะไม่สำเร็จ','err'); return; }
+          const blockedDocs = res.data.blockedDocuments || [];
+          if(blockedDocs.length){
+            let blockedMsg = 'ไม่สามารถดำเนินการอัตโนมัติได้ — ใบขายออกต่อไปนี้มีทั้งรายการที่ยังไม่ขายปนกับรายการที่ "ขายสำเร็จจริงแล้ว" (ยืนยันผ่านประมูล/ขายเสร็จสมบูรณ์แล้ว) อยู่ในใบเดียวกัน ระบบจะไม่ยกเลิกใบนี้ให้อัตโนมัติ เพราะจะไปกระทบรายการที่ขายสำเร็จไปแล้วจริงด้วย:\n\n';
+            blockedDocs.forEach(d=>{ blockedMsg += '- เลขที่ '+d.runningNo+' : รายการที่ขายสำเร็จแล้วในใบนี้ = '+d.alreadySoldAssetIds.join(', ')+'\n'; });
+            blockedMsg += '\nกรุณายกเลิกการเลือกรายการที่เกี่ยวข้องกับใบเหล่านี้ออกก่อน หรือให้ Admin จัดการแยกกรณีด้วยตนเอง';
+            alert(blockedMsg);
+            return;
+          }
           const docs = res.data.documents || [];
           if(!docs.length){ buildDraftAndGo(targetView, selected); return; }
           let msg = 'พบรายการที่เลือกมีใบขายออกช่องทาง "ประมูล" ค้างอยู่ก่อนแล้ว (ยังไม่เคยขายสำเร็จจริง):\n\n';

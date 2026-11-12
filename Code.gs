@@ -4778,13 +4778,24 @@ function adminGetPendingAuctionSaleDocsForAssets_(body) {
     if (askSet[assetId] && !auctionSoldMap[assetId]) relevantSaleIds[saleId] = true;
   });
 
-  const documents = Object.keys(relevantSaleIds).map(saleId => ({
-    saleId: saleId,
-    runningNo: auctionSaleDocs[saleId].runningNo,
-    assetIds: docAssetIds[saleId] || []
-  }));
+  // กันพลาด: ใบเดียวกันอาจมีทั้งรายการที่ "ยังไม่ขาย" ปนกับรายการที่ "ขายสำเร็จจริงแล้ว" (AuctionSold=true) อยู่ก่อน
+  // แล้ว (เช่น Admin เคย Confirm บางรายการในใบนี้ไปแล้วทีละรายการ ก่อนที่จะมาเลือกรายการที่เหลือสร้างใบใหม่) — ถ้าปล่อย
+  // ให้ยกเลิกใบนี้อัตโนมัติไปเลย adminVoidSaleDoc_ จะไปล้าง AuctionSold ของรายการที่ขายสำเร็จจริงด้วย (ผิดพลาดร้ายแรง
+  // ทำให้รายการที่ขายไปแล้วจริงถูกเข้าใจผิดว่ายังไม่ขาย) — ใบแบบนี้จึงต้องกันไม่ให้เข้าทางลัด "ยกเลิกอัตโนมัติ" ของหน้า
+  // นี้ ต้องให้ Admin ไปจัดการเองแยกกรณี (เช่น ใช้ปุ่มยกเลิกใบขายออกปกติเฉพาะกรณีที่ตั้งใจจริงๆ)
+  const documents = [];
+  const blockedDocuments = [];
+  Object.keys(relevantSaleIds).forEach(saleId => {
+    const docAssets = docAssetIds[saleId] || [];
+    const alreadySoldAssetIds = docAssets.filter(id => auctionSoldMap[id]);
+    if (alreadySoldAssetIds.length) {
+      blockedDocuments.push({ saleId: saleId, runningNo: auctionSaleDocs[saleId].runningNo, assetIds: docAssets, alreadySoldAssetIds: alreadySoldAssetIds });
+    } else {
+      documents.push({ saleId: saleId, runningNo: auctionSaleDocs[saleId].runningNo, assetIds: docAssets });
+    }
+  });
 
-  return { ok: true, data: { documents: documents } };
+  return { ok: true, data: { documents: documents, blockedDocuments: blockedDocuments } };
 }
 
 // Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
