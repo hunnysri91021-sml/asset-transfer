@@ -4102,7 +4102,16 @@ function renderAuctionSelection(root){
       auctionSystemEnabled = res.ok ? res.data.enabled !== false : true;
       const banner = document.getElementById('aselSystemClosedBanner');
       if(banner) banner.style.display = auctionSystemEnabled ? 'none' : 'block';
+      const roundDisabled = auctionSystemEnabled ? false : true;
+      ['btnStartNewAuctionRound','btnUndoStartNewAuctionRound','btnMergeAuctionRounds','mergeFromRound','mergeToRound'].forEach(id=>{
+        const el = document.getElementById(id);
+        if(el) el.disabled = roundDisabled;
+      });
+      // อ่านสถานะมาทีหลัง load() ก็ได้ (ไม่รู้ลำดับ request ไหนเสร็จก่อน) — เรียกซ้ำทั้ง 3 ตารางให้ใช้ auctionSystemEnabled
+      // ล่าสุดเสมอ ไม่ว่าจะมีข้อมูล candidates โหลดมาแล้วหรือยัง (ถ้ายังไม่มี ฟังก์ชันพวกนี้ก็แค่ไม่มีอะไรให้ render)
       renderTable();
+      renderSentTable();
+      renderHistoryTable();
     });
   }
   loadAuctionSystemStatus();
@@ -4205,16 +4214,16 @@ function renderAuctionSelection(root){
         <td>${a.DocCreatedAt ? fmtDate(a.DocCreatedAt) : '-'}</td>
         <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
-        <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
+        <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง" ${sendDisabled}></td>
         <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}" ${sendDisabled}></td>
         <td class="no-print" style="white-space:nowrap;">
-          <select class="aselRestoreDest" data-id="${esc(a.AssetID)}" style="width:auto;display:inline-block;margin-right:4px;">
+          <select class="aselRestoreDest" data-id="${esc(a.AssetID)}" style="width:auto;display:inline-block;margin-right:4px;" ${sendDisabled}>
             <option value="active">ใช้งานปกติ</option>
             <option value="writeoff">รายการชำรุด</option>
             <option value="transfer">โอนย้าย</option>
           </select>
-          <button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}">คืนสถานะ</button>
-          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;">ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
+          <button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}" ${sendDisabled}>คืนสถานะ</button>
+          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;" ${sendDisabled}>ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
         </td>
       </tr>`;
     });
@@ -4267,6 +4276,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselSentCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีรายการที่ส่งประมูล</div>'; return; }
+    const sendDisabled = auctionSystemEnabled ? '' : 'disabled';
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th>สถานะ</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
@@ -4281,8 +4291,8 @@ function renderAuctionSelection(root){
         <td class="money">${a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-'}</td>
         <td><span class="badge badge-pending">รอประมูล</span></td>
         <td class="no-print" style="white-space:nowrap;">
-          <button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}">ถอนออกจากประมูล</button>
-          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;">ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
+          <button class="btn btn-secondary btn-sm aselRetractBtn" data-id="${esc(a.AssetID)}" ${sendDisabled}>ถอนออกจากประมูล</button>
+          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;" ${sendDisabled}>ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
         </td>
       </tr>`;
     });
@@ -4306,6 +4316,7 @@ function renderAuctionSelection(root){
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1));
     document.getElementById('aselHistCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
+    const sendDisabled = auctionSystemEnabled ? '' : 'disabled';
     let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง/ผลการขาย</th><th>เคยส่งประมูล</th><th class="no-print">จัดการ</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
@@ -4320,7 +4331,7 @@ function renderAuctionSelection(root){
           ? `<span class="badge badge-approved">ขายแล้ว (ประมูล)</span><div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(a.AuctionBuyer||'')} · ${a.AuctionSoldPrice?fmtMoneyOrHidden(a.AuctionSoldPrice):''}</div>`
           : (a.AuctionReferencePrice ? fmtMoneyOrHidden(a.AuctionReferencePrice) : '-')}</td>
         <td><span class="badge ${a.SendToAuction?'badge-approved':'badge-pending'}">${a.SendToAuction?'เคยส่ง':'ไม่เคยส่ง'}</span></td>
-        <td class="no-print">${a.AuctionSold ? `<button class="btn btn-secondary btn-sm aselUndoSoldBtn" data-id="${esc(a.AssetID)}">ยกเลิกขายแล้ว</button>` : '-'}</td>
+        <td class="no-print">${a.AuctionSold ? `<button class="btn btn-secondary btn-sm aselUndoSoldBtn" data-id="${esc(a.AssetID)}" ${sendDisabled}>ยกเลิกขายแล้ว</button>` : '-'}</td>
       </tr>`;
     });
     html += '</table></div>';

@@ -2065,6 +2065,18 @@ function getAuctionSystemStatus_() {
   // อยู่แล้วจะกลายเป็นปิดการส่งประมูลไปทันทีโดยไม่มีใครตั้งใจกด
   return { enabled: props.getProperty(AUCTION_SYSTEM_ENABLED_PROP) !== '0' };
 }
+// เรียกจากทุกฟังก์ชันที่ "แก้ไข/ดำเนินการ" ข้อมูลในแถบประมูล (ส่งประมูล/ถอน/Confirm ผู้ชนะ/ยกเลิก Confirm/บันทึกใบ
+// ประมูล/ลบใบประมูล/บันทึกขายนอกระบบ/ปิดรอบ-เริ่มรอบใหม่/รวมรอบ) — ขณะปิดระบบประมูลอยู่ ต้องดูข้อมูลได้อย่างเดียว
+// (read-only) แก้ไขอะไรไม่ได้เลยแม้แต่ Admin จนกว่าจะเปิดใช้งานอีกครั้งที่หน้าตั้งค่า — ไม่ใช้กับฟังก์ชันที่เป็นแค่
+// ตั้งค่าการแสดงผล/ประกาศ (เช่น adminSaveAuctionClosedNotice_, adminSetAuctionSystemEnabled_ เอง) เพราะงั้นจะล็อก
+// ตัวเองจนเปิดกลับไม่ได้
+function requireAuctionSystemOpen_() {
+  if (!getAuctionSystemStatus_().enabled) {
+    return { ok: false, error: 'ระบบประมูลปิดอยู่ ขณะนี้ดูข้อมูลได้อย่างเดียว ไม่สามารถแก้ไข/ดำเนินการใดๆ ในแถบประมูลได้ กรุณาเปิดใช้งานระบบประมูลที่หน้าตั้งค่าก่อน' };
+  }
+  return null;
+}
+
 function adminSetAuctionSystemEnabled_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const enabled = !!body.enabled;
@@ -2111,14 +2123,11 @@ function getAuctionCandidates_(body) {
 // Admin ติ๊ก/ยกเลิกส่งทรัพย์สิน 1 รายการขึ้นหน้าประมูลขาย พร้อมตั้งราคากลางไปพร้อมกันได้
 function adminSetAuctionSelection_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
   const sendToAuction = !!body.sendToAuction;
-  // ปิดระบบประมูลอยู่ — ห้ามส่งรายการใหม่เข้าหน้าประมูลขายสาธารณะ (ถอนรายการที่ส่งไปแล้วออก/sendToAuction=false ยังทำได้ปกติ
-  // ไม่กระทบรายการที่ส่งไปแล้วก่อนหน้า)
-  if (sendToAuction && !getAuctionSystemStatus_().enabled) {
-    return { ok: false, error: 'ระบบประมูลปิดอยู่ ไม่สามารถส่งทรัพย์สินเข้าสู่หน้าประมูลขายได้ กรุณาเปิดใช้งานระบบประมูลที่หน้าตั้งค่าก่อน' };
-  }
   let referencePrice = null;
   if (body.referencePrice !== undefined && body.referencePrice !== '') {
     referencePrice = parseFloat(body.referencePrice);
@@ -2192,6 +2201,8 @@ function upsertAuctionOffListing_(assetId, assetName, fields) {
 // รายการที่ขายแล้วจะหายไปจากหน้า "ประมูลขาย" สาธารณะทันที (ดู getAuctionListing_) — ส่ง sold:false เพื่อยกเลิกเครื่องหมายนี้ได้
 function adminSetAuctionSold_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
   const sold = !!body.sold;
@@ -2246,6 +2257,8 @@ function adminSetAuctionSold_(body) {
 // ไม่ต้องรอผ่านขั้นตอนประมูลสาธารณะก่อน
 function adminConfirmSaleChannelCompleted_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
   const saleInfo = findApprovedSaleInfoForAsset_(assetId);
@@ -2262,6 +2275,8 @@ function adminConfirmSaleChannelCompleted_(body) {
 // ยืนยันผู้ประมูลได้ย้อนหลังได้โดยไม่ต้องผ่านฟอร์ม "บันทึกขายนอกระบบ"
 function adminConfirmAuctionWinner_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
   const round = body.round != null && body.round !== '' ? (parseInt(body.round, 10) || getAuctionCurrentRound_()) : getAuctionCurrentRound_();
@@ -2280,6 +2295,8 @@ function adminConfirmAuctionWinner_(body) {
 // ต่อไป (ทั้งที่หน้าประกาศผลและ Employee Live — ดู getValidAuctionBidItems_) จนกว่าจะมีผู้เสนอราคาใหม่เข้ามาหลังจากนี้
 function adminCancelAuctionWinner_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
@@ -2518,6 +2535,8 @@ function resolveAuctionRoundFilter_(roundParam) {
 // ยังเก็บไว้เป็นประวัติครบ ดูย้อนหลังได้ที่หน้าประกาศผล (เลือกตัวกรองรอบ)
 function adminStartNewAuctionRound_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const currentRound = getAuctionCurrentRound_();
   const nextRound = currentRound + 1;
 
@@ -2553,6 +2572,8 @@ function adminStartNewAuctionRound_(body) {
 // จะกลายเป็นของรอบที่ไม่มีอยู่จริงอีกต่อไป) และยกเลิกได้แค่ "ครั้งล่าสุด" เท่านั้น (ไม่รองรับย้อนหลายรอบพร้อมกัน)
 function adminUndoStartAuctionRound_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const currentRound = getAuctionCurrentRound_();
   if (currentRound <= 1) return { ok: false, error: 'ยังไม่เคยกด "ปิดรอบและเริ่มรอบใหม่" ไม่มีอะไรให้ยกเลิก' };
 
@@ -2606,6 +2627,8 @@ function adminUndoStartAuctionRound_(body) {
 //    เคยถูกถอดออกตอนกด "ปิดรอบและเริ่มรอบใหม่" ครั้งนั้น (เหมือนที่ adminUndoStartAuctionRound_ ทำ)
 function adminMergeAuctionRounds_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const fromRound = parseInt(body.fromRound, 10);
   const toRound = parseInt(body.toRound, 10);
   if (!fromRound || fromRound <= 0 || !toRound || toRound <= 0 || fromRound === toRound) {
@@ -2714,6 +2737,8 @@ function adminMergeAuctionRounds_(body) {
 // รายการที่เปิดประมูลอยู่ตอนนี้ (เผื่อกรณีคีย์ย้อนหลัง/สินค้าถูกถอนออกไปแล้ว) ฝั่งหน้าเว็บจะดึงรายการมาช่วยเลือกให้เอง
 function adminCreateAuctionBid_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const bidderName = String(body.bidderName || '').trim();
   if (!bidderName) return { ok: false, error: 'กรุณาระบุชื่อผู้ยื่นประมูล' };
   const items = Array.isArray(body.items) ? body.items : [];
@@ -2787,6 +2812,8 @@ function adminCreateAuctionBid_(body) {
 // Admin ลบใบประมูลทั้งใบ (แก้ไขรายการคีย์ผิด) — ลบทั้งแถวหลักและรายการสินค้าในใบนั้นทั้งหมด
 function adminDeleteAuctionBid_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const bidId = String(body.bidId || '').trim();
   if (!bidId) return { ok: false, error: 'กรุณาระบุใบประมูลที่ต้องการลบ' };
 
@@ -2819,6 +2846,8 @@ function adminDeleteAuctionBid_(body) {
 // แก้ไขราคาที่เสนอของรายการสินค้า 1 รายการในใบประมูล (ระบุด้วย BidID+LineNo) — แก้คีย์ผิดได้โดยไม่ต้องลบทั้งใบ
 function adminUpdateAuctionBidItem_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const bidId = String(body.bidId || '').trim();
   const lineNo = parseInt(body.lineNo, 10);
   const price = parseFloat(body.price);
@@ -2841,6 +2870,8 @@ function adminUpdateAuctionBidItem_(body) {
 // ลบรายการสินค้า 1 รายการออกจากใบประมูล (ไม่ลบทั้งใบ) — ใช้แก้ไขตอนคีย์ผิดแค่บางรายการในใบที่มีหลายรายการ
 function adminDeleteAuctionBidItem_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const bidId = String(body.bidId || '').trim();
   const lineNo = parseInt(body.lineNo, 10);
   if (!bidId || isNaN(lineNo)) return { ok: false, error: 'ข้อมูลรายการไม่ถูกต้อง' };
@@ -3153,6 +3184,8 @@ function findApprovedSaleInfoForAsset_(assetId) {
 // อนุมัติแล้วเท่านั้น) แล้วค่อยให้ buildAuctionWinnersList_ ดึงไปรวมแสดง/รวมยอดในหน้า "ประกาศผล" ของรอบที่เลือกอีกที
 function adminRecordOffSystemSale_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
   const assetId = String(body.assetId || '').trim();
   const buyer = String(body.buyer || '').trim();
   const price = parseFloat(body.price);
