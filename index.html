@@ -3024,6 +3024,34 @@ function renderAuctionLive(root){
   let winners = [];
   let auctionCandidates = []; // รายการที่เปิดประมูลอยู่ตอนนี้ (ดึงจาก getAuctionListing) ใช้เป็นตัวเลือกตอนคีย์ใบประมูล
   let draftBidItems = [];
+  let auctionSystemEnabled = true; // สวิตช์ "เปิด/ปิดระบบประมูล" ที่หน้าตั้งค่า — ปิดแล้วล็อกทั้งแท็บ Admin/ประกาศผล (รวม Admin)
+
+  // เช็คสวิตช์ "เปิด/ปิดระบบประมูล" แล้ว disable ปุ่ม/ช่องกรอกที่แก้ไขข้อมูลประมูลได้ทั้งหมดในแท็บ Admin/ประกาศผล
+  // (เรียกซ้ำได้ทุกครั้งที่ render ตารางใหม่ เพราะ element พวกนี้ถูกสร้างใหม่ทุกครั้ง — เช็ค el ก่อนเสมอเพราะบางอันอยู่
+  // คนละแท็บ ไม่ได้อยู่ใน DOM พร้อมกัน)
+  function applyAuctionLockUI(){
+    const disabled = !auctionSystemEnabled;
+    const adminBanner = document.getElementById('liveAdminClosedBanner');
+    if(adminBanner) adminBanner.style.display = disabled ? 'block' : 'none';
+    const bidModalBtn = document.getElementById('btnOpenBidModal');
+    if(bidModalBtn) bidModalBtn.disabled = disabled;
+    document.querySelectorAll('.adminBidEditBtn, .adminBidDelBtn').forEach(b=>{ b.disabled = disabled; });
+
+    const winnersBanner = document.getElementById('liveWinnersClosedBanner');
+    if(winnersBanner) winnersBanner.style.display = disabled ? 'block' : 'none';
+    ['btnWinnersBulkConfirm','btnWinnersBulkCc','btnSaveOffSystemSale','btnWinnersMergeRounds','winnersMergeFromRound','winnersMergeToRound'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.disabled = disabled;
+    });
+    document.querySelectorAll('.winnerConfirmBtn, .winnerCcBtn, .winnerUnconfirmBtn, .winnerCancelOffSystemBtn').forEach(b=>{ b.disabled = disabled; });
+  }
+  function loadAuctionSystemStatus(){
+    apiGet({ action:'getAuctionSystemStatus' }).then(res=>{
+      auctionSystemEnabled = res.ok ? res.data.enabled !== false : true;
+      applyAuctionLockUI();
+    });
+  }
+  loadAuctionSystemStatus();
 
   // กลับไปหน้าประมูลขาย — ถ้าล็อกอินอยู่ใช้ระบบเมนูปกติ ถ้าเป็นผู้เข้าชมสาธารณะ (ไม่ได้ล็อกอิน) เรียก renderAuction
   // ตรงๆ เพื่อไม่ให้ render() เรียก showAppChrome() ทำให้แถบเมนู/หัวเว็บที่ตั้งใจซ่อนไว้ตอนเข้าชมแบบสาธารณะโผล่กลับมา
@@ -3172,6 +3200,7 @@ function renderAuctionLive(root){
     tabHost.innerHTML = `
       <div class="card no-print">
         <h2>⚙️ Admin — คีย์ใบประมูล</h2>
+        <div id="liveAdminClosedBanner" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-bottom:10px;">⚠ ระบบประมูลปิดอยู่ — กรอก/แก้ไข/ลบใบประมูลไม่ได้ (เปิดใช้งานได้ที่หน้าตั้งค่า)</div>
         <p style="color:var(--muted);font-size:13px;">กรอกข้อมูลจากใบประมูลที่ผู้ยื่นแต่ละคนส่งมา — เลือกรหัสสินค้าจากรายการที่เปิดประมูลอยู่ตอนนี้ได้เลย แก้ไข/ลบรายการที่คีย์ผิดได้จากตารางด้านล่าง ถ้าสินค้าเดียวกันมีหลายคนเสนอ ระบบคำนวณราคาสูงสุดให้อัตโนมัติและแสดงผลที่แท็บ Employee Live ทันที</p>
         <div class="row">
           <div class="stat-tile"><div class="label">ผู้ยื่นทั้งหมด</div><div class="num" id="adminBidderCount">0</div></div>
@@ -3222,7 +3251,7 @@ function renderAuctionLive(root){
       document.getElementById('adminAssetCount').textContent = Object.keys(maxMap).length;
 
       const tblHost = document.getElementById('adminBidTableHost');
-      if(!rows.length){ tblHost.innerHTML = '<div class="empty">ยังไม่มีข้อมูลใบประมูล</div>'; return; }
+      if(!rows.length){ tblHost.innerHTML = '<div class="empty">ยังไม่มีข้อมูลใบประมูล</div>'; applyAuctionLockUI(); return; }
       let html = `<div style="overflow-x:auto;"><table><tr><th>เวลา</th><th>รหัสสินค้า</th><th>รายการ</th><th>ผู้ยื่น</th><th>ราคาที่เสนอ</th><th>สูงสุดปัจจุบัน</th><th class="no-print">จัดการ</th></tr>`;
       rows.forEach(r=>{
         const key = r.BidID+'__'+r.LineNo;
@@ -3277,6 +3306,7 @@ function renderAuctionLive(root){
           });
         };
       });
+      applyAuctionLockUI();
     }
 
     document.getElementById('btnOpenBidModal').onclick = openBidEntryModal;
@@ -3380,6 +3410,7 @@ function renderAuctionLive(root){
     tabHost.innerHTML = `
       <div class="card">
         <h2>🏆 ประกาศผลผู้ประมูลได้</h2>
+        <div id="liveWinnersClosedBanner" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-bottom:10px;">⚠ ระบบประมูลปิดอยู่ — Confirm/CC/ยกเลิก/บันทึกขายนอกระบบ/รวมรอบ ทำไม่ได้ (เปิดใช้งานได้ที่หน้าตั้งค่า)</div>
         <p style="color:var(--muted);font-size:13px;" id="winnersRoundBanner">สรุปผู้เสนอราคาสูงสุด (ผู้ประมูลได้) ของแต่ละรายการ จากทุกใบประมูลที่บันทึกไว้</p>
         <div class="toolbar no-print">
           <input type="text" id="winnersSearch" placeholder="ค้นหารหัส / ชื่อสินค้า / ผู้ประมูลได้..." style="max-width:240px;">
@@ -3535,7 +3566,7 @@ function renderAuctionLive(root){
       const totalMaxPrice = rows.reduce((sum,w)=> sum + (Number(w.MaxPrice)||0), 0);
       document.getElementById('winnersCount').textContent = 'รวม '+rows.length+' รายการ — รวมจำนวนเงิน (ราคาประมูลได้) '+fmtMoney(totalMaxPrice)+' บาท';
       const host = document.getElementById('winnersTableHost');
-      if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); return; }
+      if(!rows.length){ host.innerHTML = '<div class="empty">ยังไม่มีผลการประมูล</div>'; if(isAdmin) updateWinnersSelCount(); applyAuctionLockUI(); return; }
       // เลือกได้เฉพาะรายการที่มีปุ่ม Confirm/CC ให้กด (ยังไม่ขายแล้ว มีผู้ประมูลได้ และเป็นผลของรอบปัจจุบันเท่านั้น
       // — รอบเก่าที่ปิดไปแล้วดูได้อย่างเดียว แก้ไข/ยืนยันซ้ำไม่ได้)
       const actionableIds = rows.filter(w=>!w.Sold && w.BidderName && !w.OffSystemSale).map(w=>w.AssetID);
@@ -3612,6 +3643,7 @@ function renderAuctionLive(root){
         });
         updateWinnersSelCount();
       }
+      applyAuctionLockUI();
     }
 
     // ปุ่ม Confirm — ยืนยันผู้ประมูลสูงสุดปัจจุบันของรายการนี้ว่าขายแล้ว (ระบบเติมชื่อ/ราคาผู้ชนะให้อัตโนมัติ) — ใช้ได้
