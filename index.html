@@ -1084,7 +1084,7 @@ function renderAssetList(root){
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
       </div>
       <div class="toolbar no-print" style="margin-top:8px;flex-wrap:wrap;align-items:flex-start;">
-        <textarea id="alPasteIds" rows="2" placeholder="วางรหัสทรัพย์สินหลายตัวพร้อมกัน (คั่นด้วยช่องว่าง/คอมม่า/ขึ้นบรรทัดใหม่) แล้วกด &quot;เลือกตามรหัสที่วาง&quot; — เลือกให้ไม่ว่าจะกรอง/ค้นหาอยู่หรือไม่" style="flex:1;min-width:260px;font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+        <textarea id="alPasteIds" rows="2" placeholder="วางรหัสทรัพย์สินหลายตัวพร้อมกัน (คั่นด้วยช่องว่าง/คอมม่า/ขึ้นบรรทัดใหม่) แล้วกด &quot;เลือกตามรหัสที่วาง&quot; — ถ้าต้องการระบุราคาขายไปด้วย วางแต่ละบรรทัดเป็น &quot;รหัส,ราคา&quot; เช่น AA-00-65-017,500" style="flex:1;min-width:260px;font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
         <button class="btn btn-secondary btn-sm" id="btnAlSelectByIds">เลือกตามรหัสที่วาง</button>
       </div>
       <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
@@ -1162,20 +1162,38 @@ function renderAssetList(root){
   // เลือกทรัพย์สินหลายรายการพร้อมกันจากรหัสที่วาง (เช่น คัดลอกมาจากไฟล์ Excel ที่ export ไปก่อนหน้า) โดยไม่ต้องไล่
   // ติ๊กทีละรายการ — เลือกให้จาก STATE.assetsFull ทั้งหมด (ตามสิทธิ์หน่วยงานที่ดูแล) ไม่ขึ้นกับตัวกรอง/คำค้นหาที่
   // แสดงอยู่บนตารางขณะนั้น (เหมือนตัวกรองอื่นๆ ในหน้านี้ที่ STATE.selectedAssetIds เป็นค่าที่เก็บแยกจากการแสดงผล)
+  // รองรับระบุราคาขายมาพร้อมกันได้ด้วย โดยวางแต่ละบรรทัดเป็น "รหัส,ราคา" (เช่น AA-00-65-017,500) — บรรทัดที่ไม่มี
+  // ราคา (รหัสล้วนๆ คั่นด้วยช่องว่าง/คอมม่าได้หลายตัวในบรรทัดเดียวแบบเดิม) ก็ยังรองรับอยู่ ราคาที่ระบุจะถูกจำไว้ใน
+  // STATE.pastedSalePriceByAssetId แล้วดึงไปเติมในช่อง "ราคาขาย" อัตโนมัติตอนสร้าง draft ใบขายออก (ดู buildDraftAndGo)
   function selectByPastedIds(){
     const raw = document.getElementById('alPasteIds').value || '';
-    const wanted = [...new Set(raw.split(/[\s,;]+/).map(s=>s.trim().toUpperCase()).filter(Boolean))];
-    if(!wanted.length){ toast('กรุณาวางรหัสทรัพย์สินก่อน','err'); return; }
+    const lines = raw.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const entries = [];
+    lines.forEach(line=>{
+      const m = line.match(/^([^\s,]+)\s*,\s*([\d,]+(?:\.\d+)?)\s*$/);
+      if(m){
+        entries.push({ id: m[1].toUpperCase(), price: parseFloat(m[2].replace(/,/g,'')) });
+      } else {
+        line.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean).forEach(id=>entries.push({ id: id.toUpperCase(), price: null }));
+      }
+    });
+    if(!entries.length){ toast('กรุณาวางรหัสทรัพย์สินก่อน','err'); return; }
     const scope = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
     const byId = {};
     scope.forEach(a=>{ byId[String(a.AssetID).toUpperCase()] = a.AssetID; });
     const matched = [], notFound = [];
-    wanted.forEach(id=>{
-      if(byId[id]) matched.push(byId[id]); else notFound.push(id);
+    STATE.pastedSalePriceByAssetId = STATE.pastedSalePriceByAssetId || {};
+    entries.forEach(e=>{
+      if(byId[e.id]){
+        matched.push(byId[e.id]);
+        if(e.price !== null && !isNaN(e.price)) STATE.pastedSalePriceByAssetId[byId[e.id]] = e.price;
+      } else notFound.push(e.id);
     });
     matched.forEach(id=>{ if(STATE.selectedAssetIds.indexOf(id)===-1) STATE.selectedAssetIds.push(id); });
     renderTable();
+    const withPrice = matched.filter(id=>STATE.pastedSalePriceByAssetId[id]!==undefined).length;
     let msg = 'เลือกเพิ่ม '+matched.length+' รายการจากรหัสที่วาง';
+    if(withPrice) msg += ' (ระบุราคาขายมาด้วย '+withPrice+' รายการ)';
     if(notFound.length) msg += ' (ไม่พบ/ไม่มีสิทธิ์ '+notFound.length+' รหัส: '+notFound.slice(0,10).join(', ')+(notFound.length>10?' ...':'')+')';
     toast(msg, notFound.length ? 'err' : 'ok');
   }
@@ -1623,9 +1641,14 @@ function renderAssetList(root){
         remark: '', fromDeptName:'', toDeptName:'', fromSignName:'', toSignName:''
       }));
     } else if(targetView === 'saleCreate'){
+      // ราคาขายที่ระบุมาพร้อมกับรหัสตอนวาง (ดู selectByPastedIds, รูปแบบ "รหัส,ราคา") มีสิทธิ์เหนือค่าเริ่มต้น
+      // (MinSalePrice ของทรัพย์สิน) เพราะเป็นราคาที่ผู้ใช้ตั้งใจระบุมาเองเจาะจงรายการนั้นโดยตรง
+      const pastedPrices = STATE.pastedSalePriceByAssetId || {};
       STATE.draftSaleItems = selected.map(a => ({
         assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
-        scrapPrice: a.ScrapPrice||'', auctionPrice:'', salePrice: a.MinSalePrice||'', remark:''
+        scrapPrice: a.ScrapPrice||'', auctionPrice:'',
+        salePrice: pastedPrices[a.AssetID] !== undefined ? pastedPrices[a.AssetID] : (a.MinSalePrice||''),
+        remark:''
       }));
     } else if(targetView === 'writeOffCreate'){
       STATE.draftWriteOffItems = selected.map(a => ({
@@ -4008,6 +4031,7 @@ function renderAuctionLive(root){
 /* ================= AUCTION SELECTION VIEW (Admin) — คัดเลือกทรัพย์สินขาย/ตัดชำรุดอนุมัติแล้ว ส่งขึ้นหน้าประมูลขายสาธารณะ ================= */
 function renderAuctionSelection(root){
   let candidates = [];
+  let auctionSystemEnabled = true;
   const typeLabel = { Sold:'ขายออก (ประมูล)', WrittenOff:'ตัดชำรุดแล้ว' };
 
   root.innerHTML = `
@@ -4030,6 +4054,7 @@ function renderAuctionSelection(root){
     <div class="card">
       <h2>คัดเลือกรายการประมูล</h2>
       <p style="color:var(--muted);font-size:13px;">รายชื่อทรัพย์สินขายออกที่เลือกช่องทาง "ประมูล" ตอนสร้างใบขายออก และยังไม่ได้ส่งประมูล (รายการตัดชำรุดอนุมัติแล้วให้ไปเลือกส่งประมูล/ขาย ที่แท็บ "ตัดชำรุดแล้ว รอดำเนินการ" แยกไว้ต่างหาก) — ติ๊ก "ส่งประมูล" และตั้งราคากลาง (ถ้าต้องการ) เพื่อให้รายการนั้นไปแสดงในหน้า "ประมูลขาย" สาธารณะ (บันทึกอัตโนมัติเมื่อเปลี่ยนค่า) — เมื่อส่งประมูลแล้วรายการจะย้ายไปแสดงในส่วน "รายการที่ส่งประมูลแล้ว" ด้านล่างแทน</p>
+      <div id="aselSystemClosedBanner" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-bottom:10px;">⚠ ระบบประมูลปิดอยู่ — ส่งทรัพย์สินรายการใหม่เข้าหน้าประมูลขายไม่ได้ (เปิดใช้งานได้ที่หน้าตั้งค่า) รายการด้านล่างจะรอค้างอยู่ที่นี่จนกว่าจะเปิดใช้งาน</div>
       <div class="toolbar no-print">
         <input type="text" id="aselSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
       </div>
@@ -4069,6 +4094,18 @@ function renderAuctionSelection(root){
     });
   }
   loadRoundBanner();
+
+  // เช็คสวิตช์ "เปิด/ปิดระบบประมูล" ที่หน้าตั้งค่า — ถ้าปิดอยู่ ซ่อนช่องติ๊ก "ส่งประมูล" ในตาราง "คัดเลือกรายการประมูล"
+  // ทั้งหมด (อ่านค่าใหม่ทุกครั้งที่กลับมาหน้านี้ เผื่อมีคนไปเปิด/ปิดไว้ที่หน้าตั้งค่าระหว่างนั้น)
+  function loadAuctionSystemStatus(){
+    apiGet({ action:'getAuctionSystemStatus' }).then(res=>{
+      auctionSystemEnabled = res.ok ? res.data.enabled !== false : true;
+      const banner = document.getElementById('aselSystemClosedBanner');
+      if(banner) banner.style.display = auctionSystemEnabled ? 'none' : 'block';
+      renderTable();
+    });
+  }
+  loadAuctionSystemStatus();
 
   document.getElementById('btnStartNewAuctionRound').onclick = ()=>{
     if(!confirm('ยืนยันปิดรอบประมูลปัจจุบันและเริ่มรอบใหม่?\n\nรายการที่ "ยังไม่ขาย" ในรอบนี้ทั้งหมดจะถูกถอดออกจากรายการเปิดประมูล (กลับไปรอ Admin เลือกเข้ารอบใหม่เองที่ "คัดเลือกรายการประมูล") ส่วนผลของรอบนี้จะยังดูย้อนหลังได้ครบที่หน้า "ประกาศผล"\n\nการดำเนินการนี้ย้อนกลับไม่ได้')) return;
@@ -4156,7 +4193,8 @@ function renderAuctionSelection(root){
     const rows = filteredCandidates();
     document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll"> ส่งประมูล</th><th class="no-print">คืนสถานะไปที่</th></tr>`;
+    const sendDisabled = auctionSystemEnabled ? '' : 'disabled';
+    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll" ${sendDisabled}> ส่งประมูล</th><th class="no-print">คืนสถานะไปที่</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
@@ -4168,7 +4206,7 @@ function renderAuctionSelection(root){
         <td>${esc(a.DocRunningNo||'-')}</td>
         <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
         <td class="money"><input type="text" inputmode="decimal" class="aselPriceInput" data-id="${esc(a.AssetID)}" value="${esc(a.AuctionReferencePrice||'')}" style="width:90px;" placeholder="ราคากลาง"></td>
-        <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}"></td>
+        <td style="text-align:center;"><input type="checkbox" class="aselSendChk" data-id="${esc(a.AssetID)}" ${sendDisabled}></td>
         <td class="no-print" style="white-space:nowrap;">
           <select class="aselRestoreDest" data-id="${esc(a.AssetID)}" style="width:auto;display:inline-block;margin-right:4px;">
             <option value="active">ใช้งานปกติ</option>
@@ -6556,6 +6594,15 @@ function renderSettings(root){
         <button class="btn btn-secondary btn-sm" id="btnSaveIntroButtons" style="margin-top:8px;">บันทึก</button>
       </div>
       <div class="card">
+        <h2>เปิด/ปิดระบบประมูล</h2>
+        <p style="color:var(--muted);font-size:13px;">คนละเรื่องกับ "ประกาศปิดประมูล" ด้านล่าง (แค่ข้อความแจ้งบนหน้าสาธารณะ) — สวิตช์นี้ปิดการทำงานจริง: ขณะปิดอยู่ จะกดส่งทรัพย์สินรายการใหม่เข้าหน้า "ประมูลขาย" ที่หน้า "คัดเลือกรายการประมูล" ไม่ได้เลย ทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติใหม่ระหว่างนี้จะรอค้างอยู่ที่ตาราง "รอคัดเลือก" จนกว่าจะเปิดใช้งานอีกครั้ง (รายการที่ส่งประมูลไปแล้วก่อนหน้า/การดูประวัติ/การถอนรายการออก ยังทำได้ตามปกติ ไม่ได้ปิดถาวร เปิดกลับมาใช้งานได้เสมอ)</p>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="auctionSystemEnabled" style="width:auto;" checked>
+          <label for="auctionSystemEnabled" style="margin:0;font-weight:400;">เปิดใช้งานระบบประมูล (ส่งทรัพย์สินรายการใหม่เข้าหน้าประมูลขายได้)</label>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnSaveAuctionSystemEnabled" style="margin-top:8px;">บันทึก</button>
+      </div>
+      <div class="card">
         <h2>ประกาศปิดประมูล</h2>
         <p style="color:var(--muted);font-size:13px;">เมื่อเปิดใช้งาน จะแสดงข้อความนี้เป็นแถบเด่นบนหน้า "ประมูลขาย" สาธารณะ (ทั้งหน้าแรกและหน้ารายการสินค้า) เพื่อแจ้งผู้เข้าประมูลว่าปิดรับแล้ว — ไม่กระทบการเปิด/ปิดการเข้าดูหน้าทั้งหน้าด้านบน</p>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -6686,6 +6733,7 @@ function renderSettings(root){
       loadAuctionBrackets(d.auctionPriceBrackets);
       loadAuctionIntroNote(d.auctionIntroContent);
       loadAuctionClosedNotice(d.auctionClosedNotice);
+      loadAuctionSystemEnabled(d.auctionSystemStatus);
       loadAuctionBidListPublic(d.auctionBidListPublicEnabled);
       loadAuctionWinnersPublic(d.auctionWinnersPublicEnabled);
       loadAuctionWinnersPublicSettings(d.auctionRoundInfo, d.auctionWinnersPublicSettings);
@@ -6698,6 +6746,7 @@ function renderSettings(root){
       loadAuctionBrackets();
       loadAuctionIntroNote();
       loadAuctionClosedNotice();
+      loadAuctionSystemEnabled();
       loadAuctionBidListPublic();
       loadAuctionWinnersPublic();
       loadAuctionWinnersPublicSettings();
@@ -6719,6 +6768,7 @@ function renderSettings(root){
   document.getElementById('btnSaveAuctionBrackets').onclick = saveAuctionBrackets;
   document.getElementById('btnSaveAuctionIntroNote').onclick = saveAuctionIntroNote;
   document.getElementById('btnSaveAuctionClosedNotice').onclick = saveAuctionClosedNotice;
+  document.getElementById('btnSaveAuctionSystemEnabled').onclick = saveAuctionSystemEnabled;
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnBackfillOffSystemAuctionSold').onclick = backfillOffSystemAuctionSold;
@@ -7019,6 +7069,32 @@ function renderSettings(root){
       btn.disabled = false;
       if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
       toast('บันทึกเนื้อหาหน้าแรกประมูลขายสำเร็จ','ok');
+    });
+  }
+
+  function loadAuctionSystemEnabled(preData){
+    const apply = (data)=>{ document.getElementById('auctionSystemEnabled').checked = data.enabled !== false; };
+    if(preData){ apply(preData); return; }
+    apiGet({ action:'getAuctionSystemStatus' }).then(res=>{
+      if(!res.ok) return;
+      apply(res.data);
+    });
+  }
+
+  function saveAuctionSystemEnabled(){
+    const enabled = document.getElementById('auctionSystemEnabled').checked;
+    if(!confirm(enabled
+      ? 'ยืนยันเปิดใช้งานระบบประมูล? (ส่งทรัพย์สินรายการใหม่เข้าหน้าประมูลขายได้ตามปกติ)'
+      : 'ยืนยันปิดระบบประมูล? (จะส่งทรัพย์สินรายการใหม่เข้าหน้าประมูลขายไม่ได้จนกว่าจะเปิดใช้งานอีกครั้ง — ไม่กระทบรายการที่ส่งไปแล้วก่อนหน้า)')) {
+      document.getElementById('auctionSystemEnabled').checked = !enabled;
+      return;
+    }
+    const btn = document.getElementById('btnSaveAuctionSystemEnabled');
+    btn.disabled = true;
+    apiPost({ action:'adminSetAuctionSystemEnabled', password: STATE.adminPassword, enabled }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'บันทึกไม่สำเร็จ','err'); return; }
+      toast(enabled ? 'เปิดใช้งานระบบประมูลแล้ว' : 'ปิดระบบประมูลแล้ว','ok');
     });
   }
 
