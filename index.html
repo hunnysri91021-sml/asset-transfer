@@ -1496,10 +1496,13 @@ function renderAssetList(root){
       const sel = selectedAssetObjs();
       const statuses = new Set(sel.map(a=>a.AssetStatus||'Active'));
       const queuedPurposes = selectedQueuedPurposes(sel);
-      // Admin: ปนกันระหว่าง "ใช้งานอยู่" กับ "ตัดชำรุดแล้ว" เท่านั้น ไม่ต้องเตือน เพราะเป็นการเลือกที่ตั้งใจรองรับ
-      // ไว้แล้วสำหรับสร้างใบขายออกรวมกัน (ดู startFromSelection) ไม่ใช่ความผิดพลาดของผู้ใช้
+      // Admin: ปนกันระหว่าง "ใช้งานอยู่"/"ตัดชำรุดแล้ว"/"ขายแล้วแบบใบประมูลที่ยังค้างไม่สำเร็จจริง" ไม่ต้องเตือน
+      // เพราะเป็นการเลือกที่ตั้งใจรองรับไว้แล้วสำหรับสร้างใบขายออกรวมกัน (ดู startFromSelection ที่จะถามยืนยัน +
+      // ยกเลิกใบเดิมให้เองถ้าจำเป็น) ไม่ใช่ความผิดพลาดของผู้ใช้ — ส่วนรายการที่ขายสำเร็จจริงแล้ว (AuctionSold=true
+      // หรือช่องทาง "ขาย") ยังถือเป็นสถานะที่ไม่ควรปนมา ต้องเตือนตามปกติ
       const isAllowedAdminMix = STATE.role === 'admin' && statuses.size > 1 &&
-        [...statuses].every(s => s === 'Active' || s === 'WrittenOff');
+        sel.every(a => (a.AssetStatus||'Active') === 'Active' || (a.AssetStatus||'Active') === 'WrittenOff' ||
+          ((a.AssetStatus||'Active') === 'Sold' && a.SaleChannel==='ประมูล' && String(a.AuctionSold).toLowerCase()!=='true'));
       if(statuses.size > 1 && !isAllowedAdminMix){
         alertEl.textContent = '⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน';
         alertEl.style.display = 'block';
@@ -1528,18 +1531,61 @@ function renderAssetList(root){
   // มารวมในใบขายออกใบเดียวกันได้ (เช่น ขายเศษซากทรัพย์สินที่เคยตัดชำรุดไปแล้วพร้อมกับทรัพย์สินปกติ) เพราะเป็นขั้นตอน
   // ที่ตั้งใจรองรับอยู่แล้ว (ดู "ขายแล้วทับตัดชำรุดเสมอ" ใน computeDisposalData_/createSale_) — ผู้ใช้ทั่วไปและการสร้าง
   // ใบโอนย้าย/ใบตัดชำรุดยังคงบังคับว่าต้องเลือกเฉพาะทรัพย์สิน "ใช้งานอยู่" ทั้งหมดเหมือนเดิม
+  //
+  // นอกจากนี้ บางรายการที่สถานะดิบเป็น "ขายแล้ว" (Sold) จริงๆ แล้วเป็นแค่มีใบขายออกช่องทาง "ประมูล" ค้างอยู่ (ยังไม่เคย
+  // ขายสำเร็จจริง AuctionSold=false) ไม่ใช่ขายจบจริงแบบช่องทาง "ขาย"/ประมูลที่ Confirm แล้ว (AuctionSold=true) — ถ้า
+  // Admin เลือกรวมรายการกลุ่มนี้มาสร้างใบขายใหม่ จะเจาะจงถามยืนยันก่อน (แสดงเลขที่ใบเดิม + รายการทั้งหมดที่อยู่ในใบ
+  // เดิมให้ตรวจสอบ) แล้วค่อยยกเลิกใบเดิมอัตโนมัติก่อนสร้างใบใหม่ ถ้า Admin ยืนยัน — ส่วนรายการที่ขายจบจริงแล้ว
+  // (AuctionSold=true หรือช่องทาง "ขาย") ยังคงบล็อกแน่นอน สร้างซ้ำไม่ได้
   function startFromSelection(targetView){
     const selected = selectedAssetObjs();
     if(!selected.length){ toast('กรุณาเลือกทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
     if(targetView === 'saleCreate' && STATE.role === 'admin'){
-      const alreadySold = selected.filter(a => (a.AssetStatus||'Active') === 'Sold');
-      if(alreadySold.length){ toast('มีรายการที่ขายไปแล้ว ไม่สามารถสร้างใบขายออกซ้ำได้: '+alreadySold.map(a=>a.AssetID).join(', '),'err'); return; }
-    } else {
-      const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
-      if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
-    }
-    if(selectedQueuedPurposes(selected).size > 1){ toast('มีรายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว','err'); return; }
+      const isAuctionSold = a => String(a.AuctionSold).toLowerCase()==='true';
+      const alreadySold = selected.filter(a => (a.AssetStatus||'Active') === 'Sold' && (a.SaleChannel!=='ประมูล' || isAuctionSold(a)));
+      if(alreadySold.length){ toast('มีรายการที่ขายสำเร็จไปแล้วจริง ไม่สามารถสร้างใบขายออกซ้ำได้: '+alreadySold.map(a=>a.AssetID).join(', '),'err'); return; }
+      if(selectedQueuedPurposes(selected).size > 1){ toast('มีรายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว','err'); return; }
 
+      const pendingAuctionIds = selected.filter(a => (a.AssetStatus||'Active')==='Sold' && a.SaleChannel==='ประมูล' && !isAuctionSold(a)).map(a=>a.AssetID);
+      if(pendingAuctionIds.length){
+        apiPost({ action:'adminGetPendingAuctionSaleDocsForAssets', password: STATE.adminPassword, assetIds: pendingAuctionIds }).then(res=>{
+          if(!res.ok){ toast(res.error||'ตรวจสอบสถานะไม่สำเร็จ','err'); return; }
+          const docs = res.data.documents || [];
+          if(!docs.length){ buildDraftAndGo(targetView, selected); return; }
+          let msg = 'พบรายการที่เลือกมีใบขายออกช่องทาง "ประมูล" ค้างอยู่ก่อนแล้ว (ยังไม่เคยขายสำเร็จจริง):\n\n';
+          docs.forEach(d=>{ msg += '- เลขที่ '+d.runningNo+' : '+d.assetIds.join(', ')+'\n'; });
+          msg += '\nหากดำเนินการต่อ ระบบจะ "ยกเลิก" ใบขายออกเดิมเหล่านี้ทั้งใบโดยอัตโนมัติ (รวมถึงรายการอื่นในใบเดิมที่ไม่ได้เลือกครั้งนี้ด้วย จะกลับไปเป็น "ใช้งานปกติ") แล้วค่อยสร้างใบขายออกใหม่รวมรายการที่เลือกไว้ทั้งหมด\n\nยืนยันดำเนินการต่อ?';
+          if(!confirm(msg)) return;
+          voidThenBuildDraft(docs.map(d=>d.saleId), targetView, selected);
+        });
+        return;
+      }
+      buildDraftAndGo(targetView, selected);
+      return;
+    }
+
+    const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
+    if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
+    if(selectedQueuedPurposes(selected).size > 1){ toast('มีรายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว','err'); return; }
+    buildDraftAndGo(targetView, selected);
+  }
+
+  // ยกเลิกใบขายออกช่องทางประมูลที่ค้างอยู่ (saleIds) ทีละใบตามลำดับ แล้วค่อยไปสร้าง draft ใบใหม่ต่อ (ต้องรอให้ยกเลิก
+  // เสร็จก่อน ไม่งั้น createSale_ จะยังเห็นสถานะเดิมค้างอยู่ เพราะแคชสถานะยังไม่ถูกล้าง)
+  function voidThenBuildDraft(saleIds, targetView, selected){
+    let i = 0;
+    const next = ()=>{
+      if(i >= saleIds.length){ buildDraftAndGo(targetView, selected); return; }
+      const saleId = saleIds[i++];
+      apiPost({ action:'adminVoidSaleDoc', password: STATE.adminPassword, saleId, reason: 'ยกเลิกอัตโนมัติ — Admin รวมรายการสร้างใบขายออกใหม่จากหน้ารายการทรัพย์สิน' }).then(res=>{
+        if(!res.ok){ toast('ยกเลิกใบขายออกเดิมไม่สำเร็จ: '+(res.error||''),'err'); return; }
+        next();
+      });
+    };
+    next();
+  }
+
+  function buildDraftAndGo(targetView, selected){
     if(targetView === 'create'){
       STATE.draftItems = selected.map(a => ({
         assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
