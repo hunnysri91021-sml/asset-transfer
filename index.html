@@ -1496,7 +1496,11 @@ function renderAssetList(root){
       const sel = selectedAssetObjs();
       const statuses = new Set(sel.map(a=>a.AssetStatus||'Active'));
       const queuedPurposes = selectedQueuedPurposes(sel);
-      if(statuses.size > 1){
+      // Admin: ปนกันระหว่าง "ใช้งานอยู่" กับ "ตัดชำรุดแล้ว" เท่านั้น ไม่ต้องเตือน เพราะเป็นการเลือกที่ตั้งใจรองรับ
+      // ไว้แล้วสำหรับสร้างใบขายออกรวมกัน (ดู startFromSelection) ไม่ใช่ความผิดพลาดของผู้ใช้
+      const isAllowedAdminMix = STATE.role === 'admin' && statuses.size > 1 &&
+        [...statuses].every(s => s === 'Active' || s === 'WrittenOff');
+      if(statuses.size > 1 && !isAllowedAdminMix){
         alertEl.textContent = '⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน';
         alertEl.style.display = 'block';
       } else if(queuedPurposes.size > 1){
@@ -1520,11 +1524,20 @@ function renderAssetList(root){
     return STATE.assetsFull.filter(a => STATE.selectedAssetIds.indexOf(a.AssetID)!==-1);
   }
 
+  // Admin เท่านั้น ที่เลือกสร้างใบขายออก (saleCreate) ได้รับอนุญาตให้เลือกทรัพย์สิน "ใช้งานอยู่" ปนกับ "ตัดชำรุดแล้ว"
+  // มารวมในใบขายออกใบเดียวกันได้ (เช่น ขายเศษซากทรัพย์สินที่เคยตัดชำรุดไปแล้วพร้อมกับทรัพย์สินปกติ) เพราะเป็นขั้นตอน
+  // ที่ตั้งใจรองรับอยู่แล้ว (ดู "ขายแล้วทับตัดชำรุดเสมอ" ใน computeDisposalData_/createSale_) — ผู้ใช้ทั่วไปและการสร้าง
+  // ใบโอนย้าย/ใบตัดชำรุดยังคงบังคับว่าต้องเลือกเฉพาะทรัพย์สิน "ใช้งานอยู่" ทั้งหมดเหมือนเดิม
   function startFromSelection(targetView){
     const selected = selectedAssetObjs();
     if(!selected.length){ toast('กรุณาเลือกทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
-    const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
-    if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
+    if(targetView === 'saleCreate' && STATE.role === 'admin'){
+      const alreadySold = selected.filter(a => (a.AssetStatus||'Active') === 'Sold');
+      if(alreadySold.length){ toast('มีรายการที่ขายไปแล้ว ไม่สามารถสร้างใบขายออกซ้ำได้: '+alreadySold.map(a=>a.AssetID).join(', '),'err'); return; }
+    } else {
+      const disposed = selected.filter(a => (a.AssetStatus||'Active') !== 'Active');
+      if(disposed.length){ toast('มีรายการที่ขาย/ตัดชำรุดไปแล้ว กรุณาเลือกเฉพาะทรัพย์สินที่ใช้งานอยู่','err'); return; }
+    }
     if(selectedQueuedPurposes(selected).size > 1){ toast('มีรายการที่เลือกอยู่ในคิวรอต่างประเภทกัน (โอนย้าย/ขาย/ตัดชำรุด) กรุณาเลือกเฉพาะกลุ่มที่รอคิวประเภทเดียวกัน หรือยังไม่เข้าคิว','err'); return; }
 
     if(targetView === 'create'){
