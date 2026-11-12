@@ -401,6 +401,9 @@ function doPost(e) {
       case 'adminVoidSaleDoc':
         result = adminVoidSaleDoc_(body);
         break;
+      case 'adminGetPendingAuctionSaleDocsForAssets':
+        result = adminGetPendingAuctionSaleDocsForAssets_(body);
+        break;
       case 'adminStartNewAuctionRound':
         result = adminStartNewAuctionRound_(body);
         break;
@@ -4665,6 +4668,58 @@ function adminVoidSaleDoc_(body) {
 
   logActivity_(saleId, 'ADMIN_VOID_SALE_DOC', 'admin', 'ยกเลิกใบขายออก ' + found.obj.RunningNo + ' (ใบซ้ำซ้อน)' + (body.reason ? ' เหตุผล: ' + body.reason : ''));
   return { ok: true, data: { saleId: saleId, runningNo: found.obj.RunningNo, affectedAssetIds: affectedAssetIds } };
+}
+
+// Admin ที่หน้า "รายการทรัพย์สิน" เลือกรวมทรัพย์สินหลายสถานะมาสร้างใบขายออกใบเดียวกัน อาจมีบางรายการที่สถานะดิบเป็น
+// "ขายแล้ว" (Sold) อยู่ก่อนแล้ว ทั้งที่จริงๆ เป็นแค่มีใบขายออกช่องทาง "ประมูล" ค้างอยู่ (ยังไม่เคยขายสำเร็จจริง —
+// AuctionSold ยังเป็น false) ไม่ใช่ขายจบจริง — ฟังก์ชันนี้ให้ frontend เช็คก่อนว่าทรัพย์สินที่เลือกมา (เฉพาะกลุ่มที่เข้า
+// เงื่อนไขนี้) มีใบขายออกช่องทางประมูลเดิมใบไหนค้างอยู่บ้าง พร้อมเลขที่ใบและรายการทรัพย์สินทั้งหมดที่อยู่ในใบเดิมนั้น
+// (อาจมีรายการอื่นที่ไม่ได้เลือกครั้งนี้ปนอยู่ด้วย) เพื่อให้ Admin เห็นก่อนตัดสินใจว่าจะยกเลิกใบเดิมแล้วสร้างใบใหม่รวม
+// หรือไม่ — คืนค่าเฉพาะใบที่ "ยังไม่ขายสำเร็จจริง" เท่านั้น (ไม่สนใจใบที่ AuctionSold=true แล้ว เพราะนั่นคือขายจบจริง
+// ต้องบล็อกแบบปกติ ไม่ใช่ใบที่เข้าข่ายยกเลิกอัตโนมัติได้)
+function adminGetPendingAuctionSaleDocsForAssets_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const assetIds = Array.isArray(body.assetIds) ? body.assetIds.map(String) : [];
+  if (!assetIds.length) return { ok: true, data: { documents: [] } };
+  const askSet = {};
+  assetIds.forEach(id => { askSet[id] = true; });
+
+  const auctionSoldMap = {};
+  getAssetsRaw_().forEach(a => { auctionSoldMap[String(a.AssetID)] = String(a.AuctionSold).toLowerCase() === 'true'; });
+
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues.shift());
+  const auctionSaleDocs = {}; // saleId -> { runningNo }
+  saleValues.forEach(r => {
+    if (r[saleIdx.Status] === STATUS.APPROVED && saleIdx.Channel !== undefined && String(r[saleIdx.Channel]) === 'ประมูล') {
+      auctionSaleDocs[String(r[saleIdx.SaleID])] = { runningNo: String(r[saleIdx.RunningNo] || '') };
+    }
+  });
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  const docAssetIds = {}; // saleId -> [assetId, ...] (ทุกรายการในใบ ไม่ใช่แค่ที่ถาม)
+  const relevantSaleIds = {};
+  itemValues.forEach(r => {
+    const saleId = String(r[itemIdx.SaleID]);
+    if (!auctionSaleDocs[saleId]) return;
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
+    const assetId = String(r[itemIdx.AssetID]);
+    if (!docAssetIds[saleId]) docAssetIds[saleId] = [];
+    docAssetIds[saleId].push(assetId);
+    if (askSet[assetId] && !auctionSoldMap[assetId]) relevantSaleIds[saleId] = true;
+  });
+
+  const documents = Object.keys(relevantSaleIds).map(saleId => ({
+    saleId: saleId,
+    runningNo: auctionSaleDocs[saleId].runningNo,
+    assetIds: docAssetIds[saleId] || []
+  }));
+
+  return { ok: true, data: { documents: documents } };
 }
 
 // Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
