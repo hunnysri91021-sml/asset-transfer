@@ -1083,6 +1083,10 @@ function renderAssetList(root){
         <button class="btn btn-secondary btn-sm" id="btnAlQrBatch">🏷️ พิมพ์ป้าย QR (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
       </div>
+      <div class="toolbar no-print" style="margin-top:8px;flex-wrap:wrap;align-items:flex-start;">
+        <textarea id="alPasteIds" rows="2" placeholder="วางรหัสทรัพย์สินหลายตัวพร้อมกัน (คั่นด้วยช่องว่าง/คอมม่า/ขึ้นบรรทัดใหม่) แล้วกด &quot;เลือกตามรหัสที่วาง&quot; — เลือกให้ไม่ว่าจะกรอง/ค้นหาอยู่หรือไม่" style="flex:1;min-width:260px;font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+        <button class="btn btn-secondary btn-sm" id="btnAlSelectByIds">เลือกตามรหัสที่วาง</button>
+      </div>
       <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
       <div id="alTableHost" style="margin-top:12px;">${noDeptsAssigned ? '<div class="empty">คุณยังไม่ได้รับสิทธิ์ดูแลหน่วยงานใด กรุณาติดต่อ Admin ให้กำหนดหน่วยงานที่ดูแลในแถบ "ตั้งค่า"</div>' : '<div class="empty">กำลังโหลด...</div>'}</div>
     </div>
@@ -1152,6 +1156,28 @@ function renderAssetList(root){
       render();
     };
     document.getElementById('btnAlAddNew').onclick = ()=> openAssetEditModal(null, load);
+    document.getElementById('btnAlSelectByIds').onclick = selectByPastedIds;
+  }
+
+  // เลือกทรัพย์สินหลายรายการพร้อมกันจากรหัสที่วาง (เช่น คัดลอกมาจากไฟล์ Excel ที่ export ไปก่อนหน้า) โดยไม่ต้องไล่
+  // ติ๊กทีละรายการ — เลือกให้จาก STATE.assetsFull ทั้งหมด (ตามสิทธิ์หน่วยงานที่ดูแล) ไม่ขึ้นกับตัวกรอง/คำค้นหาที่
+  // แสดงอยู่บนตารางขณะนั้น (เหมือนตัวกรองอื่นๆ ในหน้านี้ที่ STATE.selectedAssetIds เป็นค่าที่เก็บแยกจากการแสดงผล)
+  function selectByPastedIds(){
+    const raw = document.getElementById('alPasteIds').value || '';
+    const wanted = [...new Set(raw.split(/[\s,;]+/).map(s=>s.trim().toUpperCase()).filter(Boolean))];
+    if(!wanted.length){ toast('กรุณาวางรหัสทรัพย์สินก่อน','err'); return; }
+    const scope = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
+    const byId = {};
+    scope.forEach(a=>{ byId[String(a.AssetID).toUpperCase()] = a.AssetID; });
+    const matched = [], notFound = [];
+    wanted.forEach(id=>{
+      if(byId[id]) matched.push(byId[id]); else notFound.push(id);
+    });
+    matched.forEach(id=>{ if(STATE.selectedAssetIds.indexOf(id)===-1) STATE.selectedAssetIds.push(id); });
+    renderTable();
+    let msg = 'เลือกเพิ่ม '+matched.length+' รายการจากรหัสที่วาง';
+    if(notFound.length) msg += ' (ไม่พบ/ไม่มีสิทธิ์ '+notFound.length+' รหัส: '+notFound.slice(0,10).join(', ')+(notFound.length>10?' ...':'')+')';
+    toast(msg, notFound.length ? 'err' : 'ok');
   }
 
   function queuedPurposeOf(a){
@@ -1540,6 +1566,11 @@ function renderAssetList(root){
   function startFromSelection(targetView){
     const selected = selectedAssetObjs();
     if(!selected.length){ toast('กรุณาเลือกทรัพย์สินอย่างน้อย 1 รายการ','err'); return; }
+    // ใบโอนย้าย/ใบขาย/ใบตัดชำรุด มีหน่วยงานเดียวต่อใบเสมอ (fromDept ระดับเอกสาร ไม่ใช่ระดับรายการ) — ถ้าเลือกทรัพย์สิน
+    // ข้ามหน่วยงานมาปนกัน (ง่ายขึ้นมากหลังเพิ่มกล่อง "วางรหัสหลายตัว") แล้วปล่อยให้สร้างใบไปเลย รายการที่ไม่ตรงหน่วยงาน
+    // ที่เลือกในฟอร์มจะถูกบันทึกผิดหน่วยงานทันทีโดยไม่มีการเตือน จึงบล็อกตั้งแต่ตรงนี้ ให้สร้างแยกทีละหน่วยงานแทน
+    const depts = [...new Set(selected.map(a=>a.Department))];
+    if(depts.length > 1){ toast('รายการที่เลือกมีมากกว่า 1 หน่วยงาน ('+depts.join(', ')+') กรุณาสร้างแยกทีละหน่วยงาน','err'); return; }
     if(targetView === 'saleCreate' && STATE.role === 'admin'){
       const isAuctionSold = a => String(a.AuctionSold).toLowerCase()==='true';
       const alreadySold = selected.filter(a => (a.AssetStatus||'Active') === 'Sold' && (a.SaleChannel!=='ประมูล' || isAuctionSold(a)));
