@@ -1084,7 +1084,7 @@ function renderAssetList(root){
         <button class="btn btn-secondary btn-sm" id="btnAlAddNew" style="margin-left:auto;">+ เพิ่มทรัพย์สินใหม่</button>
       </div>
       <div class="toolbar no-print" style="margin-top:8px;flex-wrap:wrap;align-items:flex-start;">
-        <textarea id="alPasteIds" rows="2" placeholder="วางรหัสทรัพย์สินหลายตัวพร้อมกัน (คั่นด้วยช่องว่าง/คอมม่า/ขึ้นบรรทัดใหม่) แล้วกด &quot;เลือกตามรหัสที่วาง&quot; — เลือกให้ไม่ว่าจะกรอง/ค้นหาอยู่หรือไม่" style="flex:1;min-width:260px;font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+        <textarea id="alPasteIds" rows="2" placeholder="วางรหัสทรัพย์สินหลายตัวพร้อมกัน (คั่นด้วยช่องว่าง/คอมม่า/ขึ้นบรรทัดใหม่) แล้วกด &quot;เลือกตามรหัสที่วาง&quot; — ถ้าต้องการระบุราคาขายไปด้วย วางแต่ละบรรทัดเป็น &quot;รหัส,ราคา&quot; เช่น AA-00-65-017,500" style="flex:1;min-width:260px;font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
         <button class="btn btn-secondary btn-sm" id="btnAlSelectByIds">เลือกตามรหัสที่วาง</button>
       </div>
       <div id="alStatusAlert" class="no-print" style="display:none;background:#f8d7da;color:#c0392b;border:1px solid #f1b0b7;border-radius:6px;padding:8px 12px;font-size:13px;margin-top:8px;">⚠ รายการที่เลือกมีสถานะทรัพย์สินมากกว่า 1 สถานะ กรุณาเลือกเฉพาะทรัพย์สินที่มีสถานะเดียวกัน</div>` : ''}
@@ -1162,20 +1162,38 @@ function renderAssetList(root){
   // เลือกทรัพย์สินหลายรายการพร้อมกันจากรหัสที่วาง (เช่น คัดลอกมาจากไฟล์ Excel ที่ export ไปก่อนหน้า) โดยไม่ต้องไล่
   // ติ๊กทีละรายการ — เลือกให้จาก STATE.assetsFull ทั้งหมด (ตามสิทธิ์หน่วยงานที่ดูแล) ไม่ขึ้นกับตัวกรอง/คำค้นหาที่
   // แสดงอยู่บนตารางขณะนั้น (เหมือนตัวกรองอื่นๆ ในหน้านี้ที่ STATE.selectedAssetIds เป็นค่าที่เก็บแยกจากการแสดงผล)
+  // รองรับระบุราคาขายมาพร้อมกันได้ด้วย โดยวางแต่ละบรรทัดเป็น "รหัส,ราคา" (เช่น AA-00-65-017,500) — บรรทัดที่ไม่มี
+  // ราคา (รหัสล้วนๆ คั่นด้วยช่องว่าง/คอมม่าได้หลายตัวในบรรทัดเดียวแบบเดิม) ก็ยังรองรับอยู่ ราคาที่ระบุจะถูกจำไว้ใน
+  // STATE.pastedSalePriceByAssetId แล้วดึงไปเติมในช่อง "ราคาขาย" อัตโนมัติตอนสร้าง draft ใบขายออก (ดู buildDraftAndGo)
   function selectByPastedIds(){
     const raw = document.getElementById('alPasteIds').value || '';
-    const wanted = [...new Set(raw.split(/[\s,;]+/).map(s=>s.trim().toUpperCase()).filter(Boolean))];
-    if(!wanted.length){ toast('กรุณาวางรหัสทรัพย์สินก่อน','err'); return; }
+    const lines = raw.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const entries = [];
+    lines.forEach(line=>{
+      const m = line.match(/^([^\s,]+)\s*,\s*([\d,]+(?:\.\d+)?)\s*$/);
+      if(m){
+        entries.push({ id: m[1].toUpperCase(), price: parseFloat(m[2].replace(/,/g,'')) });
+      } else {
+        line.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean).forEach(id=>entries.push({ id: id.toUpperCase(), price: null }));
+      }
+    });
+    if(!entries.length){ toast('กรุณาวางรหัสทรัพย์สินก่อน','err'); return; }
     const scope = manageMode ? deptScopedRows(STATE.assetsFull) : STATE.assetsFull;
     const byId = {};
     scope.forEach(a=>{ byId[String(a.AssetID).toUpperCase()] = a.AssetID; });
     const matched = [], notFound = [];
-    wanted.forEach(id=>{
-      if(byId[id]) matched.push(byId[id]); else notFound.push(id);
+    STATE.pastedSalePriceByAssetId = STATE.pastedSalePriceByAssetId || {};
+    entries.forEach(e=>{
+      if(byId[e.id]){
+        matched.push(byId[e.id]);
+        if(e.price !== null && !isNaN(e.price)) STATE.pastedSalePriceByAssetId[byId[e.id]] = e.price;
+      } else notFound.push(e.id);
     });
     matched.forEach(id=>{ if(STATE.selectedAssetIds.indexOf(id)===-1) STATE.selectedAssetIds.push(id); });
     renderTable();
+    const withPrice = matched.filter(id=>STATE.pastedSalePriceByAssetId[id]!==undefined).length;
     let msg = 'เลือกเพิ่ม '+matched.length+' รายการจากรหัสที่วาง';
+    if(withPrice) msg += ' (ระบุราคาขายมาด้วย '+withPrice+' รายการ)';
     if(notFound.length) msg += ' (ไม่พบ/ไม่มีสิทธิ์ '+notFound.length+' รหัส: '+notFound.slice(0,10).join(', ')+(notFound.length>10?' ...':'')+')';
     toast(msg, notFound.length ? 'err' : 'ok');
   }
@@ -1623,9 +1641,14 @@ function renderAssetList(root){
         remark: '', fromDeptName:'', toDeptName:'', fromSignName:'', toSignName:''
       }));
     } else if(targetView === 'saleCreate'){
+      // ราคาขายที่ระบุมาพร้อมกับรหัสตอนวาง (ดู selectByPastedIds, รูปแบบ "รหัส,ราคา") มีสิทธิ์เหนือค่าเริ่มต้น
+      // (MinSalePrice ของทรัพย์สิน) เพราะเป็นราคาที่ผู้ใช้ตั้งใจระบุมาเองเจาะจงรายการนั้นโดยตรง
+      const pastedPrices = STATE.pastedSalePriceByAssetId || {};
       STATE.draftSaleItems = selected.map(a => ({
         assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
-        scrapPrice: a.ScrapPrice||'', auctionPrice:'', salePrice: a.MinSalePrice||'', remark:''
+        scrapPrice: a.ScrapPrice||'', auctionPrice:'',
+        salePrice: pastedPrices[a.AssetID] !== undefined ? pastedPrices[a.AssetID] : (a.MinSalePrice||''),
+        remark:''
       }));
     } else if(targetView === 'writeOffCreate'){
       STATE.draftWriteOffItems = selected.map(a => ({
