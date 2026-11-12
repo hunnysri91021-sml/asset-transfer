@@ -4282,6 +4282,7 @@ function renderAuctionSelection(root){
           </select>
           <button class="btn btn-secondary btn-sm aselRestoreBtn" data-id="${esc(a.AssetID)}" ${sendDisabled}>คืนสถานะ</button>
           ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-primary btn-sm aselConfirmCompletedBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;" ${sendDisabled}>ขายเสร็จสมบูรณ์แล้ว (ไม่ผ่านประมูล)</button>` : ''}
+          ${a.SaleChannel==='ประมูล' ? `<button class="btn btn-secondary btn-sm aselMoveToDirectBtn" data-id="${esc(a.AssetID)}" style="margin-left:4px;" ${sendDisabled}>ส่งกลับไปรอขาย</button>` : ''}
         </td>
       </tr>`;
     });
@@ -4310,6 +4311,9 @@ function renderAuctionSelection(root){
     host.querySelectorAll('.aselConfirmCompletedBtn').forEach(btn=>{
       btn.onclick = ()=> confirmSaleChannelCompleted(btn.dataset.id, btn);
     });
+    host.querySelectorAll('.aselMoveToDirectBtn').forEach(btn=>{
+      btn.onclick = ()=> moveSaleToDirect(btn.dataset.id, btn);
+    });
   }
 
   // ยืนยันว่าใบขายออกช่องทาง "ประมูล" รายการนี้ ขายเสร็จสมบูรณ์แล้วจริง โดยไม่ผ่านการเปิดประมูลสาธารณะในระบบเลย (รู้ผู้ซื้อ/
@@ -4320,6 +4324,19 @@ function renderAuctionSelection(root){
     apiPost({ action:'adminConfirmSaleChannelCompleted', password: STATE.adminPassword, assetId }).then(res=>{
       if(!res.ok){ toast(res.error||'ยืนยันไม่สำเร็จ','err'); btn.disabled = false; return; }
       toast('ยืนยันขายเสร็จสมบูรณ์แล้ว','ok');
+      load();
+    });
+  }
+
+  // "ส่งกลับไปรอขาย" — ใช้เมื่อปิดรอบประมูลไปแล้ว ไม่อยากรอเปิดรอบใหม่ ต้องการขายตรง (ไม่ผ่านประมูล) แทน ตัดรายการนี้
+  // ออกจากใบขายออกช่องทางประมูลเดิม (ไม่แตะรายการอื่นในใบเดิมเลย) แล้วสร้างใบขายออกใหม่ช่องทาง "ขาย" ให้ทันที อนุมัติ
+  // อัตโนมัติ — รายการนี้จะหายจากหน้านี้ไปแสดงที่หน้า "รายการขายออก" (ช่องทางขายตรง) เป็นรายการ "รอขาย" แทน
+  function moveSaleToDirect(assetId, btn){
+    if(!confirm('ยืนยันส่งทรัพย์สิน '+assetId+' กลับไปรอขายแบบขายตรง (ไม่ผ่านประมูล)?\n\nระบบจะตัดรายการนี้ออกจากใบขายออกช่องทางประมูลเดิม (ไม่กระทบรายการอื่นในใบเดิม) แล้วสร้างใบขายออกใหม่ช่องทาง "ขาย" ให้ทันที — รายการนี้จะหายจากหน้านี้ไปแสดงที่หน้า "รายการขายออก" แทน')) return;
+    btn.disabled = true;
+    apiPost({ action:'adminMoveSaleToDirect', password: STATE.adminPassword, assetId }).then(res=>{
+      if(!res.ok){ toast(res.error||'ส่งกลับไปรอขายไม่สำเร็จ','err'); btn.disabled = false; return; }
+      toast('ส่งทรัพย์สิน '+assetId+' กลับไปรอขายแบบขายตรงสำเร็จ (เลขที่ใบใหม่ '+res.data.runningNo+')','ok');
       load();
     });
   }
