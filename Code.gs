@@ -410,6 +410,9 @@ function doPost(e) {
       case 'adminVoidSalePendingItems':
         result = adminVoidSalePendingItems_(body);
         break;
+      case 'adminMoveSaleToDirect':
+        result = adminMoveSaleToDirect_(body);
+        break;
       case 'adminGetPendingAuctionSaleDocsForAssets':
         result = adminGetPendingAuctionSaleDocsForAssets_(body);
         break;
@@ -4863,6 +4866,115 @@ function adminGetPendingAuctionSaleDocsForAssets_(body) {
   });
 
   return { ok: true, data: { documents: documents, blockedDocuments: blockedDocuments } };
+}
+
+// Admin ที่หน้า "คัดเลือกรายการประมูล" กด "ส่งกลับไปรอขาย" ให้ทรัพย์สินที่มีใบขายออกช่องทาง "ประมูล" ค้างอยู่ (ยังไม่เคย
+// ขายสำเร็จจริง) — ใช้เมื่อปิดรอบประมูลไปแล้ว ไม่อยากรอเปิดรอบใหม่ ต้องการขายตรง (ไม่ผ่านประมูล) แทน — ตัดรายการนี้
+// ออกจากใบขายออกช่องทางประมูลเดิม (ใช้ตรรกะเดียวกับ adminVoidSalePendingItems_ ไม่แตะรายการอื่นในใบเดิมเลย แม้จะมี
+// รายการที่ขายสำเร็จจริงปนอยู่ก็ตาม) แล้วสร้างใบขายออกใหม่ช่องทาง "ขาย" (ตรง) ให้ทันที อนุมัติอัตโนมัติเสมอ (ไม่ต้องขอ
+// อนุมัติซ้ำ เพราะใบเดิมผ่านการอนุมัติมาแล้วครั้งหนึ่ง นี่เป็นแค่การแก้ไขช่องทางภายในของ Admin) รายการนี้จะไปแสดงที่
+// หน้า "รายการขายออก" (ช่องทางขายตรง) เป็นรายการ "รอขาย" ตามปกติทันที ไม่ค้างรอที่หน้านี้อีกต่อไป
+function adminMoveSaleToDirect_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const auctionClosedErr = requireAuctionSystemOpen_();
+  if (auctionClosedErr) return auctionClosedErr;
+  const assetId = String(body.assetId || '').trim();
+  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+
+  const auctionSoldMap = {};
+  getAssetsRaw_().forEach(a => { auctionSoldMap[String(a.AssetID)] = String(a.AuctionSold).toLowerCase() === 'true'; });
+  if (auctionSoldMap[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ขายสำเร็จจริงแล้ว ไม่สามารถย้ายไปรอขายปกติได้' };
+
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues.shift());
+  const approvedAuctionDocs = {};
+  saleValues.forEach(r => {
+    if (r[saleIdx.Status] === STATUS.APPROVED && saleIdx.Channel !== undefined && String(r[saleIdx.Channel]) === 'ประมูล') {
+      approvedAuctionDocs[String(r[saleIdx.SaleID])] = { fromDept: r[saleIdx.FromDept] || '' };
+    }
+  });
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  let foundSaleId = null, foundItem = null;
+  for (let i = 0; i < itemValues.length; i++) {
+    const r = itemValues[i];
+    if (String(r[itemIdx.AssetID]) !== assetId) continue;
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) continue;
+    if (!approvedAuctionDocs[String(r[itemIdx.SaleID])]) continue;
+    foundSaleId = String(r[itemIdx.SaleID]);
+    foundItem = {
+      AssetName: r[itemIdx.AssetName] || '',
+      ScrapPrice: r[itemIdx.ScrapPrice] || 0,
+      AuctionPrice: r[itemIdx.AuctionPrice] || 0,
+      SalePrice: r[itemIdx.SalePrice] || 0,
+      Remark: r[itemIdx.Remark] || '',
+      ImageURL: itemIdx.ImageURL !== undefined ? (r[itemIdx.ImageURL] || '') : ''
+    };
+    break;
+  }
+  if (!foundSaleId) return { ok: false, error: 'ไม่พบใบขายออกช่องทางประมูลที่ยังไม่ขายสำเร็จของทรัพย์สินนี้' };
+  const fromDept = approvedAuctionDocs[foundSaleId].fromDept;
+
+  const cutRes = adminVoidSalePendingItems_({ password: body.password, saleId: foundSaleId, assetIds: [assetId] });
+  if (!cutRes.ok) return cutRes;
+
+  const fromDeptCode = getCodeForDept_(fromDept) || 'GEN';
+  const dept = getDeptByName_(fromDept);
+  const newSaleId = Utilities.getUuid();
+  const token = Utilities.getUuid();
+  const now = new Date();
+  const runningNo = withLock_(() => {
+    const rn = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
+    const sSheet = getSS_().getSheetByName(SHEETS.SALES);
+    const sValues = sSheet.getDataRange().getValues();
+    const sIdx = indexMap_(sValues[0]);
+    const newRow = sValues[0].map(() => '');
+    newRow[sIdx.SaleID] = newSaleId;
+    newRow[sIdx.RunningNo] = rn;
+    newRow[sIdx.CreatedAt] = now;
+    newRow[sIdx.FromDept] = fromDept;
+    newRow[sIdx.FromDeptCode] = fromDeptCode;
+    newRow[sIdx.Buyer] = '';
+    newRow[sIdx.Remark] = 'ย้ายมาจากใบขายออกช่องทางประมูล (ยกเลิกรายการนี้จากใบเดิมแล้ว) โดย Admin — ปิดรอบประมูลแล้ว ส่งกลับไปรอขายปกติ';
+    newRow[sIdx.Status] = STATUS.APPROVED;
+    newRow[sIdx.ApproverName] = '';
+    newRow[sIdx.ApproverEmail] = '';
+    newRow[sIdx.ApprovalToken] = token;
+    newRow[sIdx.ApprovedAt] = now;
+    newRow[sIdx.ApproverComment] = 'อนุมัติอัตโนมัติ — Admin ย้ายช่องทางจากประมูลเป็นขายตรง';
+    newRow[sIdx.CreatedBy] = 'admin';
+    newRow[sIdx.CreatedByEmail] = '';
+    if (sIdx.Channel !== undefined) newRow[sIdx.Channel] = 'ขาย';
+    sSheet.appendRow(newRow);
+    return rn;
+  });
+
+  const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
+  const iIdx = indexMap_(iHeaders);
+  const newItemRow = iHeaders.map(() => '');
+  newItemRow[iIdx.SaleID] = newSaleId;
+  newItemRow[iIdx.LineNo] = 1;
+  newItemRow[iIdx.AssetID] = assetId;
+  newItemRow[iIdx.AssetName] = foundItem.AssetName;
+  newItemRow[iIdx.ScrapPrice] = foundItem.ScrapPrice;
+  newItemRow[iIdx.AuctionPrice] = foundItem.AuctionPrice;
+  newItemRow[iIdx.SalePrice] = foundItem.SalePrice;
+  newItemRow[iIdx.Remark] = foundItem.Remark;
+  if (iIdx.ImageURL !== undefined) newItemRow[iIdx.ImageURL] = foundItem.ImageURL;
+  iSheet.appendRow(newItemRow);
+
+  purgeAssetFromAllQueues_([assetId]);
+  setAssetsTag_([assetId], 'ขาย');
+  invalidateDisposedAssetStatusCache_();
+  exportDocToSharePointSafe_('sale', getSaleFull_(newSaleId));
+  logActivity_(newSaleId, 'ADMIN_MOVE_SALE_TO_DIRECT', 'admin', 'ย้ายทรัพย์สิน ' + assetId + ' จากใบขายออกช่องทางประมูล ' + foundSaleId + ' ไปเป็นใบขายออกช่องทางขายตรง ' + runningNo + ' (ส่งกลับไปรอขายปกติ)');
+
+  return { ok: true, data: { oldSaleId: foundSaleId, newSaleId: newSaleId, runningNo: runningNo } };
 }
 
 // Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
