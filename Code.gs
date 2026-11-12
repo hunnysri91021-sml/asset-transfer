@@ -192,6 +192,9 @@ function doGet(e) {
       case 'getAuctionClosedNotice':
         result = { ok: true, data: getAuctionClosedNotice_() };
         break;
+      case 'getAuctionSystemStatus':
+        result = { ok: true, data: getAuctionSystemStatus_() };
+        break;
       case 'getAuctionListing':
         result = getAuctionListingPublic_(e.parameter.password);
         break;
@@ -379,6 +382,9 @@ function doPost(e) {
         break;
       case 'adminSetAuctionSelection':
         result = adminSetAuctionSelection_(body);
+        break;
+      case 'adminSetAuctionSystemEnabled':
+        result = adminSetAuctionSystemEnabled_(body);
         break;
       case 'adminSetAuctionSold':
         result = adminSetAuctionSold_(body);
@@ -2047,6 +2053,26 @@ function adminSaveAuctionClosedNotice_(body) {
   return { ok: true };
 }
 
+// สวิตช์ "เปิด/ปิดระบบประมูล" ทั้งระบบ — คนละเรื่องกับ AUCTION_CLOSED_ENABLED_PROP ด้านบน (แค่ข้อความประกาศบนหน้า
+// สาธารณะ ไม่ได้ปิดการทำงานจริง) ตัวนี้ปิดจริง: ขณะปิดอยู่ ห้ามส่งทรัพย์สินรายการใหม่เข้าหน้า "ประมูลขาย" สาธารณะอีก
+// (adminSetAuctionSelection_ ด้านล่างเช็คและบล็อก) แต่ยังดึงรายการที่ส่งไปแล้วก่อนหน้า/ดูประวัติ/ถอนออกได้ตามปกติ —
+// ทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติใหม่ระหว่างปิดระบบ จะรอค้างอยู่ที่ตาราง "คัดเลือกรายการประมูล" (รอขาย) เฉยๆ จนกว่าจะ
+// เปิดระบบอีกครั้ง — Admin เปิด/ปิดสลับกลับไปมาได้เองที่หน้าตั้งค่า (ไม่ใช่ปิดถาวรแบบกดแล้วย้อนไม่ได้)
+const AUCTION_SYSTEM_ENABLED_PROP = 'AUCTION_SYSTEM_ENABLED';
+function getAuctionSystemStatus_() {
+  const props = PropertiesService.getScriptProperties();
+  // ไม่เคยตั้งค่ามาก่อน (ดีพลอยเก่า/ยังไม่เคยกดปิด) ถือว่า "เปิดใช้งาน" เป็นค่าเริ่มต้นเสมอ ไม่งั้นระบบเดิมที่ deploy
+  // อยู่แล้วจะกลายเป็นปิดการส่งประมูลไปทันทีโดยไม่มีใครตั้งใจกด
+  return { enabled: props.getProperty(AUCTION_SYSTEM_ENABLED_PROP) !== '0' };
+}
+function adminSetAuctionSystemEnabled_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const enabled = !!body.enabled;
+  PropertiesService.getScriptProperties().setProperty(AUCTION_SYSTEM_ENABLED_PROP, enabled ? '1' : '0');
+  logActivity_('', 'ADMIN_SET_AUCTION_SYSTEM_ENABLED', 'admin', enabled ? 'เปิดใช้งานระบบประมูล' : 'ปิดระบบประมูล (ห้ามส่งทรัพย์สินรายการใหม่เข้าหน้าประมูลขายจนกว่าจะเปิดใช้งานอีกครั้ง)');
+  return { ok: true };
+}
+
 // ============================================================
 // AUCTION SELECTION — Admin คัดเลือกทรัพย์สินที่ขาย/ตัดชำรุดอนุมัติแล้ว ว่ารายการไหนจะส่งขึ้นหน้า "ประมูลขาย" สาธารณะบ้าง
 // (ทรัพย์สินต้องมีสถานะ Sold/WrittenOff จากใบขาย/ตัดชำรุดที่อนุมัติแล้วก่อน ถึงจะเป็นตัวเลือกให้คัดได้)
@@ -2088,6 +2114,11 @@ function adminSetAuctionSelection_(body) {
   const assetId = String(body.assetId || '').trim();
   if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
   const sendToAuction = !!body.sendToAuction;
+  // ปิดระบบประมูลอยู่ — ห้ามส่งรายการใหม่เข้าหน้าประมูลขายสาธารณะ (ถอนรายการที่ส่งไปแล้วออก/sendToAuction=false ยังทำได้ปกติ
+  // ไม่กระทบรายการที่ส่งไปแล้วก่อนหน้า)
+  if (sendToAuction && !getAuctionSystemStatus_().enabled) {
+    return { ok: false, error: 'ระบบประมูลปิดอยู่ ไม่สามารถส่งทรัพย์สินเข้าสู่หน้าประมูลขายได้ กรุณาเปิดใช้งานระบบประมูลที่หน้าตั้งค่าก่อน' };
+  }
   let referencePrice = null;
   if (body.referencePrice !== undefined && body.referencePrice !== '') {
     referencePrice = parseFloat(body.referencePrice);
@@ -3891,6 +3922,7 @@ function getSettingsBundle_(body) {
       auctionPriceBrackets: { brackets: getAuctionPriceBrackets_() },
       auctionIntroContent: getAuctionIntroContent_(),
       auctionClosedNotice: getAuctionClosedNotice_(),
+      auctionSystemStatus: getAuctionSystemStatus_(),
       auctionBidListPublicEnabled: { enabled: getAuctionBidListPublicEnabled_() },
       auctionWinnersPublicEnabled: { enabled: getAuctionWinnersPublicEnabled_() },
       auctionRoundInfo: getAuctionRoundInfo_(),
