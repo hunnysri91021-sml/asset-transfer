@@ -6894,6 +6894,11 @@ function renderSettings(root){
         <button class="btn btn-secondary btn-sm" id="btnBackfillMoveSaleToDirect">🔄 แก้ไขรายการส่งกลับไปรอขายเก่า</button>
       </div>
       <div class="card">
+        <h2>เข้าคิวรอขายย้อนหลังให้รายการ "ส่งกลับไปรอขาย" เก่า</h2>
+        <p style="color:var(--muted);font-size:13px;">ก่อนหน้านี้ปุ่ม "ส่งกลับไปรอขาย" (รวมถึงปุ่มแก้ไขย้อนหลังด้านบน) คืนสถานะทรัพย์สินเป็น "ใช้งานปกติ" เฉยๆ ไม่ได้เข้าคิวรอขายให้ด้วย ทำให้ปนกับทรัพย์สินใช้งานทั่วไป มองไม่ออกว่าเป็นรายการที่เพิ่งส่งกลับมารอขาย (ตอนนี้ปุ่ม "ส่งกลับไปรอขาย" เข้าคิวรอขายให้อัตโนมัติแล้วสำหรับการย้ายครั้งใหม่) กดปุ่มนี้เพื่อเพิ่มเฉพาะรายการที่เคยถูกคืนสถานะไปแล้ว "ก่อนแก้ไขนี้" เข้าคิวรอขายย้อนหลัง (ข้ามรายการที่ขาย/ตัดชำรุดไปแล้วหลังจากนั้น หรืออยู่ในคิวรออื่นอยู่แล้ว)</p>
+        <button class="btn btn-secondary btn-sm" id="btnBackfillQueuePendingSale">🔄 เข้าคิวรอขายย้อนหลัง</button>
+      </div>
+      <div class="card">
         <h2>ตรวจสอบทรัพย์สินที่มีสถานะซ้ำซ้อน</h2>
         <p style="color:var(--muted);font-size:13px;">ไล่ตรวจทั้งระบบหาทรัพย์สินที่มีสถานะขัดแย้ง/ซ้ำซ้อนกัน เช่น มีใบขายออกหรือใบตัดชำรุดที่อนุมัติแล้วมากกว่า 1 ใบพร้อมกัน, อยู่ในคิวรอมากกว่า 1 ประเภทพร้อมกัน, แท็กไม่ตรงกับสถานะจริง หรือมีธงส่งประมูลค้างอยู่ทั้งที่ยังไม่เคยขาย/ตัดชำรุดเลย — เครื่องมือนี้แค่รายงานให้เห็น ไม่แก้ไขข้อมูลให้อัตโนมัติ (ยกเว้นกรณีแท็กไม่ตรง ให้ไปกดปุ่ม "ซิงค์แท็กสถานะย้อนหลัง" ด้านบนต่อ)</p>
         <button class="btn btn-secondary btn-sm" id="btnCheckDuplicateStatus">🔍 ตรวจสอบสถานะซ้ำซ้อน</button>
@@ -6955,6 +6960,7 @@ function renderSettings(root){
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnBackfillOffSystemAuctionSold').onclick = backfillOffSystemAuctionSold;
   document.getElementById('btnBackfillMoveSaleToDirect').onclick = backfillMoveSaleToDirect;
+  document.getElementById('btnBackfillQueuePendingSale').onclick = backfillQueuePendingSale;
   document.getElementById('btnCheckDuplicateStatus').onclick = checkDuplicateStatus;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
   document.getElementById('btnRefreshOnlineUsers').onclick = ()=> loadOnlineUsers();
@@ -7012,6 +7018,18 @@ function renderSettings(root){
       btn.disabled = false; btn.innerHTML = '🔄 แก้ไขรายการส่งกลับไปรอขายเก่า';
       if(!res.ok){ toast(res.error||'แก้ไขไม่สำเร็จ','err'); return; }
       toast('แก้ไขสำเร็จ — คืนสถานะใช้งานปกติ '+res.data.fixedCount+' รายการ'+(res.data.fixedIds&&res.data.fixedIds.length?' ('+res.data.fixedIds.join(', ')+')':''),'ok');
+    });
+  }
+
+  function backfillQueuePendingSale(){
+    if(!confirm('ยืนยันเพิ่มรายการที่เคยส่งกลับไปรอขาย (ก่อนแก้ไขให้เข้าคิวอัตโนมัติ) เข้าคิวรอขายย้อนหลัง?\n\nจะข้ามรายการที่ขาย/ตัดชำรุดไปแล้วหลังจากนั้น หรืออยู่ในคิวรออื่นอยู่แล้ว')) return;
+    const btn = document.getElementById('btnBackfillQueuePendingSale');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังเข้าคิว...';
+    apiPost({ action:'adminBackfillQueuePendingSaleAssets', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '🔄 เข้าคิวรอขายย้อนหลัง';
+      if(!res.ok){ toast(res.error||'เข้าคิวไม่สำเร็จ','err'); return; }
+      const skipped = res.data.skippedIds && res.data.skippedIds.length ? ' (ข้าม '+res.data.skippedIds.length+' รายการที่ขาย/ตัดชำรุดแล้ว หรืออยู่ในคิวอื่นแล้ว)' : '';
+      toast('เข้าคิวรอขายสำเร็จ '+res.data.queuedCount+' รายการ'+(res.data.queuedIds&&res.data.queuedIds.length?' ('+res.data.queuedIds.join(', ')+')':'')+skipped,'ok');
     });
   }
 

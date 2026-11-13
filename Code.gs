@@ -485,6 +485,9 @@ function doPost(e) {
       case 'adminBackfillMoveSaleToDirectDocs':
         result = adminBackfillMoveSaleToDirectDocs_(body);
         break;
+      case 'adminBackfillQueuePendingSaleAssets':
+        result = adminBackfillQueuePendingSaleAssets_(body);
+        break;
       case 'adminCheckDuplicateAssetStatus':
         result = adminCheckDuplicateAssetStatus_(body);
         break;
@@ -3894,6 +3897,72 @@ function adminBackfillMoveSaleToDirectDocs_(body) {
   return { ok: true, data: { fixedCount: fixedAssetIds.length, fixedIds: fixedAssetIds } };
 }
 
+// adminMoveSaleToDirect_/adminBackfillMoveSaleToDirectDocs_ เคยแค่คืนสถานะทรัพย์สินเป็น "ใช้งานปกติ" เฉยๆ (ไม่ได้
+// เข้าคิวรอขายด้วย) ทำให้ทรัพย์สินกลุ่มนี้ปนกับทรัพย์สินใช้งานทั่วไปในหน้า "รายการทรัพย์สิน" มองไม่ออกว่าเป็นรายการที่
+// เพิ่งส่งกลับมารอขาย — ตอนนี้ adminMoveSaleToDirect_ เข้าคิวรอขาย (Purpose='Sale') ให้อัตโนมัติแล้วไปในตัว ไม่ต้องใช้
+// ฟังก์ชันนี้อีกสำหรับการย้ายครั้งใหม่ — ฟังก์ชันนี้มีไว้แก้ไขย้อนหลังเฉพาะรายการที่ถูกคืนสถานะไปแล้ว "ก่อน" แก้ไขนี้
+// เท่านั้น: ไล่หา AssetID จาก ActivityLog เฉพาะ action ที่ทำไปแล้วก่อนหน้า (ADMIN_MOVE_SALE_TO_PENDING/
+// ADMIN_BACKFILL_MOVE_SALE_TO_DIRECT) แล้วเพิ่มเข้าคิวรอขายให้ย้อนหลัง เฉพาะที่ยังเป็น "ใช้งานอยู่" จริง (ไม่ได้ขาย/
+// ตัดชำรุดไปแล้วหลังจากนั้น) และยังไม่ได้อยู่ในคิวรอใดๆ อยู่ก่อนแล้ว (กันไปแตะคิวที่ Admin ตั้งใจเลือกเองภายหลัง)
+function adminBackfillQueuePendingSaleAssets_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+
+  const logSh = getSS_().getSheetByName(SHEETS.LOG);
+  const logValues = logSh.getDataRange().getValues();
+  const logIdx = indexMap_(logValues[0]);
+  const targetActions = { ADMIN_MOVE_SALE_TO_PENDING: true, ADMIN_BACKFILL_MOVE_SALE_TO_DIRECT: true };
+  const candidateAssetIds = {};
+  for (let i = 1; i < logValues.length; i++) {
+    const action = String(logValues[i][logIdx.Action] || '');
+    if (!targetActions[action]) continue;
+    const detail = String(logValues[i][logIdx.Detail] || '');
+    // รายชื่อ AssetID อยู่ท้ายสุดของข้อความเสมอ คั่นด้วย ", " (อยู่ในวงเล็บหรือหลัง : ท้ายสุด แล้วแต่ข้อความของแต่ละ
+    // action) — จับช่วงท้ายสุดที่ไม่มี : ( ) ปนมาเองแบบยืดหยุ่น แทนที่จะ hard-code รูปแบบตายตัว
+    const match = detail.match(/[:(]\s*([^:()]+)\)?\s*$/);
+    if (!match) continue;
+    match[1].split(',').map(s => s.trim().replace(/\)+$/, '')).forEach(id => { if (id) candidateAssetIds[id] = true; });
+  }
+  if (!Object.keys(candidateAssetIds).length) return { ok: true, data: { queuedCount: 0, queuedIds: [], skippedIds: [] } };
+
+  const disposed = getDisposedAssetStatus_();
+  const validAssetIds = {};
+  getAssetsRaw_().forEach(a => { validAssetIds[String(a.AssetID)] = true; });
+
+  const queueSh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const queueValues = queueSh.getDataRange().getValues();
+  const queueIdx = indexMap_(queueValues[0]);
+  if (queueIdx.Purpose === undefined) return { ok: false, error: 'ชีต TransferQueue ยังไม่มีคอลัมน์ Purpose กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  const alreadyQueuedAssetIds = {};
+  for (let i = 1; i < queueValues.length; i++) { alreadyQueuedAssetIds[String(queueValues[i][queueIdx.AssetID])] = true; }
+
+  const queuedIds = [];
+  const skippedIds = [];
+  const newQueueRows = [];
+  Object.keys(candidateAssetIds).forEach(assetId => {
+    if (!validAssetIds[assetId]) return; // ไม่ใช่ AssetID จริง (ข้อความ log ที่ parse คลาดเคลื่อน) ข้ามเงียบๆ
+    if (disposed[assetId]) { skippedIds.push(assetId); return; } // ขาย/ตัดชำรุดไปแล้วหลังจากนั้น ไม่แตะ
+    if (alreadyQueuedAssetIds[assetId]) { skippedIds.push(assetId); return; } // อยู่ในคิวรอใดคิวหนึ่งอยู่แล้ว ไม่แตะ
+    const row = queueValues[0].map(() => '');
+    row[queueIdx.AssetID] = assetId;
+    row[queueIdx.Purpose] = QUEUE_PURPOSES.SALE;
+    row[queueIdx.AddedBy] = 'admin (แก้ไขย้อนหลัง - เข้าคิวรอขาย)';
+    row[queueIdx.AddedAt] = new Date();
+    newQueueRows.push(row);
+    queuedIds.push(assetId);
+  });
+
+  if (newQueueRows.length) {
+    queueSh.getRange(queueSh.getLastRow() + 1, 1, newQueueRows.length, queueValues[0].length).setValues(newQueueRows);
+  }
+
+  logActivity_('', 'ADMIN_BACKFILL_QUEUE_PENDING_SALE', 'admin',
+    'เพิ่มทรัพย์สินเข้าคิวรอขายย้อนหลัง (จากรายการที่เคยส่งกลับไปรอขาย/แก้ไขย้อนหลังก่อนหน้านี้): ' + queuedIds.length + ' รายการ' +
+    (queuedIds.length ? ' (' + queuedIds.join(', ') + ')' : '') +
+    (skippedIds.length ? ' — ข้าม ' + skippedIds.length + ' รายการ (ขาย/ตัดชำรุดไปแล้ว หรืออยู่ในคิวอื่นแล้ว)' : ''));
+
+  return { ok: true, data: { queuedCount: queuedIds.length, queuedIds: queuedIds, skippedIds: skippedIds } };
+}
+
 // ตรวจสอบหาทรัพย์สินที่มี "สถานะซ้ำซ้อน/ขัดแย้งกัน" ทั่วทั้งระบบ — เครื่องมือตรวจสอบเฉยๆ (ไม่แก้ไขข้อมูลให้อัตโนมัติ
 // ยกเว้นข้อ 4 ที่แนะนำให้ไปกดปุ่มซิงค์แท็กต่อ) ใช้ตรวจจับความผิดปกติที่ไม่ควรเกิดขึ้นได้ตามกติกาปกติของระบบ แต่เกิดขึ้น
 // ได้จากข้อมูลเก่าก่อนแก้บั๊ก หรือจากการแก้ไขชีตตรงๆ นอกแอป:
@@ -5042,9 +5111,35 @@ function adminMoveSaleToDirect_(body) {
     auctionFieldCols.forEach(f => { assetsSh.getRange(i + 1, f.col).setValue(f.value); });
   }
   setAssetsTag_(results, 'ใช้งาน');
+
+  // เข้าคิวรอขาย (Purpose='Sale') ให้ด้วย ไม่ใช่แค่คืนเป็น "ใช้งานปกติ" เฉยๆ — ให้แสดงเป็น "⏳ รอขาย" ที่หน้า
+  // "รายการทรัพย์สิน" แยกจากทรัพย์สินใช้งานปกติทั่วไปได้ชัดเจน (เขียนตรงด้วย setValues ชุดเดียว ไม่เรียก
+  // addToAssetQueue_ วนทีละรายการ เพราะฟังก์ชันนั้นอ่านทั้งชีตใหม่ + ล็อกระบบทุกครั้งที่เรียก จะช้าเหมือนปัญหาเดิมถ้า
+  // เลือกมาหลายสิบรายการพร้อมกัน)
+  const queueSh = getSS_().getSheetByName(SHEETS.TRANSFER_QUEUE);
+  const queueValues = queueSh.getDataRange().getValues();
+  const queueIdx = indexMap_(queueValues[0]);
+  if (queueIdx.Purpose !== undefined) {
+    const alreadyQueuedAssetIds = {};
+    for (let i = 1; i < queueValues.length; i++) { alreadyQueuedAssetIds[String(queueValues[i][queueIdx.AssetID])] = true; }
+    const newQueueRows = [];
+    results.forEach(assetId => {
+      if (alreadyQueuedAssetIds[assetId]) return; // อยู่ในคิวรอประเภทอื่นอยู่แล้ว (ไม่ควรเกิดขึ้นได้ตามปกติ) ไม่แตะ
+      const row = queueValues[0].map(() => '');
+      row[queueIdx.AssetID] = assetId;
+      row[queueIdx.Purpose] = QUEUE_PURPOSES.SALE;
+      row[queueIdx.AddedBy] = 'admin (ส่งกลับไปรอขาย)';
+      row[queueIdx.AddedAt] = new Date();
+      newQueueRows.push(row);
+    });
+    if (newQueueRows.length) {
+      queueSh.getRange(queueSh.getLastRow() + 1, 1, newQueueRows.length, queueValues[0].length).setValues(newQueueRows);
+    }
+  }
+
   invalidateDisposedAssetStatusCache_();
   logActivity_('', 'ADMIN_MOVE_SALE_TO_PENDING', 'admin',
-    'ส่งทรัพย์สิน ' + results.length + ' รายการ กลับไปที่หน้ารายการทรัพย์สิน (ใช้งานปกติ) เพื่อสร้างใบขายใหม่กำหนดราคา/ผู้ซื้อเอง: ' + results.join(', '));
+    'ส่งทรัพย์สิน ' + results.length + ' รายการ กลับไปที่หน้ารายการทรัพย์สิน เข้าคิวรอขาย เพื่อสร้างใบขายใหม่กำหนดราคา/ผู้ซื้อเอง: ' + results.join(', '));
 
   return { ok: true, data: { successCount: results.length, failedCount: errors.length, results: results, errors: errors } };
 }
