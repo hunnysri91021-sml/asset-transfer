@@ -4090,6 +4090,7 @@ function renderAuctionLive(root){
 function renderAuctionSelection(root){
   let candidates = [];
   let auctionSystemEnabled = true;
+  let selectedMoveDirectIds = new Set(); // เลือกได้หลายรายการสำหรับ "ส่งกลับไปรอขาย (ที่เลือก)" ในตารางคัดเลือกรายการประมูล
   const typeLabel = { Sold:'ขายออก (ประมูล)', WrittenOff:'ตัดชำรุดแล้ว' };
 
   root.innerHTML = `
@@ -4117,6 +4118,10 @@ function renderAuctionSelection(root){
         <input type="text" id="aselSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
       </div>
       <div id="aselCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div class="toolbar no-print" id="aselMoveDirectBulkBar" style="display:none;">
+        <span id="aselMoveDirectSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-secondary btn-sm" id="btnAselMoveDirectBulk">↩ ส่งกลับไปรอขาย (ที่เลือก)</button>
+      </div>
       <div id="aselTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
 
@@ -4144,6 +4149,7 @@ function renderAuctionSelection(root){
   document.getElementById('aselSearch').oninput = renderTable;
   document.getElementById('aselSentSearch').oninput = renderSentTable;
   document.getElementById('aselHistSearch').oninput = renderHistoryTable;
+  document.getElementById('btnAselMoveDirectBulk').onclick = moveSaleToDirectBulk;
 
   function loadRoundBanner(){
     apiGet({ action:'getAuctionRoundInfo' }).then(res=>{
@@ -4161,7 +4167,7 @@ function renderAuctionSelection(root){
       const banner = document.getElementById('aselSystemClosedBanner');
       if(banner) banner.style.display = auctionSystemEnabled ? 'none' : 'block';
       const roundDisabled = auctionSystemEnabled ? false : true;
-      ['btnStartNewAuctionRound','btnUndoStartNewAuctionRound','btnMergeAuctionRounds','mergeFromRound','mergeToRound'].forEach(id=>{
+      ['btnStartNewAuctionRound','btnUndoStartNewAuctionRound','btnMergeAuctionRounds','mergeFromRound','mergeToRound','btnAselMoveDirectBulk'].forEach(id=>{
         const el = document.getElementById(id);
         if(el) el.disabled = roundDisabled;
       });
@@ -4261,9 +4267,16 @@ function renderAuctionSelection(root){
     document.getElementById('aselCount').textContent = 'รวม '+rows.length+' รายการ';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; return; }
     const sendDisabled = auctionSystemEnabled ? '' : 'disabled';
-    let html = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll" ${sendDisabled}> ส่งประมูล</th><th class="no-print">คืนสถานะไปที่</th></tr>`;
+    // เลือกได้เฉพาะรายการช่องทาง "ประมูล" (ที่มีปุ่ม "ส่งกลับไปรอขาย" ให้กด) — เอาออกจากชุดที่เลือกไว้ถ้าแถวนั้นหายไป
+    // จากตัวกรอง/ไม่เข้าเงื่อนไขอีกต่อไป (กันค้างเลือกรายการที่มองไม่เห็นแล้ว)
+    const moveDirectEligibleIds = new Set(rows.filter(a=>a.SaleChannel==='ประมูล').map(a=>a.AssetID));
+    [...selectedMoveDirectIds].forEach(id=>{ if(!moveDirectEligibleIds.has(id)) selectedMoveDirectIds.delete(id); });
+    const allMoveDirectSelected = moveDirectEligibleIds.size>0 && [...moveDirectEligibleIds].every(id=>selectedMoveDirectIds.has(id));
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print" style="width:3%;">${moveDirectEligibleIds.size ? `<input type="checkbox" id="aselMoveDirectSelectAll" ${allMoveDirectSelected?'checked':''} ${sendDisabled}>` : ''}</th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ประเภท</th><th>วันที่เพิ่ม</th><th>เลขที่ออก</th><th>มูลค่าตามบัญชี</th><th>ราคากลาง</th><th><input type="checkbox" id="aselSelectAll" ${sendDisabled}> ส่งประมูล</th><th class="no-print">คืนสถานะไปที่</th></tr>`;
     rows.forEach(a=>{
+      const moveDirectEligible = a.SaleChannel==='ประมูล';
       html += `<tr>
+        <td class="no-print" style="text-align:center;">${moveDirectEligible ? `<input type="checkbox" class="aselMoveDirectChk" data-id="${esc(a.AssetID)}" ${selectedMoveDirectIds.has(a.AssetID)?'checked':''} ${sendDisabled}>` : ''}</td>
         <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
@@ -4288,6 +4301,20 @@ function renderAuctionSelection(root){
     });
     html += '</table></div>';
     host.innerHTML = html;
+
+    updateMoveDirectBulkBar();
+    const moveDirectSelectAllEl = document.getElementById('aselMoveDirectSelectAll');
+    if(moveDirectSelectAllEl) moveDirectSelectAllEl.onchange = (e)=>{
+      const checked = e.target.checked;
+      moveDirectEligibleIds.forEach(id=>{ if(checked) selectedMoveDirectIds.add(id); else selectedMoveDirectIds.delete(id); });
+      renderTable();
+    };
+    host.querySelectorAll('.aselMoveDirectChk').forEach(chk=>{
+      chk.onchange = ()=>{
+        if(chk.checked) selectedMoveDirectIds.add(chk.dataset.id); else selectedMoveDirectIds.delete(chk.dataset.id);
+        updateMoveDirectBulkBar();
+      };
+    });
 
     document.getElementById('aselSelectAll').onchange = (e)=>{
       const checked = e.target.checked;
@@ -4316,6 +4343,13 @@ function renderAuctionSelection(root){
     });
   }
 
+  function updateMoveDirectBulkBar(){
+    const bar = document.getElementById('aselMoveDirectBulkBar');
+    if(bar) bar.style.display = selectedMoveDirectIds.size ? 'flex' : 'none';
+    const countEl = document.getElementById('aselMoveDirectSelCount');
+    if(countEl) countEl.textContent = 'เลือกไว้ '+selectedMoveDirectIds.size+' รายการ';
+  }
+
   // ยืนยันว่าใบขายออกช่องทาง "ประมูล" รายการนี้ ขายเสร็จสมบูรณ์แล้วจริง โดยไม่ผ่านการเปิดประมูลสาธารณะในระบบเลย (รู้ผู้ซื้อ/
   // ราคาสุดท้ายแน่นอนตั้งแต่สร้างใบขายออกแล้ว) — ดึงผู้ซื้อ/ราคาจากใบขายออกที่อนุมัติแล้วมาปักเป็น AuctionSold ให้อัตโนมัติ
   function confirmSaleChannelCompleted(assetId, btn){
@@ -4337,6 +4371,25 @@ function renderAuctionSelection(root){
     apiPost({ action:'adminMoveSaleToDirect', password: STATE.adminPassword, assetId }).then(res=>{
       if(!res.ok){ toast(res.error||'ส่งกลับไปรอขายไม่สำเร็จ','err'); btn.disabled = false; return; }
       toast('ส่งทรัพย์สิน '+assetId+' กลับไปรอขายแบบขายตรงสำเร็จ (เลขที่ใบใหม่ '+res.data.runningNo+')','ok');
+      load();
+    });
+  }
+
+  // ปุ่ม "ส่งกลับไปรอขาย (ที่เลือก)" — ทำแบบเดียวกับ moveSaleToDirect แต่หลายรายการพร้อมกันในครั้งเดียว (ส่ง assetIds
+  // เป็น array ให้ backend ประมวลผลแยกรายการ รายการที่ติดเงื่อนไข เช่น ขายสำเร็จจริงไปแล้วระหว่างนั้น จะถูกข้ามแล้ว
+  // รายงานกลับมาเป็น errors แทนที่จะทำให้ทั้งชุดล้มเหลว)
+  function moveSaleToDirectBulk(){
+    const ids = [...selectedMoveDirectIds];
+    if(!ids.length) return;
+    if(!confirm('ยืนยันส่งทรัพย์สินที่เลือกไว้ '+ids.length+' รายการกลับไปรอขายแบบขายตรง (ไม่ผ่านประมูล)?\n\nระบบจะตัดแต่ละรายการออกจากใบขายออกช่องทางประมูลเดิม (ไม่กระทบรายการอื่นในใบเดิม) แล้วสร้างใบขายออกใหม่ช่องทาง "ขาย" ให้แต่ละรายการทันที')) return;
+    const btn = document.getElementById('btnAselMoveDirectBulk');
+    btn.disabled = true;
+    apiPost({ action:'adminMoveSaleToDirect', password: STATE.adminPassword, assetIds: ids }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ส่งกลับไปรอขายไม่สำเร็จ','err'); return; }
+      const failedCount = res.data.failedCount || 0;
+      toast(failedCount ? ('ส่งกลับไปรอขายสำเร็จ '+res.data.successCount+' รายการ, ไม่สำเร็จ '+failedCount+' รายการ ('+res.data.errors.join('; ')+')') : ('ส่งกลับไปรอขายสำเร็จ '+res.data.successCount+' รายการ'), failedCount ? 'err' : 'ok');
+      selectedMoveDirectIds.clear();
       load();
     });
   }

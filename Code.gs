@@ -4874,13 +4874,38 @@ function adminGetPendingAuctionSaleDocsForAssets_(body) {
 // รายการที่ขายสำเร็จจริงปนอยู่ก็ตาม) แล้วสร้างใบขายออกใหม่ช่องทาง "ขาย" (ตรง) ให้ทันที อนุมัติอัตโนมัติเสมอ (ไม่ต้องขอ
 // อนุมัติซ้ำ เพราะใบเดิมผ่านการอนุมัติมาแล้วครั้งหนึ่ง นี่เป็นแค่การแก้ไขช่องทางภายในของ Admin) รายการนี้จะไปแสดงที่
 // หน้า "รายการขายออก" (ช่องทางขายตรง) เป็นรายการ "รอขาย" ตามปกติทันที ไม่ค้างรอที่หน้านี้อีกต่อไป
+//
+// รองรับเลือกหลายรายการพร้อมกัน — ส่ง body.assetIds (array) แทน body.assetId เดี่ยวได้ (ยังรองรับ body.assetId เดี่ยว
+// แบบเดิมไว้ด้วย เพื่อความเข้ากันได้ย้อนหลัง) แต่ละรายการแยกใบขายออกใหม่เป็นของตัวเอง ประมวลผลแยกกัน รายการที่ไม่ผ่าน
+// เงื่อนไข (ขายสำเร็จแล้ว/ไม่พบใบขายออกช่องทางประมูล) จะถูกข้ามแล้วรายงานกลับไปเป็น errors แทนที่จะทำให้ทั้งชุดล้มเหลว
 function adminMoveSaleToDirect_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const auctionClosedErr = requireAuctionSystemOpen_();
   if (auctionClosedErr) return auctionClosedErr;
-  const assetId = String(body.assetId || '').trim();
-  if (!assetId) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
+  const assetIds = (Array.isArray(body.assetIds) && body.assetIds.length ? body.assetIds : [body.assetId])
+    .map(id => String(id || '').trim()).filter(Boolean);
+  if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
+  const results = [];
+  const errors = [];
+  assetIds.forEach(assetId => {
+    const res = moveSaleToDirectSingle_(body.password, assetId);
+    if (res.ok) results.push({ assetId: assetId, oldSaleId: res.data.oldSaleId, newSaleId: res.data.newSaleId, runningNo: res.data.runningNo });
+    else errors.push(assetId + ': ' + res.error);
+  });
+
+  if (!results.length) return { ok: false, error: errors.join('; ') || 'ดำเนินการไม่สำเร็จ' };
+  const single = results.length === 1 ? results[0] : null;
+  return { ok: true, data: {
+    successCount: results.length, failedCount: errors.length, results: results, errors: errors,
+    // รองรับ caller เดิมที่คาดหวัง field เดี่ยว (เรียกแบบ assetId เดียว)
+    oldSaleId: single ? single.oldSaleId : undefined, newSaleId: single ? single.newSaleId : undefined, runningNo: single ? single.runningNo : undefined
+  } };
+}
+
+// ย้ายทรัพย์สินรายการเดียวจากใบขายออกช่องทางประมูลไปเป็นใบขายออกช่องทางขายตรง — ตัวช่วยภายในของ adminMoveSaleToDirect_
+// ไม่เช็ครหัสผ่าน/สวิตช์ระบบประมูลเอง (ผู้เรียกต้องเช็คมาก่อนแล้ว)
+function moveSaleToDirectSingle_(password, assetId) {
   const auctionSoldMap = {};
   getAssetsRaw_().forEach(a => { auctionSoldMap[String(a.AssetID)] = String(a.AuctionSold).toLowerCase() === 'true'; });
   if (auctionSoldMap[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ขายสำเร็จจริงแล้ว ไม่สามารถย้ายไปรอขายปกติได้' };
@@ -4919,7 +4944,7 @@ function adminMoveSaleToDirect_(body) {
   if (!foundSaleId) return { ok: false, error: 'ไม่พบใบขายออกช่องทางประมูลที่ยังไม่ขายสำเร็จของทรัพย์สินนี้' };
   const fromDept = approvedAuctionDocs[foundSaleId].fromDept;
 
-  const cutRes = adminVoidSalePendingItems_({ password: body.password, saleId: foundSaleId, assetIds: [assetId] });
+  const cutRes = adminVoidSalePendingItems_({ password: password, saleId: foundSaleId, assetIds: [assetId] });
   if (!cutRes.ok) return cutRes;
 
   const fromDeptCode = getCodeForDept_(fromDept) || 'GEN';
