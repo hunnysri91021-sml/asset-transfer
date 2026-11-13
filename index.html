@@ -6889,6 +6889,11 @@ function renderSettings(root){
         <button class="btn btn-secondary btn-sm" id="btnBackfillOffSystemAuctionSold">🔄 ซิงค์สถานะขายนอกระบบย้อนหลัง</button>
       </div>
       <div class="card">
+        <h2>แก้ไขรายการ "ส่งกลับไปรอขาย" เก่าให้กลับเป็นใช้งานปกติ</h2>
+        <p style="color:var(--muted);font-size:13px;">ก่อนหน้านี้ปุ่ม "ส่งกลับไปรอขาย" ที่หน้า "คัดเลือกรายการประมูล" เคยสร้างใบขายออกช่องทาง "ขาย" ให้อัตโนมัติทันที (ผู้ซื้อว่างเปล่า ราคาดึงมาจากใบเดิม) แทนที่จะคืนสถานะทรัพย์สินเป็น "ใช้งานปกติ" แบบปัจจุบัน ทำให้รายการที่เคยกดปุ่มนี้ "ก่อนแก้บั๊ก" ค้างเป็นใบขายออกที่อนุมัติแล้วโดยไม่มีผู้ซื้อ/ราคาจริง ไม่โผล่ที่หน้า "รายการทรัพย์สิน" ให้กำหนดราคา/ผู้ซื้อต่อ กดปุ่มนี้เพื่อยกเลิกใบขายออกที่สร้างแบบนี้ (เจาะจงเฉพาะที่สร้างจากปุ่มเก่าจริงๆ และยังไม่มีผู้ซื้อ ไม่กระทบใบขายออกปกติ) แล้วคืนสถานะทรัพย์สินเหล่านั้นกลับเป็น "ใช้งานปกติ"</p>
+        <button class="btn btn-secondary btn-sm" id="btnBackfillMoveSaleToDirect">🔄 แก้ไขรายการส่งกลับไปรอขายเก่า</button>
+      </div>
+      <div class="card">
         <h2>ตรวจสอบทรัพย์สินที่มีสถานะซ้ำซ้อน</h2>
         <p style="color:var(--muted);font-size:13px;">ไล่ตรวจทั้งระบบหาทรัพย์สินที่มีสถานะขัดแย้ง/ซ้ำซ้อนกัน เช่น มีใบขายออกหรือใบตัดชำรุดที่อนุมัติแล้วมากกว่า 1 ใบพร้อมกัน, อยู่ในคิวรอมากกว่า 1 ประเภทพร้อมกัน, แท็กไม่ตรงกับสถานะจริง หรือมีธงส่งประมูลค้างอยู่ทั้งที่ยังไม่เคยขาย/ตัดชำรุดเลย — เครื่องมือนี้แค่รายงานให้เห็น ไม่แก้ไขข้อมูลให้อัตโนมัติ (ยกเว้นกรณีแท็กไม่ตรง ให้ไปกดปุ่ม "ซิงค์แท็กสถานะย้อนหลัง" ด้านบนต่อ)</p>
         <button class="btn btn-secondary btn-sm" id="btnCheckDuplicateStatus">🔍 ตรวจสอบสถานะซ้ำซ้อน</button>
@@ -6949,6 +6954,7 @@ function renderSettings(root){
   document.getElementById('btnSaveNotifyEmails').onclick = saveNotifyEmails;
   document.getElementById('btnBackfillTags').onclick = backfillTags;
   document.getElementById('btnBackfillOffSystemAuctionSold').onclick = backfillOffSystemAuctionSold;
+  document.getElementById('btnBackfillMoveSaleToDirect').onclick = backfillMoveSaleToDirect;
   document.getElementById('btnCheckDuplicateStatus').onclick = checkDuplicateStatus;
   document.getElementById('btnSyncScrapPrice').onclick = syncScrapPrice;
   document.getElementById('btnRefreshOnlineUsers').onclick = ()=> loadOnlineUsers();
@@ -6995,6 +7001,17 @@ function renderSettings(root){
       btn.disabled = false; btn.innerHTML = '🔄 ซิงค์สถานะขายนอกระบบย้อนหลัง';
       if(!res.ok){ toast(res.error||'ซิงค์ไม่สำเร็จ','err'); return; }
       toast('ซิงค์สำเร็จ — แก้ไข '+res.data.fixedCount+' รายการ'+(res.data.fixedIds&&res.data.fixedIds.length?' ('+res.data.fixedIds.join(', ')+')':''),'ok');
+    });
+  }
+
+  function backfillMoveSaleToDirect(){
+    if(!confirm('ยืนยันยกเลิกใบขายออกที่สร้างอัตโนมัติจากปุ่ม "ส่งกลับไปรอขาย" รุ่นเก่า (เจาะจงเฉพาะที่ยังไม่มีผู้ซื้อจริงเท่านั้น) แล้วคืนสถานะทรัพย์สินเหล่านั้นกลับเป็น "ใช้งานปกติ"?')) return;
+    const btn = document.getElementById('btnBackfillMoveSaleToDirect');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังแก้ไข...';
+    apiPost({ action:'adminBackfillMoveSaleToDirectDocs', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false; btn.innerHTML = '🔄 แก้ไขรายการส่งกลับไปรอขายเก่า';
+      if(!res.ok){ toast(res.error||'แก้ไขไม่สำเร็จ','err'); return; }
+      toast('แก้ไขสำเร็จ — คืนสถานะใช้งานปกติ '+res.data.fixedCount+' รายการ'+(res.data.fixedIds&&res.data.fixedIds.length?' ('+res.data.fixedIds.join(', ')+')':''),'ok');
     });
   }
 
