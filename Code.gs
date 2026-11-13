@@ -4878,21 +4878,33 @@ function adminGetPendingAuctionSaleDocsForAssets_(body) {
 // รองรับเลือกหลายรายการพร้อมกัน — ส่ง body.assetIds (array) แทน body.assetId เดี่ยวได้ (ยังรองรับ body.assetId เดี่ยว
 // แบบเดิมไว้ด้วย เพื่อความเข้ากันได้ย้อนหลัง) แต่ละรายการแยกใบขายออกใหม่เป็นของตัวเอง ประมวลผลแยกกัน รายการที่ไม่ผ่าน
 // เงื่อนไข (ขายสำเร็จแล้ว/ไม่พบใบขายออกช่องทางประมูล) จะถูกข้ามแล้วรายงานกลับไปเป็น errors แทนที่จะทำให้ทั้งชุดล้มเหลว
+//
+// เลือกเดี่ยว (assetId เดียว) ใช้ moveSaleToDirectSingle_ เหมือนเดิม — เลือกหลายรายการ (>1) ใช้
+// moveSaleToDirectBatch_ ที่อ่าน/เขียนชีตเป็นชุดเดียว ไม่ใช่วนอ่านทั้งชีตใหม่ทีละรายการ (ของเดิมที่วนเรียก
+// moveSaleToDirectSingle_ ทีละรายการ ถ้าเลือกมาหลักสิบรายการพร้อมกัน จะอ่าน Assets/Sales/SaleItems ทั้งชีตซ้ำๆ
+// หลายสิบรอบ บวกกับ LockService.waitLock ทีละรายการ และ export PDF ขึ้น SharePoint ทีละรายการ รวมกันช้าพอจะทำให้
+// Apps Script ทำงานไม่ทันและถูกตัดกลางทาง — ผลคือบางรายการย้ายสำเร็จ บางรายการยังค้างอยู่ที่หน้าเดิมโดยไม่มี error
+// แจ้งกลับมาให้เห็นเลย เพราะ request หลุดไปก่อนจะได้ return คำตอบ)
 function adminMoveSaleToDirect_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const auctionClosedErr = requireAuctionSystemOpen_();
   if (auctionClosedErr) return auctionClosedErr;
-  const assetIds = (Array.isArray(body.assetIds) && body.assetIds.length ? body.assetIds : [body.assetId])
-    .map(id => String(id || '').trim()).filter(Boolean);
+  const assetIds = [...new Set((Array.isArray(body.assetIds) && body.assetIds.length ? body.assetIds : [body.assetId])
+    .map(id => String(id || '').trim()).filter(Boolean))];
   if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
 
-  const results = [];
-  const errors = [];
-  assetIds.forEach(assetId => {
-    const res = moveSaleToDirectSingle_(body.password, assetId);
-    if (res.ok) results.push({ assetId: assetId, oldSaleId: res.data.oldSaleId, newSaleId: res.data.newSaleId, runningNo: res.data.runningNo });
-    else errors.push(assetId + ': ' + res.error);
-  });
+  let results, errors;
+  if (assetIds.length > 1) {
+    const batchRes = moveSaleToDirectBatch_(assetIds);
+    results = batchRes.results;
+    errors = batchRes.errors;
+  } else {
+    results = [];
+    errors = [];
+    const res = moveSaleToDirectSingle_(body.password, assetIds[0]);
+    if (res.ok) results.push({ assetId: assetIds[0], oldSaleId: res.data.oldSaleId, newSaleId: res.data.newSaleId, runningNo: res.data.runningNo });
+    else errors.push(assetIds[0] + ': ' + res.error);
+  }
 
   if (!results.length) return { ok: false, error: errors.join('; ') || 'ดำเนินการไม่สำเร็จ' };
   const single = results.length === 1 ? results[0] : null;
@@ -4901,6 +4913,170 @@ function adminMoveSaleToDirect_(body) {
     // รองรับ caller เดิมที่คาดหวัง field เดี่ยว (เรียกแบบ assetId เดียว)
     oldSaleId: single ? single.oldSaleId : undefined, newSaleId: single ? single.newSaleId : undefined, runningNo: single ? single.runningNo : undefined
   } };
+}
+
+// ย้ายหลายรายการพร้อมกันแบบมีประสิทธิภาพ — อ่านชีต Assets/Sales/SaleItems ครั้งเดียวสำหรับทั้งชุด (ไม่ใช่ครั้งละ
+// รายการ) ล็อกครั้งเดียวตอนออกเลขที่เอกสารชุดใหม่ (คำนวณเลขที่ต่อรหัสหน่วยงานในหน่วยความจำ ไม่อ่านชีต Sales ซ้ำ
+// ทีละรายการ) แล้วเขียนแถวใหม่ทั้งหมดในครั้งเดียวด้วย setValues แทน appendRow ทีละแถว — ตั้งใจข้าม
+// exportDocToSharePointSafe_ (สร้าง PDF + อัปโหลดเครือข่ายจริงต่อ 1 ใบ) สำหรับการดำเนินการแบบกลุ่มนี้โดยเฉพาะ เพราะ
+// เป็นคอขวดที่ช้าที่สุดถ้าทำซ้ำหลายสิบรอบ — ใบขายออกที่สร้างจากที่นี่ยังดูได้ปกติทุกประการที่หน้า "รายการขายออก"
+// เพียงแต่จะไม่มีไฟล์ PDF อัตโนมัติขึ้น SharePoint ให้ (ใช้ปุ่ม Export PDF จากหน้าเว็บแทนได้ตามปกติถ้าต้องการไฟล์)
+function moveSaleToDirectBatch_(assetIds) {
+  const results = [];
+  const errors = [];
+
+  const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
+  const assetsValues = assetsSh.getDataRange().getValues();
+  const assetsIdx = indexMap_(assetsValues[0]);
+  const auctionSoldMap = {};
+  for (let i = 1; i < assetsValues.length; i++) {
+    auctionSoldMap[String(assetsValues[i][assetsIdx.AssetID])] = String(assetsValues[i][assetsIdx.AuctionSold]).toLowerCase() === 'true';
+  }
+
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues[0]);
+  const approvedAuctionDocs = {}; // saleId -> { fromDept, rowNum }
+  for (let i = 1; i < saleValues.length; i++) {
+    if (saleValues[i][saleIdx.Status] === STATUS.APPROVED && saleIdx.Channel !== undefined && String(saleValues[i][saleIdx.Channel]) === 'ประมูล') {
+      approvedAuctionDocs[String(saleValues[i][saleIdx.SaleID])] = { fromDept: saleValues[i][saleIdx.FromDept] || '', rowNum: i + 1 };
+    }
+  }
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues[0]);
+  const itemByAssetId = {}; // assetId -> { rowNum, saleId, ...ข้อมูลรายการ } (รายการแรกที่เจอ ถ้าซ้ำ)
+  const nonVoidedCountBySaleId = {};
+  for (let i = 1; i < itemValues.length; i++) {
+    const r = itemValues[i];
+    const saleId = String(r[itemIdx.SaleID]);
+    if (!approvedAuctionDocs[saleId]) continue;
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) continue;
+    nonVoidedCountBySaleId[saleId] = (nonVoidedCountBySaleId[saleId] || 0) + 1;
+    const assetId = String(r[itemIdx.AssetID]);
+    if (!itemByAssetId[assetId]) {
+      itemByAssetId[assetId] = {
+        rowNum: i + 1, saleId: saleId,
+        AssetName: r[itemIdx.AssetName] || '', ScrapPrice: r[itemIdx.ScrapPrice] || 0,
+        AuctionPrice: r[itemIdx.AuctionPrice] || 0, SalePrice: r[itemIdx.SalePrice] || 0,
+        Remark: r[itemIdx.Remark] || '', ImageURL: itemIdx.ImageURL !== undefined ? (r[itemIdx.ImageURL] || '') : ''
+      };
+    }
+  }
+
+  const toProcess = [];
+  assetIds.forEach(assetId => {
+    if (auctionSoldMap[assetId]) { errors.push(assetId + ': ทรัพย์สินนี้ขายสำเร็จจริงแล้ว ไม่สามารถย้ายไปรอขายปกติได้'); return; }
+    const found = itemByAssetId[assetId];
+    if (!found) { errors.push(assetId + ': ไม่พบใบขายออกช่องทางประมูลที่ยังไม่ขายสำเร็จของทรัพย์สินนี้'); return; }
+    toProcess.push({ assetId: assetId, oldSaleId: found.saleId, oldItemRowNum: found.rowNum, item: found, fromDept: approvedAuctionDocs[found.saleId].fromDept });
+  });
+  if (!toProcess.length) return { results: results, errors: errors };
+
+  // ตัดรายการที่ระบุออกจากใบเดิม (Voided เฉพาะแถวนั้น) แล้วปิดใบเดิมที่ไม่เหลือรายการใดเลยหลังตัด
+  const cutCountBySaleId = {};
+  toProcess.forEach(p => { cutCountBySaleId[p.oldSaleId] = (cutCountBySaleId[p.oldSaleId] || 0) + 1; });
+  toProcess.forEach(p => { itemSh.getRange(p.oldItemRowNum, itemIdx.Voided + 1).setValue('TRUE'); });
+  Object.keys(cutCountBySaleId).forEach(saleId => {
+    if (cutCountBySaleId[saleId] >= (nonVoidedCountBySaleId[saleId] || 0)) {
+      saleSh.getRange(approvedAuctionDocs[saleId].rowNum, saleIdx.Status + 1).setValue(STATUS.VOIDED);
+    }
+  });
+
+  // สร้างใบขายออกใหม่ช่องทาง "ขาย" ให้ทุกรายการ — ล็อกครั้งเดียวครอบคลุมทั้งชุด (แทนที่จะล็อกทีละรายการ)
+  const saleHeaders = saleValues[0];
+  const itemHeaders = itemValues[0];
+  const buddhistYear = new Date().getFullYear() + 543;
+  const yy = String(buddhistYear).slice(-2);
+  const now = new Date();
+
+  withLock_(() => {
+    const deptCache = {};
+    const maxSeqByCode = {};
+    const newSaleRows = [];
+    const newItemRows = [];
+
+    toProcess.forEach(p => {
+      if (!deptCache[p.fromDept]) {
+        const deptCode = getCodeForDept_(p.fromDept) || 'GEN';
+        const dept = getDeptByName_(p.fromDept);
+        // 'S' ต่อท้ายเฉพาะตอนสร้าง prefix เลขที่เอกสาร (เหมือน createSale_/moveSaleToDirectSingle_ เดิม) — คอลัมน์
+        // FromDeptCode เก็บรหัสหน่วยงานล้วนๆ ไม่มี 'S' ต่อท้าย
+        deptCache[p.fromDept] = { deptCode: deptCode, rnCode: deptCode + 'S', startSeq: dept && dept.StartSeqSale };
+      }
+      const deptCode = deptCache[p.fromDept].deptCode;
+      const rnCode = deptCache[p.fromDept].rnCode;
+      const startSeq = deptCache[p.fromDept].startSeq;
+      if (maxSeqByCode[rnCode] === undefined) {
+        let maxSeq = (startSeq && Number(startSeq) > 0) ? Number(startSeq) - 1 : 0;
+        const prefix = rnCode + '/';
+        const suffix = '/' + yy;
+        for (let i = 1; i < saleValues.length; i++) {
+          const rn = String(saleValues[i][saleIdx.RunningNo] || '');
+          if (rn.indexOf(prefix) === 0 && rn.indexOf(suffix) === rn.length - suffix.length) {
+            const mid = rn.substring(prefix.length, rn.length - suffix.length);
+            const n = parseInt(mid, 10);
+            if (!isNaN(n) && n > maxSeq) maxSeq = n;
+          }
+        }
+        maxSeqByCode[rnCode] = maxSeq;
+      }
+      maxSeqByCode[rnCode] += 1;
+      const runningNo = rnCode + '/' + ('000' + maxSeqByCode[rnCode]).slice(-3) + '/' + yy;
+
+      const newSaleId = Utilities.getUuid();
+      const token = Utilities.getUuid();
+      const newSaleRow = saleHeaders.map(() => '');
+      newSaleRow[saleIdx.SaleID] = newSaleId;
+      newSaleRow[saleIdx.RunningNo] = runningNo;
+      newSaleRow[saleIdx.CreatedAt] = now;
+      newSaleRow[saleIdx.FromDept] = p.fromDept;
+      newSaleRow[saleIdx.FromDeptCode] = deptCode;
+      newSaleRow[saleIdx.Buyer] = '';
+      newSaleRow[saleIdx.Remark] = 'ย้ายมาจากใบขายออกช่องทางประมูล (ยกเลิกรายการนี้จากใบเดิมแล้ว) โดย Admin — ปิดรอบประมูลแล้ว ส่งกลับไปรอขายปกติ (ดำเนินการแบบกลุ่ม)';
+      newSaleRow[saleIdx.Status] = STATUS.APPROVED;
+      newSaleRow[saleIdx.ApproverName] = '';
+      newSaleRow[saleIdx.ApproverEmail] = '';
+      newSaleRow[saleIdx.ApprovalToken] = token;
+      newSaleRow[saleIdx.ApprovedAt] = now;
+      newSaleRow[saleIdx.ApproverComment] = 'อนุมัติอัตโนมัติ — Admin ย้ายช่องทางจากประมูลเป็นขายตรง (ดำเนินการแบบกลุ่ม)';
+      newSaleRow[saleIdx.CreatedBy] = 'admin';
+      newSaleRow[saleIdx.CreatedByEmail] = '';
+      if (saleIdx.Channel !== undefined) newSaleRow[saleIdx.Channel] = 'ขาย';
+      newSaleRows.push(newSaleRow);
+
+      const newItemRow = itemHeaders.map(() => '');
+      newItemRow[itemIdx.SaleID] = newSaleId;
+      newItemRow[itemIdx.LineNo] = 1;
+      newItemRow[itemIdx.AssetID] = p.assetId;
+      newItemRow[itemIdx.AssetName] = p.item.AssetName;
+      newItemRow[itemIdx.ScrapPrice] = p.item.ScrapPrice;
+      newItemRow[itemIdx.AuctionPrice] = p.item.AuctionPrice;
+      newItemRow[itemIdx.SalePrice] = p.item.SalePrice;
+      newItemRow[itemIdx.Remark] = p.item.Remark;
+      if (itemIdx.ImageURL !== undefined) newItemRow[itemIdx.ImageURL] = p.item.ImageURL;
+      newItemRows.push(newItemRow);
+
+      results.push({ assetId: p.assetId, oldSaleId: p.oldSaleId, newSaleId: newSaleId, runningNo: runningNo });
+    });
+
+    if (newSaleRows.length) saleSh.getRange(saleSh.getLastRow() + 1, 1, newSaleRows.length, saleHeaders.length).setValues(newSaleRows);
+    if (newItemRows.length) itemSh.getRange(itemSh.getLastRow() + 1, 1, newItemRows.length, itemHeaders.length).setValues(newItemRows);
+  });
+
+  const movedAssetIds = results.map(r => r.assetId);
+  if (movedAssetIds.length) {
+    purgeAssetFromAllQueues_(movedAssetIds);
+    setAssetsTag_(movedAssetIds, 'ขาย');
+    invalidateDisposedAssetStatusCache_();
+    logActivity_('', 'ADMIN_MOVE_SALE_TO_DIRECT_BULK', 'admin',
+      'ย้ายทรัพย์สิน ' + results.length + ' รายการจากใบขายออกช่องทางประมูลไปเป็นใบขายออกช่องทางขายตรง (ดำเนินการแบบกลุ่ม): ' +
+      results.map(r => r.assetId + '→' + r.runningNo).join(', '));
+  }
+
+  return { results: results, errors: errors };
 }
 
 // ย้ายทรัพย์สินรายการเดียวจากใบขายออกช่องทางประมูลไปเป็นใบขายออกช่องทางขายตรง — ตัวช่วยภายในของ adminMoveSaleToDirect_
