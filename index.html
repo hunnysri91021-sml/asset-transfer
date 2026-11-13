@@ -195,6 +195,7 @@
       <button data-view="auction" id="navAuction">ประมูลขาย</button>
       <button data-view="auctionLive" id="navAuctionLive">Live ประมูล</button>
       <button data-view="auctionSelection" id="navAuctionSelection">คัดเลือกรายการประมูล</button>
+      <button data-view="disposalRound" id="navDisposalRound">รอบคัดเลือกขาย/ประมูล</button>
       <div class="nav-group-label" id="navGroupTransfer">โอนย้าย</div>
       <button data-view="list" class="navItemTransfer">รายการใบโอนย้าย</button>
       <button data-view="create" class="navItemTransfer">+ สร้างใบโอนย้าย</button>
@@ -813,6 +814,7 @@ const VIEW_TITLES = {
   writeOffCreate: 'บันทึกตัดชำรุด',
   writeOffPrint: 'ใบตัดชำรุดทรัพย์สิน',
   auctionSelection: 'คัดเลือกรายการประมูล',
+  disposalRound: 'รอบคัดเลือกขาย/ประมูล',
   activityLog: 'ประวัติการใช้งาน',
   settings: 'ตั้งค่า'
 };
@@ -864,9 +866,11 @@ function render(){
   if(auctionSelectionNavBtn) auctionSelectionNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const woPendingDisposalNavBtn = document.getElementById('navWriteOffPendingDisposal');
   if(woPendingDisposalNavBtn) woPendingDisposalNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
+  const disposalRoundNavBtn = document.getElementById('navDisposalRound');
+  if(disposalRoundNavBtn) disposalRoundNavBtn.style.display = STATE.role==='admin' ? '' : 'none';
   const navGroupSystem = document.getElementById('navGroupSystem');
   if(navGroupSystem) navGroupSystem.style.display = STATE.role==='admin' ? '' : 'none';
-  if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection' || STATE.view === 'writeOffPendingDisposal') && STATE.role !== 'admin') STATE.view = 'dashboard';
+  if((STATE.view === 'settings' || STATE.view === 'activityLog' || STATE.view === 'auctionSelection' || STATE.view === 'writeOffPendingDisposal' || STATE.view === 'disposalRound') && STATE.role !== 'admin') STATE.view = 'dashboard';
   // Admin ซ่อนเมนู "ประมูลขาย"/"Live ประมูล" จากพนักงานทั่วไปได้ที่หน้าตั้งค่า (ดู getNavVisibilitySettings) —
   // Admin เองยังเห็นเมนูครบทุกอันเสมอไม่ว่าตั้งค่านี้ไว้อย่างไร
   const navAuctionBtn = document.getElementById('navAuction');
@@ -932,6 +936,7 @@ function render(){
   else if(STATE.view === 'writeOffCreate') renderWriteOffCreate(root);
   else if(STATE.view === 'writeOffPrint') renderWriteOffPrint(root);
   else if(STATE.view === 'auctionSelection') renderAuctionSelection(root);
+  else if(STATE.view === 'disposalRound') renderDisposalRound(root);
   else if(STATE.view === 'activityLog') renderActivityLog(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
@@ -4122,6 +4127,130 @@ function renderAuctionLive(root){
       auctionCandidates = res.ok ? (res.data||[]) : [];
     });
   }
+}
+
+/* ================= DISPOSAL ROUND VIEW (Admin) — รวมรายการ "ตัดชำรุดแล้ว รอดำเนินการ" + "คิวรอขาย" ไว้ที่เดียว ================= */
+// ตามที่ผู้ใช้อธิบายขั้นตอนทำงานที่ต้องการ: ทรัพย์สินที่ตัดชำรุดอนุมัติแล้ว กับทรัพย์สินที่เลือกไว้รอขาย (ยังใช้งาน
+// อยู่) ให้กองรอแยกกันไปก่อนตามปกติ แล้วพอ "ถึงรอบ" ค่อยเอามาสรุปตัดสินใจรวมกันทีเดียวว่าจะขายรวมให้ผู้รับเหมา
+// (ช่องทาง "ขาย") หรือเปิดประมูล (ช่องทาง "ประมูล") — เดิมต้องเปิด 2 หน้าแยกกัน (หน้า "ตัดชำรุดแล้ว รอดำเนินการ"
+// กับคิวรอขายที่หน้า "รายการขายออก") หน้านี้รวม 2 แหล่งข้อมูลเดิมมาแสดงพร้อมกัน ให้เลือกข้ามกลุ่มได้ในที่เดียว แล้ว
+// นำทางไปฟอร์ม "บันทึกขาย"/"บันทึกประมูล" เดิม (ใช้กลไกเดียวกับ createSaleFromQueue/goToSaleCreateWith ที่มีอยู่
+// แล้ว ซึ่งรองรับรายการสถานะผสม ใช้งานอยู่+ตัดชำรุดแล้ว อยู่แล้วเช่นกัน) — ไม่มี action ฝั่ง backend ใหม่เลย
+function renderDisposalRound(root){
+  let writeOffItems = [];
+  let saleQueueItems = [];
+  let selectedIds = new Set();
+
+  root.innerHTML = `
+    <div class="card">
+      <h2>รอบคัดเลือกขาย/ประมูล</h2>
+      <p style="color:var(--muted);font-size:13px;">รวมรายการ "ตัดชำรุดแล้ว รอดำเนินการ" (ยังไม่ได้ส่งประมูล) กับ "คิวรอขาย" (ทรัพย์สินใช้งานอยู่ที่เลือกไว้รอขาย) ไว้ที่เดียว — เลือกข้ามกลุ่มได้ แล้วกดสร้างใบขายออกรวมช่องทาง "ขาย" (ขายรวมให้ผู้รับเหมา) หรือ "ประมูล" (เปิดประมูล) เพื่อไปกรอกรายละเอียดต่อที่ฟอร์มปกติ — ต้องเลือกเฉพาะหน่วยงานเดียวกันต่อครั้ง</p>
+      <div class="toolbar no-print">
+        <input type="text" id="roundSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+      </div>
+      <div id="roundCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div class="toolbar no-print" id="roundBulkBar" style="display:none;">
+        <span id="roundSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnRoundCreateSale">💰 สร้างใบขายออกรวม (ขายให้ผู้รับเหมา)</button>
+        <button class="btn btn-secondary btn-sm" id="btnRoundSendAuction">📢 สร้างใบขายออกรวม (ส่งประมูล)</button>
+      </div>
+      <div id="roundTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+
+  document.getElementById('roundSearch').oninput = renderTable;
+  document.getElementById('btnRoundCreateSale').onclick = ()=> goToForm('ขาย');
+  document.getElementById('btnRoundSendAuction').onclick = ()=> goToForm('ประมูล');
+
+  function load(){
+    document.getElementById('roundTableHost').innerHTML = '<div class="empty">กำลังโหลด...</div>';
+    Promise.all([
+      apiPost({ action:'adminGetAuctionCandidates', password: STATE.adminPassword }),
+      apiGet({ action:'getSaleQueue' })
+    ]).then(([candRes, queueRes])=>{
+      if(!candRes.ok || !queueRes.ok){
+        document.getElementById('roundTableHost').innerHTML = 'โหลดไม่สำเร็จ: '+esc((candRes.error||queueRes.error||''));
+        return;
+      }
+      writeOffItems = (candRes.data||[]).filter(a=>a.AssetStatus==='WrittenOff' && !a.SendToAuction);
+      saleQueueItems = (queueRes.data||[]).filter(q=>(q.AssetStatus||'Active')==='Active');
+      selectedIds.clear();
+      renderTable();
+    });
+  }
+
+  function combinedRows(){
+    const writeOffRows = writeOffItems.map(a=>({ AssetID:a.AssetID, AssetName:a.AssetName, Department:a.Department, DisplayImage:a.DisplayImage, BookValue:a.BookValue, ScrapPrice:'', MinSalePrice:'', source:'writeoff' }));
+    const saleQueueRows = saleQueueItems.map(q=>({ AssetID:q.AssetID, AssetName:q.AssetName, Department:q.Department, DisplayImage:q.DisplayImage, BookValue:q.BookValue, ScrapPrice:q.ScrapPrice, MinSalePrice:q.MinSalePrice, source:'salequeue' }));
+    return writeOffRows.concat(saleQueueRows);
+  }
+
+  function filteredRows(){
+    const qq = (document.getElementById('roundSearch').value||'').trim().toLowerCase();
+    return combinedRows().filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
+  }
+
+  const SOURCE_LABEL = { writeoff:'ตัดชำรุด', salequeue:'คิวรอขาย' };
+  function renderTable(){
+    const host = document.getElementById('roundTableHost');
+    const rows = filteredRows();
+    document.getElementById('roundCount').textContent = 'รวม '+rows.length+' รายการ';
+    [...selectedIds].forEach(id=>{ if(!rows.some(r=>r.AssetID===id)) selectedIds.delete(id); });
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่มีรายการที่ตัดชำรุดแล้ว/เข้าคิวรอขายอยู่ในขณะนี้</div>'; updateBulkBar(); return; }
+    const allSelected = rows.every(r=>selectedIds.has(r.AssetID));
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print"><input type="checkbox" id="roundSelectAll" ${allSelected?'checked':''}></th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>ที่มา</th><th class="money">มูลค่าตามบัญชี</th></tr>`;
+    rows.forEach(a=>{
+      html += `<tr>
+        <td class="no-print"><input type="checkbox" class="roundChk" data-id="${esc(a.AssetID)}" ${selectedIds.has(a.AssetID)?'checked':''}></td>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        <td>${esc(a.Department)}</td>
+        <td><span class="badge ${a.source==='writeoff'?'badge-pending':'badge-approved'}">${SOURCE_LABEL[a.source]}</span></td>
+        <td class="money">${fmtMoneyOrHidden(a.BookValue)}</td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    document.getElementById('roundSelectAll').onchange = (e)=>{
+      rows.forEach(r=>{ if(e.target.checked) selectedIds.add(r.AssetID); else selectedIds.delete(r.AssetID); });
+      renderTable();
+    };
+    host.querySelectorAll('.roundChk').forEach(chk=>{
+      chk.onchange = ()=>{
+        if(chk.checked) selectedIds.add(chk.dataset.id); else selectedIds.delete(chk.dataset.id);
+        updateBulkBar();
+      };
+    });
+    updateBulkBar();
+  }
+
+  function updateBulkBar(){
+    const bar = document.getElementById('roundBulkBar');
+    if(bar) bar.style.display = selectedIds.size ? 'flex' : 'none';
+    const countEl = document.getElementById('roundSelCount');
+    if(countEl) countEl.textContent = 'เลือกไว้ '+selectedIds.size+' รายการ';
+  }
+
+  // นำทางไปฟอร์ม "บันทึกขาย"/"บันทึกประมูล" เดิม พร้อม draftSaleItems ที่รวมมาจากทั้ง 2 กลุ่ม — ใช้กลไกเดียวกับ
+  // createSaleFromQueue/goToSaleCreateWith ที่มีอยู่แล้ว (ฟอร์ม/createSale_ ไม่ได้บังคับว่าสถานะดิบต้องเหมือนกันทั้งชุด
+  // อยู่แล้ว รองรับผสาน "ใช้งานอยู่"+"ตัดชำรุดแล้ว" ได้ปกติ) จึงไม่ต้องเพิ่ม action ฝั่ง backend ใหม่
+  function goToForm(channel){
+    const rows = combinedRows();
+    const selected = rows.filter(r=>selectedIds.has(r.AssetID));
+    if(!selected.length){ toast('กรุณาเลือกรายการอย่างน้อย 1 รายการ','err'); return; }
+    const depts = [...new Set(selected.map(a=>a.Department))];
+    if(depts.length > 1){ toast('รายการที่เลือกมีมากกว่า 1 หน่วยงาน ('+depts.join(', ')+') กรุณาเลือกแยกทีละหน่วยงาน','err'); return; }
+    STATE.draftSaleItems = selected.map(a => ({
+      assetId: a.AssetID, assetName: a.AssetName, images: a.DisplayImage ? [a.DisplayImage] : [],
+      scrapPrice: a.ScrapPrice||'', auctionPrice:'', salePrice: a.MinSalePrice||'', remark:''
+    }));
+    STATE.view = channel === 'ประมูล' ? 'saleCreateAuction' : 'saleCreate';
+    render();
+  }
+
+  load();
 }
 
 /* ================= AUCTION SELECTION VIEW (Admin) — คัดเลือกทรัพย์สินขาย/ตัดชำรุดอนุมัติแล้ว ส่งขึ้นหน้าประมูลขายสาธารณะ ================= */
