@@ -482,6 +482,9 @@ function doPost(e) {
       case 'adminBackfillOffSystemAuctionSold':
         result = adminBackfillOffSystemAuctionSold_(body);
         break;
+      case 'adminBackfillMoveSaleToDirectDocs':
+        result = adminBackfillMoveSaleToDirectDocs_(body);
+        break;
       case 'adminCheckDuplicateAssetStatus':
         result = adminCheckDuplicateAssetStatus_(body);
         break;
@@ -3818,6 +3821,77 @@ function adminBackfillOffSystemAuctionSold_(body) {
   });
   logActivity_('', 'ADMIN_BACKFILL_OFFSYSTEM_AUCTIONSOLD', 'admin', 'ซิงค์สถานะขายแล้วย้อนหลังสำหรับรายการขายนอกระบบเก่า: ' + fixedIds.length + ' รายการ' + (fixedIds.length ? ' (' + fixedIds.join(', ') + ')' : ''));
   return { ok: true, data: { fixedCount: fixedIds.length, fixedIds: fixedIds } };
+}
+
+// ก่อนแก้ adminMoveSaleToDirect_ (ดูประวัติ git) ปุ่ม "ส่งกลับไปรอขาย" ที่หน้า "คัดเลือกรายการประมูล" เคยสร้างใบขายออก
+// ใหม่ช่องทาง "ขาย" ให้อัตโนมัติทันที (อนุมัติอัตโนมัติ ผู้ซื้อว่างเปล่า ราคาดึงมาจากใบเดิม) แทนที่จะคืนสถานะทรัพย์สิน
+// กลับเป็น "ใช้งานปกติ" แบบปัจจุบัน — ทรัพย์สินที่เคยถูกย้ายด้วยปุ่มนี้ "ก่อนแก้บั๊ก" จึงค้างเป็นใบขายออกที่อนุมัติแล้ว
+// (สถานะ "ขายแล้ว") โดยไม่มีผู้ซื้อ/ราคาจริงเลย ไม่โผล่ที่หน้า "รายการทรัพย์สิน" ให้กำหนดราคา/ผู้ซื้อต่อ — ฟังก์ชันนี้
+// ไล่หาเฉพาะใบขายออกที่สร้างจากปุ่มนี้ "ก่อน" แก้บั๊ก (เจาะจงด้วยข้อความ Remark/ApproverComment ที่ปุ่มเก่าเขียนไว้
+// ตรงตัว + ต้องยังไม่มีผู้ซื้อ — ปุ่มใหม่ไม่เขียนข้อความแบบนี้แล้ว และใบที่มีผู้ซื้อแล้วแปลว่า Admin กรอกข้อมูลเพิ่ม
+// เองแล้วจริง จึงไม่แตะ) แล้วยกเลิกใบเหล่านั้น คืนสถานะทรัพย์สินกลับเป็น "ใช้งานปกติ" ให้ตรงกับพฤติกรรมที่ถูกต้องตอนนี้
+function adminBackfillMoveSaleToDirectDocs_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+
+  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
+  const saleValues = saleSh.getDataRange().getValues();
+  const saleIdx = indexMap_(saleValues[0]);
+  const targetSaleIdRows = {}; // saleId -> rowNum
+  for (let i = 1; i < saleValues.length; i++) {
+    const r = saleValues[i];
+    if (r[saleIdx.Status] !== STATUS.APPROVED) continue;
+    if (saleIdx.Channel === undefined || String(r[saleIdx.Channel]) !== 'ขาย') continue;
+    if (saleIdx.Buyer !== undefined && String(r[saleIdx.Buyer] || '').trim() !== '') continue; // มีผู้ซื้อแล้วจริง ไม่ใช่ของค้าง ไม่แตะ
+    const remark = saleIdx.Remark !== undefined ? String(r[saleIdx.Remark] || '') : '';
+    const approverComment = saleIdx.ApproverComment !== undefined ? String(r[saleIdx.ApproverComment] || '') : '';
+    if (remark.indexOf('ย้ายมาจากใบขายออกช่องทางประมูล') !== 0) continue;
+    if (approverComment.indexOf('Admin ย้ายช่องทางจากประมูลเป็นขายตรง') === -1) continue;
+    targetSaleIdRows[String(r[saleIdx.SaleID])] = i + 1;
+  }
+  if (!Object.keys(targetSaleIdRows).length) return { ok: true, data: { fixedCount: 0, fixedIds: [] } };
+
+  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues[0]);
+  if (itemIdx.Voided === undefined) return { ok: false, error: 'ไม่พบคอลัมน์ Voided ในชีตใบขายออก กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  const fixedAssetIds = [];
+  for (let i = 1; i < itemValues.length; i++) {
+    const r = itemValues[i];
+    const saleId = String(r[itemIdx.SaleID]);
+    if (!targetSaleIdRows[saleId]) continue;
+    const voided = String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) continue;
+    itemSh.getRange(i + 1, itemIdx.Voided + 1).setValue('TRUE');
+    fixedAssetIds.push(String(r[itemIdx.AssetID]));
+  }
+
+  Object.keys(targetSaleIdRows).forEach(saleId => {
+    saleSh.getRange(targetSaleIdRows[saleId], saleIdx.Status + 1).setValue(STATUS.VOIDED);
+  });
+
+  if (fixedAssetIds.length) {
+    const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
+    const assetsValues = assetsSh.getDataRange().getValues();
+    const assetsIdx = indexMap_(assetsValues[0]);
+    const fixSet = {};
+    fixedAssetIds.forEach(id => { fixSet[id] = true; });
+    const auctionFieldCols = ['SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt']
+      .filter(f => assetsIdx[f] !== undefined)
+      .map(f => ({ col: assetsIdx[f] + 1, value: f === 'SendToAuction' || f === 'AuctionSold' ? 'FALSE' : '' }));
+    for (let i = 1; i < assetsValues.length; i++) {
+      const assetId = String(assetsValues[i][assetsIdx.AssetID]);
+      if (!fixSet[assetId]) continue;
+      auctionFieldCols.forEach(f => { assetsSh.getRange(i + 1, f.col).setValue(f.value); });
+    }
+    setAssetsTag_(fixedAssetIds, 'ใช้งาน');
+    invalidateDisposedAssetStatusCache_();
+  }
+
+  logActivity_('', 'ADMIN_BACKFILL_MOVE_SALE_TO_DIRECT', 'admin',
+    'ยกเลิกใบขายออกที่สร้างอัตโนมัติจากปุ่ม "ส่งกลับไปรอขาย" รุ่นเก่า (ก่อนแก้บั๊ก) และคืนสถานะทรัพย์สินกลับเป็นใช้งานปกติ: ' +
+    fixedAssetIds.length + ' รายการ' + (fixedAssetIds.length ? ' (' + fixedAssetIds.join(', ') + ')' : ''));
+
+  return { ok: true, data: { fixedCount: fixedAssetIds.length, fixedIds: fixedAssetIds } };
 }
 
 // ตรวจสอบหาทรัพย์สินที่มี "สถานะซ้ำซ้อน/ขัดแย้งกัน" ทั่วทั้งระบบ — เครื่องมือตรวจสอบเฉยๆ (ไม่แก้ไขข้อมูลให้อัตโนมัติ
