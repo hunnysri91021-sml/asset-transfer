@@ -4877,22 +4877,19 @@ function adminGetPendingAuctionSaleDocsForAssets_(body) {
 }
 
 // Admin ที่หน้า "คัดเลือกรายการประมูล" กด "ส่งกลับไปรอขาย" ให้ทรัพย์สินที่มีใบขายออกช่องทาง "ประมูล" ค้างอยู่ (ยังไม่เคย
-// ขายสำเร็จจริง) — ใช้เมื่อปิดรอบประมูลไปแล้ว ไม่อยากรอเปิดรอบใหม่ ต้องการขายตรง (ไม่ผ่านประมูล) แทน — ตัดรายการนี้
-// ออกจากใบขายออกช่องทางประมูลเดิม (ใช้ตรรกะเดียวกับ adminVoidSalePendingItems_ ไม่แตะรายการอื่นในใบเดิมเลย แม้จะมี
-// รายการที่ขายสำเร็จจริงปนอยู่ก็ตาม) แล้วสร้างใบขายออกใหม่ช่องทาง "ขาย" (ตรง) ให้ทันที อนุมัติอัตโนมัติเสมอ (ไม่ต้องขอ
-// อนุมัติซ้ำ เพราะใบเดิมผ่านการอนุมัติมาแล้วครั้งหนึ่ง นี่เป็นแค่การแก้ไขช่องทางภายในของ Admin) รายการนี้จะไปแสดงที่
-// หน้า "รายการขายออก" (ช่องทางขายตรง) เป็นรายการ "รอขาย" ตามปกติทันที ไม่ค้างรอที่หน้านี้อีกต่อไป
+// ขายสำเร็จจริง) — ใช้เมื่อปิดรอบประมูลไปแล้ว ไม่อยากรอเปิดรอบใหม่ ต้องการขายตรง (ไม่ผ่านประมูล) แทน
+//
+// ออกแบบใหม่ (เดิมสร้างใบขายออกใหม่ช่องทาง "ขาย" ให้อัตโนมัติ โดยผู้ซื้อว่างเปล่าและราคาดึงมาจากใบเดิม — แต่ Admin
+// ยังต้องมากำหนดราคาขาย/ผู้ซื้อจริงอยู่ดี ใบที่สร้างไว้ล่วงหน้าเลยไม่มีประโยชน์ ซ้ำยังทำให้ทรัพย์สินที่ย้ายไปแล้วไม่
+// โผล่ที่หน้า "รายการทรัพย์สิน" ให้กรอกข้อมูลขายต่อ) — ตอนนี้แค่ตัดรายการนี้ออกจากใบขายออกช่องทางประมูลเดิม (ไม่แตะ
+// รายการอื่นในใบเดิมเลย แม้จะมีรายการที่ขายสำเร็จจริงปนอยู่ก็ตาม) แล้วคืนสถานะทรัพย์สินกลับเป็น "ใช้งานปกติ" ทันที
+// (เหมือนปุ่ม "คืนสถานะ" > "ใช้งานปกติ" ที่มีอยู่แล้ว) ให้ไปโผล่ที่หน้า "รายการทรัพย์สิน" ตามปกติ แล้ว Admin เลือก
+// "สร้างใบขาย" ของทรัพย์สินนั้นเองเพื่อกำหนดราคาขาย/ผู้ซื้อจริงผ่านฟอร์มปกติ
 //
 // รองรับเลือกหลายรายการพร้อมกัน — ส่ง body.assetIds (array) แทน body.assetId เดี่ยวได้ (ยังรองรับ body.assetId เดี่ยว
-// แบบเดิมไว้ด้วย เพื่อความเข้ากันได้ย้อนหลัง) แต่ละรายการแยกใบขายออกใหม่เป็นของตัวเอง ประมวลผลแยกกัน รายการที่ไม่ผ่าน
+// แบบเดิมไว้ด้วย) อ่าน/เขียนชีต Assets/Sales/SaleItems ครั้งเดียวสำหรับทั้งชุด ไม่ว่าจะเลือกกี่รายการ (ไม่ใช่วนอ่านทั้ง
+// ชีตใหม่ทีละรายการแบบที่เคยทำให้เลือกมาหลักสิบรายการพร้อมกันช้าจน Apps Script ถูกตัดกลางทาง) รายการที่ไม่ผ่าน
 // เงื่อนไข (ขายสำเร็จแล้ว/ไม่พบใบขายออกช่องทางประมูล) จะถูกข้ามแล้วรายงานกลับไปเป็น errors แทนที่จะทำให้ทั้งชุดล้มเหลว
-//
-// เลือกเดี่ยว (assetId เดียว) ใช้ moveSaleToDirectSingle_ เหมือนเดิม — เลือกหลายรายการ (>1) ใช้
-// moveSaleToDirectBatch_ ที่อ่าน/เขียนชีตเป็นชุดเดียว ไม่ใช่วนอ่านทั้งชีตใหม่ทีละรายการ (ของเดิมที่วนเรียก
-// moveSaleToDirectSingle_ ทีละรายการ ถ้าเลือกมาหลักสิบรายการพร้อมกัน จะอ่าน Assets/Sales/SaleItems ทั้งชีตซ้ำๆ
-// หลายสิบรอบ บวกกับ LockService.waitLock ทีละรายการ และ export PDF ขึ้น SharePoint ทีละรายการ รวมกันช้าพอจะทำให้
-// Apps Script ทำงานไม่ทันและถูกตัดกลางทาง — ผลคือบางรายการย้ายสำเร็จ บางรายการยังค้างอยู่ที่หน้าเดิมโดยไม่มี error
-// แจ้งกลับมาให้เห็นเลย เพราะ request หลุดไปก่อนจะได้ return คำตอบ)
 function adminMoveSaleToDirect_(body) {
   if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
   const auctionClosedErr = requireAuctionSystemOpen_();
@@ -4900,38 +4897,8 @@ function adminMoveSaleToDirect_(body) {
   const assetIds = [...new Set((Array.isArray(body.assetIds) && body.assetIds.length ? body.assetIds : [body.assetId])
     .map(id => String(id || '').trim()).filter(Boolean))];
   if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรหัสทรัพย์สิน' };
-
-  let results, errors;
-  if (assetIds.length > 1) {
-    const batchRes = moveSaleToDirectBatch_(assetIds);
-    results = batchRes.results;
-    errors = batchRes.errors;
-  } else {
-    results = [];
-    errors = [];
-    const res = moveSaleToDirectSingle_(body.password, assetIds[0]);
-    if (res.ok) results.push({ assetId: assetIds[0], oldSaleId: res.data.oldSaleId, newSaleId: res.data.newSaleId, runningNo: res.data.runningNo });
-    else errors.push(assetIds[0] + ': ' + res.error);
-  }
-
-  if (!results.length) return { ok: false, error: errors.join('; ') || 'ดำเนินการไม่สำเร็จ' };
-  const single = results.length === 1 ? results[0] : null;
-  return { ok: true, data: {
-    successCount: results.length, failedCount: errors.length, results: results, errors: errors,
-    // รองรับ caller เดิมที่คาดหวัง field เดี่ยว (เรียกแบบ assetId เดียว)
-    oldSaleId: single ? single.oldSaleId : undefined, newSaleId: single ? single.newSaleId : undefined, runningNo: single ? single.runningNo : undefined
-  } };
-}
-
-// ย้ายหลายรายการพร้อมกันแบบมีประสิทธิภาพ — อ่านชีต Assets/Sales/SaleItems ครั้งเดียวสำหรับทั้งชุด (ไม่ใช่ครั้งละ
-// รายการ) ล็อกครั้งเดียวตอนออกเลขที่เอกสารชุดใหม่ (คำนวณเลขที่ต่อรหัสหน่วยงานในหน่วยความจำ ไม่อ่านชีต Sales ซ้ำ
-// ทีละรายการ) แล้วเขียนแถวใหม่ทั้งหมดในครั้งเดียวด้วย setValues แทน appendRow ทีละแถว — ตั้งใจข้าม
-// exportDocToSharePointSafe_ (สร้าง PDF + อัปโหลดเครือข่ายจริงต่อ 1 ใบ) สำหรับการดำเนินการแบบกลุ่มนี้โดยเฉพาะ เพราะ
-// เป็นคอขวดที่ช้าที่สุดถ้าทำซ้ำหลายสิบรอบ — ใบขายออกที่สร้างจากที่นี่ยังดูได้ปกติทุกประการที่หน้า "รายการขายออก"
-// เพียงแต่จะไม่มีไฟล์ PDF อัตโนมัติขึ้น SharePoint ให้ (ใช้ปุ่ม Export PDF จากหน้าเว็บแทนได้ตามปกติถ้าต้องการไฟล์)
-function moveSaleToDirectBatch_(assetIds) {
-  const results = [];
-  const errors = [];
+  const askSet = {};
+  assetIds.forEach(id => { askSet[id] = true; });
 
   const assetsSh = getSS_().getSheetByName(SHEETS.ASSETS);
   const assetsValues = assetsSh.getDataRange().getValues();
@@ -4944,246 +4911,68 @@ function moveSaleToDirectBatch_(assetIds) {
   const saleSh = getSS_().getSheetByName(SHEETS.SALES);
   const saleValues = saleSh.getDataRange().getValues();
   const saleIdx = indexMap_(saleValues[0]);
-  const approvedAuctionDocs = {}; // saleId -> { fromDept, rowNum }
+  const approvedAuctionDocRowBySaleId = {}; // saleId -> rowNum (เฉพาะใบที่อนุมัติแล้ว + ช่องทางประมูล)
   for (let i = 1; i < saleValues.length; i++) {
     if (saleValues[i][saleIdx.Status] === STATUS.APPROVED && saleIdx.Channel !== undefined && String(saleValues[i][saleIdx.Channel]) === 'ประมูล') {
-      approvedAuctionDocs[String(saleValues[i][saleIdx.SaleID])] = { fromDept: saleValues[i][saleIdx.FromDept] || '', rowNum: i + 1 };
+      approvedAuctionDocRowBySaleId[String(saleValues[i][saleIdx.SaleID])] = i + 1;
     }
   }
 
   const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemIdx = indexMap_(itemValues[0]);
-  const itemByAssetId = {}; // assetId -> { rowNum, saleId, ...ข้อมูลรายการ } (รายการแรกที่เจอ ถ้าซ้ำ)
+  if (itemIdx.Voided === undefined) return { ok: false, error: 'ไม่พบคอลัมน์ Voided ในชีตใบขายออก กรุณาให้ Admin รันฟังก์ชัน setup() ใหม่ก่อน' };
+  const itemRowByAssetId = {}; // assetId -> { rowNum, saleId } (รายการแรกที่เจอ ถ้าซ้ำ)
   const nonVoidedCountBySaleId = {};
   for (let i = 1; i < itemValues.length; i++) {
     const r = itemValues[i];
     const saleId = String(r[itemIdx.SaleID]);
-    if (!approvedAuctionDocs[saleId]) continue;
-    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (!approvedAuctionDocRowBySaleId[saleId]) continue;
+    const voided = String(r[itemIdx.Voided]).toLowerCase() === 'true';
     if (voided) continue;
     nonVoidedCountBySaleId[saleId] = (nonVoidedCountBySaleId[saleId] || 0) + 1;
     const assetId = String(r[itemIdx.AssetID]);
-    if (!itemByAssetId[assetId]) {
-      itemByAssetId[assetId] = {
-        rowNum: i + 1, saleId: saleId,
-        AssetName: r[itemIdx.AssetName] || '', ScrapPrice: r[itemIdx.ScrapPrice] || 0,
-        AuctionPrice: r[itemIdx.AuctionPrice] || 0, SalePrice: r[itemIdx.SalePrice] || 0,
-        Remark: r[itemIdx.Remark] || '', ImageURL: itemIdx.ImageURL !== undefined ? (r[itemIdx.ImageURL] || '') : ''
-      };
-    }
+    if (askSet[assetId] && !itemRowByAssetId[assetId]) itemRowByAssetId[assetId] = { rowNum: i + 1, saleId: saleId };
   }
 
-  const toProcess = [];
+  const results = [];
+  const errors = [];
+  const cutCountBySaleId = {};
   assetIds.forEach(assetId => {
     if (auctionSoldMap[assetId]) { errors.push(assetId + ': ทรัพย์สินนี้ขายสำเร็จจริงแล้ว ไม่สามารถย้ายไปรอขายปกติได้'); return; }
-    const found = itemByAssetId[assetId];
+    const found = itemRowByAssetId[assetId];
     if (!found) { errors.push(assetId + ': ไม่พบใบขายออกช่องทางประมูลที่ยังไม่ขายสำเร็จของทรัพย์สินนี้'); return; }
-    toProcess.push({ assetId: assetId, oldSaleId: found.saleId, oldItemRowNum: found.rowNum, item: found, fromDept: approvedAuctionDocs[found.saleId].fromDept });
+    itemSh.getRange(found.rowNum, itemIdx.Voided + 1).setValue('TRUE');
+    cutCountBySaleId[found.saleId] = (cutCountBySaleId[found.saleId] || 0) + 1;
+    results.push(assetId);
   });
-  if (!toProcess.length) return { results: results, errors: errors };
 
-  // ตัดรายการที่ระบุออกจากใบเดิม (Voided เฉพาะแถวนั้น) แล้วปิดใบเดิมที่ไม่เหลือรายการใดเลยหลังตัด
-  const cutCountBySaleId = {};
-  toProcess.forEach(p => { cutCountBySaleId[p.oldSaleId] = (cutCountBySaleId[p.oldSaleId] || 0) + 1; });
-  toProcess.forEach(p => { itemSh.getRange(p.oldItemRowNum, itemIdx.Voided + 1).setValue('TRUE'); });
+  if (!results.length) return { ok: false, error: errors.join('; ') || 'ดำเนินการไม่สำเร็จ' };
+
+  // ปิดใบขายออกเดิมที่ไม่เหลือรายการใดเลยหลังตัด (กันใบว่างเปล่าค้างสถานะ Approved)
   Object.keys(cutCountBySaleId).forEach(saleId => {
     if (cutCountBySaleId[saleId] >= (nonVoidedCountBySaleId[saleId] || 0)) {
-      saleSh.getRange(approvedAuctionDocs[saleId].rowNum, saleIdx.Status + 1).setValue(STATUS.VOIDED);
+      saleSh.getRange(approvedAuctionDocRowBySaleId[saleId], saleIdx.Status + 1).setValue(STATUS.VOIDED);
     }
   });
 
-  // สร้างใบขายออกใหม่ช่องทาง "ขาย" ให้ทุกรายการ — ล็อกครั้งเดียวครอบคลุมทั้งชุด (แทนที่จะล็อกทีละรายการ)
-  const saleHeaders = saleValues[0];
-  const itemHeaders = itemValues[0];
-  const buddhistYear = new Date().getFullYear() + 543;
-  const yy = String(buddhistYear).slice(-2);
-  const now = new Date();
-
-  withLock_(() => {
-    const deptCache = {};
-    const maxSeqByCode = {};
-    const newSaleRows = [];
-    const newItemRows = [];
-
-    toProcess.forEach(p => {
-      if (!deptCache[p.fromDept]) {
-        const deptCode = getCodeForDept_(p.fromDept) || 'GEN';
-        const dept = getDeptByName_(p.fromDept);
-        // 'S' ต่อท้ายเฉพาะตอนสร้าง prefix เลขที่เอกสาร (เหมือน createSale_/moveSaleToDirectSingle_ เดิม) — คอลัมน์
-        // FromDeptCode เก็บรหัสหน่วยงานล้วนๆ ไม่มี 'S' ต่อท้าย
-        deptCache[p.fromDept] = { deptCode: deptCode, rnCode: deptCode + 'S', startSeq: dept && dept.StartSeqSale };
-      }
-      const deptCode = deptCache[p.fromDept].deptCode;
-      const rnCode = deptCache[p.fromDept].rnCode;
-      const startSeq = deptCache[p.fromDept].startSeq;
-      if (maxSeqByCode[rnCode] === undefined) {
-        let maxSeq = (startSeq && Number(startSeq) > 0) ? Number(startSeq) - 1 : 0;
-        const prefix = rnCode + '/';
-        const suffix = '/' + yy;
-        for (let i = 1; i < saleValues.length; i++) {
-          const rn = String(saleValues[i][saleIdx.RunningNo] || '');
-          if (rn.indexOf(prefix) === 0 && rn.indexOf(suffix) === rn.length - suffix.length) {
-            const mid = rn.substring(prefix.length, rn.length - suffix.length);
-            const n = parseInt(mid, 10);
-            if (!isNaN(n) && n > maxSeq) maxSeq = n;
-          }
-        }
-        maxSeqByCode[rnCode] = maxSeq;
-      }
-      maxSeqByCode[rnCode] += 1;
-      const runningNo = rnCode + '/' + ('000' + maxSeqByCode[rnCode]).slice(-3) + '/' + yy;
-
-      const newSaleId = Utilities.getUuid();
-      const token = Utilities.getUuid();
-      const newSaleRow = saleHeaders.map(() => '');
-      newSaleRow[saleIdx.SaleID] = newSaleId;
-      newSaleRow[saleIdx.RunningNo] = runningNo;
-      newSaleRow[saleIdx.CreatedAt] = now;
-      newSaleRow[saleIdx.FromDept] = p.fromDept;
-      newSaleRow[saleIdx.FromDeptCode] = deptCode;
-      newSaleRow[saleIdx.Buyer] = '';
-      newSaleRow[saleIdx.Remark] = 'ย้ายมาจากใบขายออกช่องทางประมูล (ยกเลิกรายการนี้จากใบเดิมแล้ว) โดย Admin — ปิดรอบประมูลแล้ว ส่งกลับไปรอขายปกติ (ดำเนินการแบบกลุ่ม)';
-      newSaleRow[saleIdx.Status] = STATUS.APPROVED;
-      newSaleRow[saleIdx.ApproverName] = '';
-      newSaleRow[saleIdx.ApproverEmail] = '';
-      newSaleRow[saleIdx.ApprovalToken] = token;
-      newSaleRow[saleIdx.ApprovedAt] = now;
-      newSaleRow[saleIdx.ApproverComment] = 'อนุมัติอัตโนมัติ — Admin ย้ายช่องทางจากประมูลเป็นขายตรง (ดำเนินการแบบกลุ่ม)';
-      newSaleRow[saleIdx.CreatedBy] = 'admin';
-      newSaleRow[saleIdx.CreatedByEmail] = '';
-      if (saleIdx.Channel !== undefined) newSaleRow[saleIdx.Channel] = 'ขาย';
-      newSaleRows.push(newSaleRow);
-
-      const newItemRow = itemHeaders.map(() => '');
-      newItemRow[itemIdx.SaleID] = newSaleId;
-      newItemRow[itemIdx.LineNo] = 1;
-      newItemRow[itemIdx.AssetID] = p.assetId;
-      newItemRow[itemIdx.AssetName] = p.item.AssetName;
-      newItemRow[itemIdx.ScrapPrice] = p.item.ScrapPrice;
-      newItemRow[itemIdx.AuctionPrice] = p.item.AuctionPrice;
-      newItemRow[itemIdx.SalePrice] = p.item.SalePrice;
-      newItemRow[itemIdx.Remark] = p.item.Remark;
-      if (itemIdx.ImageURL !== undefined) newItemRow[itemIdx.ImageURL] = p.item.ImageURL;
-      newItemRows.push(newItemRow);
-
-      results.push({ assetId: p.assetId, oldSaleId: p.oldSaleId, newSaleId: newSaleId, runningNo: runningNo });
-    });
-
-    if (newSaleRows.length) saleSh.getRange(saleSh.getLastRow() + 1, 1, newSaleRows.length, saleHeaders.length).setValues(newSaleRows);
-    if (newItemRows.length) itemSh.getRange(itemSh.getLastRow() + 1, 1, newItemRows.length, itemHeaders.length).setValues(newItemRows);
-  });
-
-  const movedAssetIds = results.map(r => r.assetId);
-  if (movedAssetIds.length) {
-    purgeAssetFromAllQueues_(movedAssetIds);
-    setAssetsTag_(movedAssetIds, 'ขาย');
-    invalidateDisposedAssetStatusCache_();
-    logActivity_('', 'ADMIN_MOVE_SALE_TO_DIRECT_BULK', 'admin',
-      'ย้ายทรัพย์สิน ' + results.length + ' รายการจากใบขายออกช่องทางประมูลไปเป็นใบขายออกช่องทางขายตรง (ดำเนินการแบบกลุ่ม): ' +
-      results.map(r => r.assetId + '→' + r.runningNo).join(', '));
+  // คืนสถานะทรัพย์สินที่ตัดสำเร็จกลับเป็น "ใช้งานปกติ" — ล้างค่าส่งประมูล/ราคากลาง/ผลประมูลเดิมด้วย (เหมือน
+  // clearAuctionSelection_ ที่ adminRestoreAsset_ ใช้) กันไม่ให้ค้างโชว์ค่าเก่าถ้าทรัพย์สินนี้ถูกตัดชำรุด/ส่งประมูลใหม่
+  // ในอนาคต
+  const auctionFieldCols = ['SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt']
+    .filter(f => assetsIdx[f] !== undefined)
+    .map(f => ({ col: assetsIdx[f] + 1, value: f === 'SendToAuction' || f === 'AuctionSold' ? 'FALSE' : '' }));
+  for (let i = 1; i < assetsValues.length; i++) {
+    const assetId = String(assetsValues[i][assetsIdx.AssetID]);
+    if (results.indexOf(assetId) === -1) continue;
+    auctionFieldCols.forEach(f => { assetsSh.getRange(i + 1, f.col).setValue(f.value); });
   }
-
-  return { results: results, errors: errors };
-}
-
-// ย้ายทรัพย์สินรายการเดียวจากใบขายออกช่องทางประมูลไปเป็นใบขายออกช่องทางขายตรง — ตัวช่วยภายในของ adminMoveSaleToDirect_
-// ไม่เช็ครหัสผ่าน/สวิตช์ระบบประมูลเอง (ผู้เรียกต้องเช็คมาก่อนแล้ว)
-function moveSaleToDirectSingle_(password, assetId) {
-  const auctionSoldMap = {};
-  getAssetsRaw_().forEach(a => { auctionSoldMap[String(a.AssetID)] = String(a.AuctionSold).toLowerCase() === 'true'; });
-  if (auctionSoldMap[assetId]) return { ok: false, error: 'ทรัพย์สินนี้ขายสำเร็จจริงแล้ว ไม่สามารถย้ายไปรอขายปกติได้' };
-
-  const saleSh = getSS_().getSheetByName(SHEETS.SALES);
-  const saleValues = saleSh.getDataRange().getValues();
-  const saleIdx = indexMap_(saleValues.shift());
-  const approvedAuctionDocs = {};
-  saleValues.forEach(r => {
-    if (r[saleIdx.Status] === STATUS.APPROVED && saleIdx.Channel !== undefined && String(r[saleIdx.Channel]) === 'ประมูล') {
-      approvedAuctionDocs[String(r[saleIdx.SaleID])] = { fromDept: r[saleIdx.FromDept] || '' };
-    }
-  });
-
-  const itemSh = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
-  const itemValues = itemSh.getDataRange().getValues();
-  const itemIdx = indexMap_(itemValues.shift());
-  let foundSaleId = null, foundItem = null;
-  for (let i = 0; i < itemValues.length; i++) {
-    const r = itemValues[i];
-    if (String(r[itemIdx.AssetID]) !== assetId) continue;
-    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
-    if (voided) continue;
-    if (!approvedAuctionDocs[String(r[itemIdx.SaleID])]) continue;
-    foundSaleId = String(r[itemIdx.SaleID]);
-    foundItem = {
-      AssetName: r[itemIdx.AssetName] || '',
-      ScrapPrice: r[itemIdx.ScrapPrice] || 0,
-      AuctionPrice: r[itemIdx.AuctionPrice] || 0,
-      SalePrice: r[itemIdx.SalePrice] || 0,
-      Remark: r[itemIdx.Remark] || '',
-      ImageURL: itemIdx.ImageURL !== undefined ? (r[itemIdx.ImageURL] || '') : ''
-    };
-    break;
-  }
-  if (!foundSaleId) return { ok: false, error: 'ไม่พบใบขายออกช่องทางประมูลที่ยังไม่ขายสำเร็จของทรัพย์สินนี้' };
-  const fromDept = approvedAuctionDocs[foundSaleId].fromDept;
-
-  const cutRes = adminVoidSalePendingItems_({ password: password, saleId: foundSaleId, assetIds: [assetId] });
-  if (!cutRes.ok) return cutRes;
-
-  const fromDeptCode = getCodeForDept_(fromDept) || 'GEN';
-  const dept = getDeptByName_(fromDept);
-  const newSaleId = Utilities.getUuid();
-  const token = Utilities.getUuid();
-  const now = new Date();
-  const runningNo = withLock_(() => {
-    const rn = getNextRunningNo_(fromDeptCode + 'S', SHEETS.SALES, dept && dept.StartSeqSale);
-    const sSheet = getSS_().getSheetByName(SHEETS.SALES);
-    const sValues = sSheet.getDataRange().getValues();
-    const sIdx = indexMap_(sValues[0]);
-    const newRow = sValues[0].map(() => '');
-    newRow[sIdx.SaleID] = newSaleId;
-    newRow[sIdx.RunningNo] = rn;
-    newRow[sIdx.CreatedAt] = now;
-    newRow[sIdx.FromDept] = fromDept;
-    newRow[sIdx.FromDeptCode] = fromDeptCode;
-    newRow[sIdx.Buyer] = '';
-    newRow[sIdx.Remark] = 'ย้ายมาจากใบขายออกช่องทางประมูล (ยกเลิกรายการนี้จากใบเดิมแล้ว) โดย Admin — ปิดรอบประมูลแล้ว ส่งกลับไปรอขายปกติ';
-    newRow[sIdx.Status] = STATUS.APPROVED;
-    newRow[sIdx.ApproverName] = '';
-    newRow[sIdx.ApproverEmail] = '';
-    newRow[sIdx.ApprovalToken] = token;
-    newRow[sIdx.ApprovedAt] = now;
-    newRow[sIdx.ApproverComment] = 'อนุมัติอัตโนมัติ — Admin ย้ายช่องทางจากประมูลเป็นขายตรง';
-    newRow[sIdx.CreatedBy] = 'admin';
-    newRow[sIdx.CreatedByEmail] = '';
-    if (sIdx.Channel !== undefined) newRow[sIdx.Channel] = 'ขาย';
-    sSheet.appendRow(newRow);
-    return rn;
-  });
-
-  const iSheet = getSS_().getSheetByName(SHEETS.SALE_ITEMS);
-  const iHeaders = iSheet.getRange(1, 1, 1, iSheet.getLastColumn()).getValues()[0];
-  const iIdx = indexMap_(iHeaders);
-  const newItemRow = iHeaders.map(() => '');
-  newItemRow[iIdx.SaleID] = newSaleId;
-  newItemRow[iIdx.LineNo] = 1;
-  newItemRow[iIdx.AssetID] = assetId;
-  newItemRow[iIdx.AssetName] = foundItem.AssetName;
-  newItemRow[iIdx.ScrapPrice] = foundItem.ScrapPrice;
-  newItemRow[iIdx.AuctionPrice] = foundItem.AuctionPrice;
-  newItemRow[iIdx.SalePrice] = foundItem.SalePrice;
-  newItemRow[iIdx.Remark] = foundItem.Remark;
-  if (iIdx.ImageURL !== undefined) newItemRow[iIdx.ImageURL] = foundItem.ImageURL;
-  iSheet.appendRow(newItemRow);
-
-  purgeAssetFromAllQueues_([assetId]);
-  setAssetsTag_([assetId], 'ขาย');
+  setAssetsTag_(results, 'ใช้งาน');
   invalidateDisposedAssetStatusCache_();
-  exportDocToSharePointSafe_('sale', getSaleFull_(newSaleId));
-  logActivity_(newSaleId, 'ADMIN_MOVE_SALE_TO_DIRECT', 'admin', 'ย้ายทรัพย์สิน ' + assetId + ' จากใบขายออกช่องทางประมูล ' + foundSaleId + ' ไปเป็นใบขายออกช่องทางขายตรง ' + runningNo + ' (ส่งกลับไปรอขายปกติ)');
+  logActivity_('', 'ADMIN_MOVE_SALE_TO_PENDING', 'admin',
+    'ส่งทรัพย์สิน ' + results.length + ' รายการ กลับไปที่หน้ารายการทรัพย์สิน (ใช้งานปกติ) เพื่อสร้างใบขายใหม่กำหนดราคา/ผู้ซื้อเอง: ' + results.join(', '));
 
-  return { ok: true, data: { oldSaleId: foundSaleId, newSaleId: newSaleId, runningNo: runningNo } };
+  return { ok: true, data: { successCount: results.length, failedCount: errors.length, results: results, errors: errors } };
 }
 
 // Admin ยืนยัน "ขายแล้ว" อีกขั้นสำหรับใบขายออกช่องทาง "ขาย" ปกติ (ไม่ใช่ประมูล) ที่อนุมัติแล้ว
