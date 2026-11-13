@@ -1151,6 +1151,14 @@ function getSaleAuctionChannelMap_() {
   const itemValues = itemSh.getDataRange().getValues();
   const itemIdx = indexMap_(itemValues.shift());
   itemValues.forEach(r => {
+    // ต้องเช็ค Voided ของรายการนี้ด้วย ไม่ใช่แค่ว่าใบทั้งใบยังอนุมัติอยู่ — ตั้งแต่เพิ่ม
+    // adminVoidSalePendingItems_/adminMoveSaleToDirect_ (ตัดเฉพาะบางรายการออกจากใบ ไม่ยกเลิกทั้งใบ) ใบเดียวกันอาจ
+    // เหลือรายการอื่นที่ยัง Approved จริงปนอยู่กับรายการที่ถูกตัด (Voided) ไปแล้วแล้วย้ายไปขายช่องทาง "ขาย" ใหม่ —
+    // ถ้าไม่เช็ค Voided ตรงนี้ด้วย รายการที่ถูกตัดออกไปแล้วจะยังถูกนับว่าเป็นช่องทาง "ประมูล" ค้างอยู่ ทำให้ค้างแสดงผิด
+    // ที่หน้า "คัดเลือกรายการประมูล" ทั้งที่ย้ายไปขายตรงสำเร็จแล้วจริง (กดส่งกลับไปรอขายซ้ำแล้วจะเจอ error "ไม่พบใบขาย
+    // ออกช่องทางประมูล..." เพราะรายการจริงไม่มีอยู่แล้ว)
+    const voided = itemIdx.Voided !== undefined && String(r[itemIdx.Voided]).toLowerCase() === 'true';
+    if (voided) return;
     if (auctionSaleIds[String(r[itemIdx.SaleID])]) map[String(r[itemIdx.AssetID])] = true;
   });
 
