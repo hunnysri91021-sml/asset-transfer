@@ -4288,10 +4288,11 @@ function renderAssetCount(root){
     const roundClosed = round.Status !== 'Open';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; updateBulkBar(); return; }
     const allSelected = rows.length>0 && rows.every(r=>selectedIds.has(r.AssetID));
-    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print">${roundClosed?'':`<input type="checkbox" id="countSelectAll" ${allSelected?'checked':''}>`}</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th>${isAdmin?'<th>หน่วยงาน</th>':''}<th>สถานะ</th><th>หมายเหตุ</th><th>ตรวจโดย</th></tr>`;
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print">${roundClosed?'':`<input type="checkbox" id="countSelectAll" ${allSelected?'checked':''}>`}</th><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th>${isAdmin?'<th>หน่วยงาน</th>':''}<th>สถานะ</th><th>หมายเหตุ</th><th>ตรวจโดย</th></tr>`;
     rows.forEach(a=>{
       html += `<tr>
         <td class="no-print">${roundClosed?'':`<input type="checkbox" class="countChk" data-id="${esc(a.AssetID)}" ${selectedIds.has(a.AssetID)?'checked':''}>`}</td>
+        <td><img class="thumb" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
         <td><b>${esc(a.AssetID)}</b></td>
         <td>${esc(a.AssetName)}</td>
         ${isAdmin?`<td>${esc(a.Department)}</td>`:''}
@@ -4389,16 +4390,16 @@ function renderAssetCount(root){
     const nfHost = document.getElementById('countNotFoundHost');
     if(!report.notFoundItems.length){ nfHost.innerHTML = '<div class="empty">ไม่มีรายการ</div>'; }
     else {
-      nfHost.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>หมายเหตุ</th><th>ตรวจโดย</th></tr>`+
-        report.notFoundItems.map(i=>`<tr><td><b>${esc(i.AssetID)}</b></td><td>${esc(i.AssetName)}</td><td>${esc(i.Department)}</td><td>${esc(i.Note||'-')}</td><td>${esc(i.CheckedBy||'-')}</td></tr>`).join('')+
+      nfHost.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>หมายเหตุ</th><th>ตรวจโดย</th></tr>`+
+        report.notFoundItems.map(i=>`<tr><td><img class="thumb" src="${esc(i.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(i.DisplayImage||'')}')"></td><td><b>${esc(i.AssetID)}</b></td><td>${esc(i.AssetName)}</td><td>${esc(i.Department)}</td><td>${esc(i.Note||'-')}</td><td>${esc(i.CheckedBy||'-')}</td></tr>`).join('')+
         '</table></div>';
     }
 
     const smHost = document.getElementById('countSyncMismatchHost');
     if(!report.syncMismatches.length){ smHost.innerHTML = '<div class="empty">ไม่มีรายการ</div>'; }
     else {
-      smHost.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>สถานะ</th><th>รายละเอียด</th></tr>`+
-        report.syncMismatches.map(i=>`<tr><td><b>${esc(i.AssetID)}</b></td><td>${esc(i.AssetName)}</td><td>${esc(i.Department)}</td><td>${i.SyncFlag==='New'?'<span class="badge badge-pending">ใหม่ (ไม่มีในระบบ)</span>':'<span class="badge badge-rejected">ไม่ตรงกับบัญชี</span>'}</td><td>${esc(i.SyncNote||'-')}</td></tr>`).join('')+
+      smHost.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>รูป</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>สถานะ</th><th>รายละเอียด</th></tr>`+
+        report.syncMismatches.map(i=>`<tr><td><img class="thumb" src="${esc(i.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(i.DisplayImage||'')}')"></td><td><b>${esc(i.AssetID)}</b></td><td>${esc(i.AssetName)}</td><td>${esc(i.Department)}</td><td>${i.SyncFlag==='New'?'<span class="badge badge-pending">ใหม่ (ไม่มีในระบบ)</span>':'<span class="badge badge-rejected">ไม่ตรงกับบัญชี</span>'}</td><td>${esc(i.SyncNote||'-')}</td></tr>`).join('')+
         '</table></div>';
     }
   }
