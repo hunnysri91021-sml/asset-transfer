@@ -4466,6 +4466,7 @@ function adminMarkAssetCountItems_(body) {
   if (!roundId) return { ok: false, error: 'กรุณาระบุรอบตรวจนับ' };
   const assetIds = Array.isArray(body.assetIds) ? body.assetIds.map(id => String(id || '').trim()).filter(Boolean) : [];
   if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการทรัพย์สินที่ต้องการทำเครื่องหมาย' };
+  const keepStatus = !!body.keepStatus; // true = แก้ไขแค่หมายเหตุ ไม่เปลี่ยนสถานะ "พบ"/"ไม่พบ" เดิม
   const status = body.status === 'ไม่พบ' ? 'ไม่พบ' : 'พบ';
   const note = String(body.note || '').trim();
 
@@ -4487,7 +4488,7 @@ function adminMarkAssetCountItems_(body) {
     const assetId = String(r[itemIdx.AssetID]);
     if (!askSet[assetId]) continue;
     if (user.role !== 'admin' && !canManageDept_(user, r[itemIdx.Department])) { deniedIds.push(assetId); continue; }
-    itemSh.getRange(i + 1, itemIdx.Status + 1).setValue(status);
+    if (!keepStatus) itemSh.getRange(i + 1, itemIdx.Status + 1).setValue(status);
     itemSh.getRange(i + 1, itemIdx.Note + 1).setValue(note);
     itemSh.getRange(i + 1, itemIdx.CheckedBy + 1).setValue(user.username || '');
     itemSh.getRange(i + 1, itemIdx.CheckedAt + 1).setValue(now);
@@ -4495,7 +4496,8 @@ function adminMarkAssetCountItems_(body) {
   }
 
   if (!markedIds.length) return { ok: false, error: deniedIds.length ? 'ไม่มีสิทธิ์ทำเครื่องหมายรายการที่เลือก (ไม่ใช่หน่วยงานของคุณ)' : 'ไม่พบรายการที่ระบุในรอบนี้' };
-  logActivity_('', 'ADMIN_MARK_ASSET_COUNT', user.username || 'unknown', 'ทำเครื่องหมาย "' + status + '" ให้ทรัพย์สิน ' + markedIds.length + ' รายการ ในรอบตรวจนับ ' + round.obj.RunningNo + ': ' + markedIds.join(', ') + (note ? ' (หมายเหตุ: ' + note + ')' : ''));
+  const actionLabel = keepStatus ? 'แก้ไขหมายเหตุ' : 'ทำเครื่องหมาย "' + status + '"';
+  logActivity_('', 'ADMIN_MARK_ASSET_COUNT', user.username || 'unknown', actionLabel + ' ให้ทรัพย์สิน ' + markedIds.length + ' รายการ ในรอบตรวจนับ ' + round.obj.RunningNo + ': ' + markedIds.join(', ') + (note ? ' (หมายเหตุ: ' + note + ')' : ''));
   return { ok: true, data: { markedCount: markedIds.length, markedIds: markedIds, deniedCount: deniedIds.length } };
 }
 
