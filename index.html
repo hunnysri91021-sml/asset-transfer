@@ -513,6 +513,10 @@ function syncFlagBadge(a){
   if(a.SyncFlag === 'Mismatch') return ' <span class="badge badge-rejected" title="'+esc(a.SyncNote||'')+'">⚠️ ไม่ตรงกับบัญชี</span>';
   return '';
 }
+function assetNoteBadge(a){
+  if(!a.Note) return '';
+  return ' <span class="badge badge-pending" title="'+esc(a.Note)+'">📝 '+esc(a.Note)+'</span>';
+}
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 // หมุดบนผังทรัพย์สิน (ใช้ร่วมกันทั้งหน้า "ผังทรัพย์สิน" และหน้าสแกน QR) — แสดงรหัสทรัพย์สิน + รูปภาพ (ถ้ามี) ไม่ใช่
@@ -1018,6 +1022,8 @@ function openAssetEditModal(asset, onSaved){
           <div><label>ราคาซาก (= มูลค่าตามบัญชี)</label><input type="${canSeePrice()?'text':'password'}" id="amScrapPriceDisplay" value="${esc(fmtMoney(a.BookValue||0))} บาท" disabled style="background:#f4f6f9;"></div>
           <div><label>ราคาขายขั้นต่ำ</label><input type="text" inputmode="decimal" id="amMinSalePrice" value="${esc(a.MinSalePrice||'')}"></div>
         </div>
+        <label>หมายเหตุ <span style="font-weight:400;color:var(--muted);">(เช่น "รอโอนย้าย")</span></label>
+        <textarea id="amNote" rows="2" placeholder="หมายเหตุเพิ่มเติมเกี่ยวกับทรัพย์สินนี้...">${esc(a.Note||'')}</textarea>
         <label>แท็กสถานะ${STATE.role==='admin'?'':' (แก้ไขได้เฉพาะ Admin)'}</label>
         ${STATE.role==='admin'
           ? `<select id="amTag">${ASSET_TAGS.map(t=>`<option value="${esc(t)}" ${(a.Tag||'ใช้งาน')===t?'selected':''}>${esc(t)}</option>`).join('')}</select>`
@@ -1063,7 +1069,8 @@ function openAssetEditModal(asset, onSaved){
       Location: document.getElementById('amLocation').value.trim(),
       Tag: document.getElementById('amTag').value,
       MinSalePrice: document.getElementById('amMinSalePrice').value.trim(),
-      ImageURL: document.getElementById('amImageURL').value.trim()
+      ImageURL: document.getElementById('amImageURL').value.trim(),
+      Note: document.getElementById('amNote').value.trim()
     };
     const btn = document.getElementById('btnAssetModalSave');
     btn.disabled = true; btn.innerHTML = '<span class="spin"></span> กำลังบันทึก...';
@@ -1378,7 +1385,7 @@ function renderAssetList(root){
         <td><img class="thumb thumb-sm" src="${esc(a.DisplayImage||'')}" onerror="this.style.visibility='hidden'" onclick="openImageLightbox('${esc(a.DisplayImage||'')}')"></td>
         <td class="no-print" style="text-align:center;"><img src="${esc(assetQrImageUrl(a.AssetID, 36))}" width="36" height="36" style="cursor:pointer;vertical-align:middle;" title="คลิกเพื่อเปิด/พิมพ์ป้าย QR" data-qrthumb="${esc(a.AssetID)}"></td>
         <td><b>${esc(a.AssetID)}</b></td>
-        <td>${esc(a.AssetName)}${syncFlagBadge(a)}</td>
+        <td>${esc(a.AssetName)}${syncFlagBadge(a)}${assetNoteBadge(a)}</td>
         <td>${esc(a.Department)}</td>
         <td>${esc(a.Division||'-')}</td>
         <td>${esc(a.WorkGroup||'-')}</td>
@@ -1861,6 +1868,7 @@ function renderAssetPublicView(root){
           <tr><td style="padding:6px 0;color:var(--muted);">ผู้ดูแล</td><td style="padding:6px 0;">${esc(a.Custodian||'-')}</td></tr>
           <tr><td style="padding:6px 0;color:var(--muted);">สถานที่</td><td style="padding:6px 0;"><b>${esc(a.Location||'-')}</b></td></tr>
           <tr><td style="padding:6px 0;color:var(--muted);">สถานะ</td><td style="padding:6px 0;">${assetConditionBadge(a.AssetStatus)}</td></tr>
+          ${a.Note ? `<tr><td style="padding:6px 0;color:var(--muted);">หมายเหตุ</td><td style="padding:6px 0;">${esc(a.Note)}</td></tr>` : ''}
         </table>
       </div>
       <div class="card" style="max-width:420px;margin:12px auto;">

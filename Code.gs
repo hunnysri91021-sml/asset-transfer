@@ -52,7 +52,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'LayoutID', 'LayoutX', 'LayoutY', 'LayoutPinUpdatedAt'],
+  ASSETS: ['AssetID', 'AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'ScrapPrice', 'MinSalePrice', 'ImageURL', 'ImageURLOverride', 'UpdatedAt', 'SyncFlag', 'SyncNote', 'SendToAuction', 'AuctionReferencePrice', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionInterestCount', 'AuctionCancelledAt', 'LayoutID', 'LayoutX', 'LayoutY', 'LayoutPinUpdatedAt', 'Note'],
   ASSET_LAYOUTS: ['LayoutID', 'Name', 'ImageURL', 'CreatedAt', 'CreatedBy'],
   DEPT_CODES: ['DeptName', 'Code', 'ApproverName', 'ApproverEmail', 'SkipApprovalEmail', 'StartSeqTransfer', 'StartSeqSale', 'StartSeqWriteOff'],
   USERS: ['Username', 'Password', 'Role', 'Departments', 'CanViewPrices', 'CreatedAt', 'CanExportAuction', 'DisabledCategories'],
@@ -1665,7 +1665,7 @@ function adminDeleteUser_(body) {
 }
 
 // ScrapPrice ไม่อยู่ในนี้แล้ว เพราะบังคับให้เท่ากับ BookValue เสมอ (ดูท้าย adminSaveAsset_)
-const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL'];
+const ADMIN_ASSET_EDITABLE_FIELDS = ['AssetName', 'Department', 'Division', 'WorkGroup', 'PurchaseDate', 'PurchasePrice', 'BookValue', 'Custodian', 'Location', 'Tag', 'MinSalePrice', 'ImageURL', 'Note'];
 
 // แท็กสถานะการใช้งานที่ Admin ปรับได้อิสระ ไม่ต้องขออนุมัติ (แยกจากสถานะที่คำนวณจากใบขาย/ใบตัดชำรุดที่อนุมัติแล้ว)
 const ASSET_TAGS = ['ใช้งาน', 'ชำรุด', 'ขาย', 'ขายแล้ว', 'เก็บไว้ใช้', 'รอเปลี่ยนอะไหล่'];
@@ -1712,8 +1712,11 @@ function adminSaveAsset_(body) {
     return { ok: false, error: 'ไม่มีสิทธิ์ย้ายทรัพย์สินไปยังหน่วยงานนี้' };
   }
 
+  if (asset.Note !== undefined && idx.Note === undefined) {
+    return { ok: false, error: 'ยังไม่มีคอลัมน์ "Note" ในชีต Assets — กรุณาให้ Admin รัน setup() ใหม่ใน Apps Script editor ก่อนใช้งานฟิลด์หมายเหตุ' };
+  }
   editableFields.forEach(f => {
-    if (asset[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
+    if (asset[f] !== undefined && idx[f] !== undefined) sh.getRange(rowNum, idx[f] + 1).setValue(asset[f]);
   });
   // ราคาซาก = มูลค่าตามบัญชีเสมอ (ไม่รับค่าที่พิมพ์แยก) — ใช้ค่าที่เพิ่งบันทึกถ้ามี ไม่งั้นใช้ค่าเดิมในชีต
   if (idx.ScrapPrice !== undefined) {
