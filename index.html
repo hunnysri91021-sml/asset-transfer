@@ -4193,6 +4193,7 @@ function renderAssetCount(root){
         <span id="countSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
         <button class="btn btn-primary btn-sm" id="btnMarkFound">✅ ทำเครื่องหมายว่าพบ (ที่เลือก)</button>
         <button class="btn btn-secondary btn-sm" id="btnMarkNotFound">❌ ทำเครื่องหมายว่าไม่พบ (ที่เลือก)</button>
+        <button class="btn btn-secondary btn-sm" id="btnMarkNoteOnly">📝 ใส่/แก้ไขหมายเหตุ (ที่เลือก)</button>
       </div>
       <div id="countItemsTableHost"><div class="empty">กำลังโหลด...</div></div>
     </div>
@@ -4262,7 +4263,7 @@ function renderAssetCount(root){
         <td>${esc(a.AssetName)}</td>
         ${isAdmin?`<td>${esc(a.Department)}</td>`:''}
         <td>${STATUS_BADGE[a.Status]||esc(a.Status)}</td>
-        <td>${esc(a.Note||'-')}</td>
+        <td>${esc(a.Note||'-')} ${roundClosed?'':`<button class="btn btn-secondary btn-sm no-print" data-noteid="${esc(a.AssetID)}" style="padding:2px 7px;font-size:11px;">✏️</button>`}</td>
         <td>${esc(a.CheckedBy||'-')}</td>
       </tr>`;
     });
@@ -4279,6 +4280,19 @@ function renderAssetCount(root){
         chk.onchange = ()=>{
           if(chk.checked) selectedIds.add(chk.dataset.id); else selectedIds.delete(chk.dataset.id);
           updateBulkBar();
+        };
+      });
+      host.querySelectorAll('[data-noteid]').forEach(btn=>{
+        btn.onclick = ()=>{
+          const assetId = btn.dataset.noteid;
+          const current = items.find(i=>i.AssetID===assetId);
+          const note = prompt('หมายเหตุสำหรับ '+assetId+' (ไม่เปลี่ยนสถานะ "พบ"/"ไม่พบ" เดิม)', current ? (current.Note||'') : '');
+          if(note === null) return; // กดยกเลิก
+          apiPost({ action:'adminMarkAssetCountItems', password: STATE.adminPassword, roundId: round.RoundID, assetIds: [assetId], keepStatus: true, note }).then(res=>{
+            if(!res.ok){ toast(res.error||'บันทึกหมายเหตุไม่สำเร็จ','err'); return; }
+            toast('บันทึกหมายเหตุสำเร็จ','ok');
+            load();
+          });
         };
       });
     }
@@ -4307,6 +4321,17 @@ function renderAssetCount(root){
   }
   document.getElementById('btnMarkFound') && (document.getElementById('btnMarkFound').onclick = ()=>markSelected('พบ'));
   document.getElementById('btnMarkNotFound') && (document.getElementById('btnMarkNotFound').onclick = ()=>markSelected('ไม่พบ'));
+  document.getElementById('btnMarkNoteOnly') && (document.getElementById('btnMarkNoteOnly').onclick = ()=>{
+    const ids = [...selectedIds];
+    if(!ids.length) return;
+    const note = prompt('หมายเหตุสำหรับ '+ids.length+' รายการที่เลือก (ไม่เปลี่ยนสถานะ "พบ"/"ไม่พบ" เดิมของแต่ละรายการ)') ;
+    if(note === null) return; // กดยกเลิก
+    apiPost({ action:'adminMarkAssetCountItems', password: STATE.adminPassword, roundId: round.RoundID, assetIds: ids, keepStatus: true, note }).then(res=>{
+      if(!res.ok){ toast(res.error||'บันทึกหมายเหตุไม่สำเร็จ','err'); return; }
+      toast('บันทึกหมายเหตุสำเร็จ '+res.data.markedCount+' รายการ','ok');
+      load();
+    });
+  });
   // ผูกปุ่มใหม่ทุกครั้งที่ตารางถูก render ใหม่ (bulk bar เป็นส่วนหนึ่งของ template คงที่ ไม่ได้ถูกลบสร้างใหม่ จึงผูกครั้งเดียวพอ)
 
   function loadReport(){
