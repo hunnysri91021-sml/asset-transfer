@@ -4175,6 +4175,9 @@ function renderAssetCount(root){
     ${isAdmin ? `
     <div class="card" id="countReportCard" style="display:none;">
       <h2>📊 รายงานสรุปตามหน่วยงาน</h2>
+      <div class="toolbar no-print">
+        <button class="btn btn-secondary btn-sm" id="btnCountReportExport">⬇ Export Excel</button>
+      </div>
       <div id="countReportHost"><div class="empty">กำลังโหลด...</div></div>
       <h3 style="margin-top:16px;">รายการ "ไม่พบของจริง"</h3>
       <div id="countNotFoundHost"><div class="empty">ไม่มีรายการ</div></div>
@@ -4187,6 +4190,7 @@ function renderAssetCount(root){
       <h2>รายการทรัพย์สินที่ต้องตรวจนับ${isAdmin ? ' (ทุกหน่วยงาน)' : ' (หน่วยงานของคุณ)'}</h2>
       <div class="toolbar no-print">
         <input type="text" id="countSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        <button class="btn btn-secondary btn-sm" id="btnCountItemsExport" style="margin-left:auto;">⬇ Export Excel</button>
       </div>
       <div id="countItemsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
       <div class="toolbar no-print" id="countBulkBar" style="display:none;">
@@ -4200,9 +4204,11 @@ function renderAssetCount(root){
   `;
 
   document.getElementById('countSearch').oninput = renderItemsTable;
+  document.getElementById('btnCountItemsExport').onclick = exportCountItems;
   if(isAdmin){
     document.getElementById('btnOpenCountRound').onclick = openRound;
     document.getElementById('btnCloseCountRound').onclick = closeRound;
+    document.getElementById('btnCountReportExport').onclick = exportCountReport;
   }
 
   function load(){
@@ -4243,6 +4249,33 @@ function renderAssetCount(root){
   function filteredItems(){
     const qq = (document.getElementById('countSearch').value||'').trim().toLowerCase();
     return items.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
+  }
+
+  function exportCountItems(){
+    if(!round){ toast('ยังไม่มีรอบตรวจนับให้ export','err'); return; }
+    const rows = filteredItems();
+    if(!rows.length){ toast('ไม่มีข้อมูลให้ export','err'); return; }
+    const header = ['รหัส','ชื่อทรัพย์สิน'].concat(isAdmin ? ['หน่วยงาน'] : []).concat(['สถานะ','หมายเหตุ','ตรวจโดย','ตรวจเมื่อ']);
+    const dataRows = rows.map(a => [a.AssetID, a.AssetName].concat(isAdmin ? [a.Department] : []).concat([a.Status||'ยังไม่ตรวจ', a.Note||'', a.CheckedBy||'', a.CheckedAt ? fmtDate(a.CheckedAt) : '']));
+    exportExcel('ตรวจนับทรัพย์สิน_'+round.RunningNo.replace(/\//g,'-')+'.xlsx', [{ name:'รายการตรวจนับ', header, rows: dataRows }]);
+  }
+
+  function exportCountReport(){
+    if(!report){ toast('ยังไม่มีข้อมูลรายงานให้ export','err'); return; }
+    const summaryHeader = ['หน่วยงาน','ทั้งหมด','พบ','ไม่พบ','ยังไม่ตรวจ'];
+    const summaryRows = Object.keys(report.byDepartment).sort().map(d=>{
+      const r = report.byDepartment[d];
+      return [d, r.total, r.found, r.notFound, r.unchecked];
+    });
+    const notFoundHeader = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','หมายเหตุ','ตรวจโดย','ตรวจเมื่อ'];
+    const notFoundRows = report.notFoundItems.map(i=>[i.AssetID, i.AssetName, i.Department, i.Note||'', i.CheckedBy||'', i.CheckedAt ? fmtDate(i.CheckedAt) : '']);
+    const syncHeader = ['รหัส','ชื่อทรัพย์สิน','หน่วยงาน','สถานะ','รายละเอียด'];
+    const syncRows = report.syncMismatches.map(i=>[i.AssetID, i.AssetName, i.Department, i.SyncFlag==='New'?'ใหม่ (ไม่มีในระบบ)':'ไม่ตรงกับบัญชี', i.SyncNote||'']);
+    exportExcel('รายงานตรวจนับทรัพย์สิน_'+report.round.RunningNo.replace(/\//g,'-')+'.xlsx', [
+      { name:'สรุปตามหน่วยงาน', header: summaryHeader, rows: summaryRows },
+      { name:'ไม่พบของจริง', header: notFoundHeader, rows: notFoundRows },
+      { name:'ไม่ตรงกับบัญชีภายนอก', header: syncHeader, rows: syncRows }
+    ]);
   }
 
   const STATUS_BADGE = { 'พบ':'<span class="badge badge-approved">✅ พบ</span>', 'ไม่พบ':'<span class="badge badge-rejected">❌ ไม่พบ</span>', 'ยังไม่ตรวจ':'<span class="badge badge-pending">ยังไม่ตรวจ</span>' };
