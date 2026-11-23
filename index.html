@@ -191,6 +191,7 @@
       <button data-view="dashboard">ข้อมูลรวม</button>
       <button data-view="assetList">รายการทรัพย์สิน</button>
       <button data-view="assetLayoutMap">ผังทรัพย์สิน</button>
+      <button data-view="assetCount">ตรวจนับทรัพย์สิน</button>
       <div class="nav-group-label">ประมูล</div>
       <button data-view="auction" id="navAuction">ประมูลขาย</button>
       <button data-view="auctionLive" id="navAuctionLive">Live ประมูล</button>
@@ -815,6 +816,7 @@ const VIEW_TITLES = {
   writeOffPrint: 'ใบตัดชำรุดทรัพย์สิน',
   auctionSelection: 'คัดเลือกรายการประมูล',
   disposalRound: 'รอบคัดเลือกขาย/ประมูล',
+  assetCount: 'ตรวจนับทรัพย์สิน',
   activityLog: 'ประวัติการใช้งาน',
   settings: 'ตั้งค่า'
 };
@@ -937,6 +939,7 @@ function render(){
   else if(STATE.view === 'writeOffPrint') renderWriteOffPrint(root);
   else if(STATE.view === 'auctionSelection') renderAuctionSelection(root);
   else if(STATE.view === 'disposalRound') renderDisposalRound(root);
+  else if(STATE.view === 'assetCount') renderAssetCount(root);
   else if(STATE.view === 'activityLog') renderActivityLog(root);
   else if(STATE.view === 'settings') renderSettings(root);
   else if(STATE.view === 'print') renderPrint(root);
@@ -4127,6 +4130,231 @@ function renderAuctionLive(root){
       auctionCandidates = res.ok ? (res.data||[]) : [];
     });
   }
+}
+
+/* ================= ASSET COUNT ROUND VIEW — ตรวจนับทรัพย์สินในมือเทียบกับระบบ + เทียบกับบัญชีภายนอก ================= */
+// เปิดได้ทุก role ที่ล็อกอินอยู่ (ไม่ใช่เฉพาะ Admin) — พนักงานแต่ละหน่วยงานตรวจนับเฉพาะทรัพย์สินของหน่วยงานตัวเอง
+// (ฝั่ง backend กรองด้วย canManageDept_ เดียวกับจุดอื่นทั้งระบบ) ส่วน Admin เห็นภาพรวมทุกหน่วยงาน + เปิด/ปิดรอบได้ +
+// ดูรายงานสรุปรวมถึงรายการที่ไม่ตรงกับบัญชีภายนอก (ใช้ผลจากฟีเจอร์ "ซิงค์จากต้นทาง" ที่มีอยู่แล้ว ไม่ได้สร้างกลไก
+// เทียบบัญชีใหม่ซ้ำซ้อน)
+function renderAssetCount(root){
+  const isAdmin = STATE.role === 'admin';
+  let round = null;
+  let items = [];
+  let selectedIds = new Set();
+  let report = null;
+
+  root.innerHTML = `
+    <div class="card">
+      <h2>🔍 ตรวจนับทรัพย์สินประจำรอบ</h2>
+      <p style="color:var(--muted);font-size:13px;">ตรวจเช็คว่าทรัพย์สินที่มีตัวจริงอยู่ในมือ ตรงกับที่บันทึกไว้ในระบบหรือไม่ — แต่ละหน่วยงานตรวจนับเฉพาะทรัพย์สินของตัวเอง ทำเครื่องหมาย "พบ"/"ไม่พบ" ทีละรายการได้ ไม่เปลี่ยนสถานะทรัพย์สินใดๆ อัตโนมัติ (Admin เป็นผู้ดูรายงานแล้วตัดสินใจเองว่าจะดำเนินการต่อย่างไร)</p>
+      <div id="countRoundBanner" style="font-size:13px;color:var(--muted);">กำลังโหลด...</div>
+      ${isAdmin ? `
+      <div class="toolbar no-print" style="margin-top:10px;">
+        <button class="btn btn-primary btn-sm" id="btnOpenCountRound">🆕 เปิดรอบตรวจนับใหม่</button>
+        <button class="btn btn-secondary btn-sm" id="btnCloseCountRound" style="display:none;">🔒 ปิดรอบตรวจนับ</button>
+      </div>
+      ` : ''}
+    </div>
+
+    ${isAdmin ? `
+    <div class="card" id="countReportCard" style="display:none;">
+      <h2>📊 รายงานสรุปตามหน่วยงาน</h2>
+      <div id="countReportHost"><div class="empty">กำลังโหลด...</div></div>
+      <h3 style="margin-top:16px;">รายการ "ไม่พบของจริง"</h3>
+      <div id="countNotFoundHost"><div class="empty">ไม่มีรายการ</div></div>
+      <h3 style="margin-top:16px;">รายการไม่ตรงกับบัญชีภายนอก <span style="font-weight:400;font-size:12px;color:var(--muted);">(จากฟีเจอร์ "ซิงค์จากต้นทาง" ที่หน้าตั้งค่า)</span></h3>
+      <div id="countSyncMismatchHost"><div class="empty">ไม่มีรายการ</div></div>
+    </div>
+    ` : ''}
+
+    <div class="card" id="countItemsCard" style="display:none;">
+      <h2>รายการทรัพย์สินที่ต้องตรวจนับ${isAdmin ? ' (ทุกหน่วยงาน)' : ' (หน่วยงานของคุณ)'}</h2>
+      <div class="toolbar no-print">
+        <input type="text" id="countSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+      </div>
+      <div id="countItemsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
+      <div class="toolbar no-print" id="countBulkBar" style="display:none;">
+        <span id="countSelCount" style="font-size:13px;color:var(--muted);">เลือกไว้ 0 รายการ</span>
+        <button class="btn btn-primary btn-sm" id="btnMarkFound">✅ ทำเครื่องหมายว่าพบ (ที่เลือก)</button>
+        <button class="btn btn-secondary btn-sm" id="btnMarkNotFound">❌ ทำเครื่องหมายว่าไม่พบ (ที่เลือก)</button>
+      </div>
+      <div id="countItemsTableHost"><div class="empty">กำลังโหลด...</div></div>
+    </div>
+  `;
+
+  document.getElementById('countSearch').oninput = renderItemsTable;
+  if(isAdmin){
+    document.getElementById('btnOpenCountRound').onclick = openRound;
+    document.getElementById('btnCloseCountRound').onclick = closeRound;
+  }
+
+  function load(){
+    apiPost({ action:'getMyAssetCountItems', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ document.getElementById('countRoundBanner').textContent = 'โหลดไม่สำเร็จ: '+(res.error||''); return; }
+      round = res.data.round;
+      items = res.data.items || [];
+      selectedIds.clear();
+      renderBanner();
+      renderItemsTable();
+      if(isAdmin) loadReport();
+    });
+  }
+
+  function renderBanner(){
+    const banner = document.getElementById('countRoundBanner');
+    const itemsCard = document.getElementById('countItemsCard');
+    const reportCard = document.getElementById('countReportCard');
+    if(!round){
+      banner.textContent = 'ยังไม่มีรอบตรวจนับที่เปิดอยู่ในขณะนี้' + (isAdmin ? ' — กด "เปิดรอบตรวจนับใหม่" เพื่อเริ่ม' : ' — รอ Admin เปิดรอบใหม่');
+      if(itemsCard) itemsCard.style.display = 'none';
+      if(reportCard) reportCard.style.display = 'none';
+      if(isAdmin){
+        document.getElementById('btnOpenCountRound').style.display = '';
+        document.getElementById('btnCloseCountRound').style.display = 'none';
+      }
+      return;
+    }
+    banner.innerHTML = 'รอบตรวจนับเลขที่ <b>'+esc(round.RunningNo)+'</b> — เปิดเมื่อ '+fmtDate(round.CreatedAt)+' — สถานะ: '+(round.Status==='Open'?'<span class="badge badge-pending">เปิดอยู่</span>':'<span class="badge badge-approved">ปิดแล้ว</span>');
+    if(itemsCard) itemsCard.style.display = '';
+    if(isAdmin){
+      if(reportCard) reportCard.style.display = '';
+      document.getElementById('btnOpenCountRound').style.display = round.Status==='Open' ? 'none' : '';
+      document.getElementById('btnCloseCountRound').style.display = round.Status==='Open' ? '' : 'none';
+    }
+  }
+
+  function filteredItems(){
+    const qq = (document.getElementById('countSearch').value||'').trim().toLowerCase();
+    return items.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
+  }
+
+  const STATUS_BADGE = { 'พบ':'<span class="badge badge-approved">✅ พบ</span>', 'ไม่พบ':'<span class="badge badge-rejected">❌ ไม่พบ</span>', 'ยังไม่ตรวจ':'<span class="badge badge-pending">ยังไม่ตรวจ</span>' };
+  function renderItemsTable(){
+    const host = document.getElementById('countItemsTableHost');
+    if(!round) return;
+    const rows = filteredItems();
+    document.getElementById('countItemsCount').textContent = 'รวม '+rows.length+' รายการ ('+items.filter(a=>a.Status==='พบ').length+' พบ, '+items.filter(a=>a.Status==='ไม่พบ').length+' ไม่พบ, '+items.filter(a=>a.Status==='ยังไม่ตรวจ').length+' ยังไม่ตรวจ)';
+    [...selectedIds].forEach(id=>{ if(!rows.some(r=>r.AssetID===id)) selectedIds.delete(id); });
+    const roundClosed = round.Status !== 'Open';
+    if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; updateBulkBar(); return; }
+    const allSelected = rows.length>0 && rows.every(r=>selectedIds.has(r.AssetID));
+    let html = `<div style="overflow-x:auto;"><table><tr><th class="no-print">${roundClosed?'':`<input type="checkbox" id="countSelectAll" ${allSelected?'checked':''}>`}</th><th>รหัส</th><th>ชื่อทรัพย์สิน</th>${isAdmin?'<th>หน่วยงาน</th>':''}<th>สถานะ</th><th>หมายเหตุ</th><th>ตรวจโดย</th></tr>`;
+    rows.forEach(a=>{
+      html += `<tr>
+        <td class="no-print">${roundClosed?'':`<input type="checkbox" class="countChk" data-id="${esc(a.AssetID)}" ${selectedIds.has(a.AssetID)?'checked':''}>`}</td>
+        <td><b>${esc(a.AssetID)}</b></td>
+        <td>${esc(a.AssetName)}</td>
+        ${isAdmin?`<td>${esc(a.Department)}</td>`:''}
+        <td>${STATUS_BADGE[a.Status]||esc(a.Status)}</td>
+        <td>${esc(a.Note||'-')}</td>
+        <td>${esc(a.CheckedBy||'-')}</td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    host.innerHTML = html;
+
+    if(!roundClosed){
+      const selectAllEl = document.getElementById('countSelectAll');
+      if(selectAllEl) selectAllEl.onchange = (e)=>{
+        rows.forEach(r=>{ if(e.target.checked) selectedIds.add(r.AssetID); else selectedIds.delete(r.AssetID); });
+        renderItemsTable();
+      };
+      host.querySelectorAll('.countChk').forEach(chk=>{
+        chk.onchange = ()=>{
+          if(chk.checked) selectedIds.add(chk.dataset.id); else selectedIds.delete(chk.dataset.id);
+          updateBulkBar();
+        };
+      });
+    }
+    updateBulkBar();
+  }
+
+  function updateBulkBar(){
+    const bar = document.getElementById('countBulkBar');
+    if(bar) bar.style.display = (round && round.Status==='Open' && selectedIds.size) ? 'flex' : 'none';
+    const countEl = document.getElementById('countSelCount');
+    if(countEl) countEl.textContent = 'เลือกไว้ '+selectedIds.size+' รายการ';
+  }
+
+  function markSelected(status){
+    const ids = [...selectedIds];
+    if(!ids.length) return;
+    let note = '';
+    if(status==='ไม่พบ'){
+      note = prompt('หมายเหตุ (เช่น หาไม่เจอในคลัง / ย้ายไปที่อื่นโดยไม่แจ้ง) — ไม่บังคับ') || '';
+    }
+    apiPost({ action:'adminMarkAssetCountItems', password: STATE.adminPassword, roundId: round.RoundID, assetIds: ids, status, note }).then(res=>{
+      if(!res.ok){ toast(res.error||'ทำเครื่องหมายไม่สำเร็จ','err'); return; }
+      toast('ทำเครื่องหมาย "'+status+'" สำเร็จ '+res.data.markedCount+' รายการ','ok');
+      load();
+    });
+  }
+  document.getElementById('btnMarkFound') && (document.getElementById('btnMarkFound').onclick = ()=>markSelected('พบ'));
+  document.getElementById('btnMarkNotFound') && (document.getElementById('btnMarkNotFound').onclick = ()=>markSelected('ไม่พบ'));
+  // ผูกปุ่มใหม่ทุกครั้งที่ตารางถูก render ใหม่ (bulk bar เป็นส่วนหนึ่งของ template คงที่ ไม่ได้ถูกลบสร้างใหม่ จึงผูกครั้งเดียวพอ)
+
+  function loadReport(){
+    apiPost({ action:'adminGetAssetCountReport', password: STATE.adminPassword }).then(res=>{
+      if(!res.ok){ document.getElementById('countReportHost').innerHTML = esc(res.error||'โหลดไม่สำเร็จ'); return; }
+      report = res.data;
+      renderReport();
+    });
+  }
+
+  function renderReport(){
+    if(!report) return;
+    const depts = Object.keys(report.byDepartment).sort();
+    let html = `<div style="overflow-x:auto;"><table><tr><th>หน่วยงาน</th><th>ทั้งหมด</th><th>พบ</th><th>ไม่พบ</th><th>ยังไม่ตรวจ</th></tr>`;
+    depts.forEach(d=>{
+      const r = report.byDepartment[d];
+      html += `<tr><td>${esc(d)}</td><td>${r.total}</td><td>${r.found}</td><td>${r.notFound}</td><td>${r.unchecked}</td></tr>`;
+    });
+    html += '</table></div>';
+    document.getElementById('countReportHost').innerHTML = html;
+
+    const nfHost = document.getElementById('countNotFoundHost');
+    if(!report.notFoundItems.length){ nfHost.innerHTML = '<div class="empty">ไม่มีรายการ</div>'; }
+    else {
+      nfHost.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>หมายเหตุ</th><th>ตรวจโดย</th></tr>`+
+        report.notFoundItems.map(i=>`<tr><td><b>${esc(i.AssetID)}</b></td><td>${esc(i.AssetName)}</td><td>${esc(i.Department)}</td><td>${esc(i.Note||'-')}</td><td>${esc(i.CheckedBy||'-')}</td></tr>`).join('')+
+        '</table></div>';
+    }
+
+    const smHost = document.getElementById('countSyncMismatchHost');
+    if(!report.syncMismatches.length){ smHost.innerHTML = '<div class="empty">ไม่มีรายการ</div>'; }
+    else {
+      smHost.innerHTML = `<div style="overflow-x:auto;"><table><tr><th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>หน่วยงาน</th><th>สถานะ</th><th>รายละเอียด</th></tr>`+
+        report.syncMismatches.map(i=>`<tr><td><b>${esc(i.AssetID)}</b></td><td>${esc(i.AssetName)}</td><td>${esc(i.Department)}</td><td>${i.SyncFlag==='New'?'<span class="badge badge-pending">ใหม่ (ไม่มีในระบบ)</span>':'<span class="badge badge-rejected">ไม่ตรงกับบัญชี</span>'}</td><td>${esc(i.SyncNote||'-')}</td></tr>`).join('')+
+        '</table></div>';
+    }
+  }
+
+  function openRound(){
+    if(!confirm('ยืนยันเปิดรอบตรวจนับทรัพย์สินใหม่? จะสแนปช็อตทรัพย์สินที่ "ใช้งานอยู่" ทั้งหมดในขณะนี้มาให้แต่ละหน่วยงานตรวจนับ')) return;
+    const btn = document.getElementById('btnOpenCountRound');
+    btn.disabled = true;
+    apiPost({ action:'adminOpenAssetCountRound', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'เปิดรอบไม่สำเร็จ','err'); return; }
+      toast('เปิดรอบตรวจนับ '+res.data.runningNo+' สำเร็จ ('+res.data.totalItems+' รายการ)','ok');
+      load();
+    });
+  }
+
+  function closeRound(){
+    if(!confirm('ยืนยันปิดรอบตรวจนับ? รายการที่ยังไม่ตรวจจะค้างเป็น "ยังไม่ตรวจ" ในรายงาน (ไม่เปลี่ยนสถานะทรัพย์สินใดๆ) และจะแก้ไข/ทำเครื่องหมายเพิ่มเติมในรอบนี้ไม่ได้อีก')) return;
+    const btn = document.getElementById('btnCloseCountRound');
+    btn.disabled = true;
+    apiPost({ action:'adminCloseAssetCountRound', password: STATE.adminPassword }).then(res=>{
+      btn.disabled = false;
+      if(!res.ok){ toast(res.error||'ปิดรอบไม่สำเร็จ','err'); return; }
+      toast('ปิดรอบตรวจนับ '+res.data.runningNo+' สำเร็จ','ok');
+      load();
+    });
+  }
+
+  load();
 }
 
 /* ================= DISPOSAL ROUND VIEW (Admin) — รวมรายการ "ตัดชำรุดแล้ว รอดำเนินการ" + "คิวรอขาย" ไว้ที่เดียว ================= */
