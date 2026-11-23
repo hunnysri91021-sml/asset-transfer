@@ -46,7 +46,9 @@ const SHEETS = {
   AUCTION_BID_ITEMS: 'AuctionBidItems',
   AUCTION_OFFLIST: 'AuctionOffListing',
   LOG: 'ActivityLog',
-  ASSET_LAYOUTS: 'AssetLayouts'
+  ASSET_LAYOUTS: 'AssetLayouts',
+  ASSET_COUNT_ROUNDS: 'AssetCountRounds',
+  ASSET_COUNT_ITEMS: 'AssetCountItems'
 };
 
 const HEADERS = {
@@ -69,7 +71,11 @@ const HEADERS = {
   AUCTION_BIDS: ['BidID', 'RunningNo', 'CreatedAt', 'BidderName', 'BidderContact', 'Remark', 'CreatedBy', 'Round'],
   AUCTION_BID_ITEMS: ['BidID', 'LineNo', 'AssetID', 'AssetName', 'Price'],
   AUCTION_OFFLIST: ['AssetID', 'AssetName', 'AuctionSold', 'AuctionBuyer', 'AuctionSoldPrice', 'AuctionSoldAt', 'AuctionCancelledAt'],
-  LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail']
+  LOG: ['Timestamp', 'TransferID', 'Action', 'By', 'Detail'],
+  // ตรวจนับทรัพย์สินประจำรอบ — เปิดรอบครั้งเดียวครอบคลุมทุกหน่วยงานพร้อมกัน แต่ละหน่วยงานตรวจเฉพาะทรัพย์สินของ
+  // ตัวเอง (กรองด้วยคอลัมน์ Department ที่ denormalize ไว้ในแถวนี้เอง ไม่ต้อง join กับชีต Assets ทุกครั้ง)
+  ASSET_COUNT_ROUNDS: ['RoundID', 'RunningNo', 'CreatedAt', 'CreatedBy', 'Status', 'ClosedAt', 'ClosedBy', 'TotalItems'],
+  ASSET_COUNT_ITEMS: ['RoundID', 'AssetID', 'AssetName', 'Department', 'Status', 'Note', 'CheckedBy', 'CheckedAt']
 };
 
 const DEFAULT_DEPT_CODES = [
@@ -119,6 +125,8 @@ function setup() {
   ensureSheet_(ss, SHEETS.AUCTION_OFFLIST, HEADERS.AUCTION_OFFLIST);
   ensureSheet_(ss, SHEETS.LOG, HEADERS.LOG);
   ensureSheet_(ss, SHEETS.ASSET_LAYOUTS, HEADERS.ASSET_LAYOUTS);
+  ensureSheet_(ss, SHEETS.ASSET_COUNT_ROUNDS, HEADERS.ASSET_COUNT_ROUNDS);
+  ensureSheet_(ss, SHEETS.ASSET_COUNT_ITEMS, HEADERS.ASSET_COUNT_ITEMS);
   Logger.log('Setup complete. Sheets ready: ' + Object.values(SHEETS).join(', '));
 }
 
@@ -493,6 +501,24 @@ function doPost(e) {
         break;
       case 'adminSyncFromSource':
         result = adminSyncFromSource_(body);
+        break;
+      case 'adminOpenAssetCountRound':
+        result = adminOpenAssetCountRound_(body);
+        break;
+      case 'getMyAssetCountItems':
+        result = getMyAssetCountItems_(body);
+        break;
+      case 'adminMarkAssetCountItems':
+        result = adminMarkAssetCountItems_(body);
+        break;
+      case 'adminGetAssetCountReport':
+        result = adminGetAssetCountReport_(body);
+        break;
+      case 'adminGetAssetCountRounds':
+        result = adminGetAssetCountRounds_(body);
+        break;
+      case 'adminCloseAssetCountRound':
+        result = adminCloseAssetCountRound_(body);
         break;
       case 'adminRestoreAsset':
         result = adminRestoreAsset_(body);
@@ -4329,6 +4355,220 @@ function adminSyncFromSource_(body) {
   logActivity_('', 'ADMIN_SYNC_SOURCE', 'admin', 'ดึงข้อมูลจากลิงก์ต้นทาง (' + srcSheet.getName() + ') พบข้อมูลใหม่ ' + newRows.length + ' รายการ พบไม่ตรงกับบัญชี ' + mismatchCount + ' รายการ');
 
   return { ok: true, data: { mismatchCount, addedCount: newRows.length, sourceTabName: srcSheet.getName() } };
+}
+
+// ============================================================
+// ASSET COUNT ROUND — ตรวจนับทรัพย์สินในมือเทียบกับระบบประจำรอบ (เช่น ทุกไตรมาส/ทุกปี)
+// ============================================================
+// Admin เปิดรอบตรวจนับครั้งเดียว ครอบคลุมทุกหน่วยงานพร้อมกัน (ไม่ใช่เปิดแยกทีละหน่วยงาน) — สแนปช็อตทรัพย์สินที่ "ใช้งาน
+// อยู่" ทั้งหมด ณ ตอนเปิดรอบ (ไม่รวมที่ขาย/ตัดชำรุดไปแล้ว เพราะไม่มีตัวจริงให้ตรวจแล้ว) ลงชีต AssetCountItems โดย
+// denormalize คอลัมน์ Department ติดไปกับแต่ละแถวเลย ให้แต่ละหน่วยงานกรองดูเฉพาะของตัวเองได้เร็ว ไม่ต้อง join กับชีต
+// Assets ทุกครั้งที่โหลดหน้า — เปิดได้ทีละ 1 รอบเท่านั้น (ต้องปิดรอบเดิมก่อนถึงจะเปิดรอบใหม่ได้ กันข้อมูลสองรอบปนกัน)
+function adminOpenAssetCountRound_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+
+  const roundSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ROUNDS);
+  const roundValues = roundSh.getDataRange().getValues();
+  const roundIdx = indexMap_(roundValues[0]);
+  for (let i = 1; i < roundValues.length; i++) {
+    if (roundValues[i][roundIdx.Status] === 'Open') {
+      return { ok: false, error: 'มีรอบตรวจนับที่เปิดอยู่แล้ว (เลขที่ ' + roundValues[i][roundIdx.RunningNo] + ') กรุณาปิดรอบเดิมก่อนเปิดรอบใหม่' };
+    }
+  }
+
+  const disposed = getDisposedAssetStatus_();
+  const activeAssets = getAssetsRaw_().filter(a => !disposed[String(a.AssetID)]);
+  if (!activeAssets.length) return { ok: false, error: 'ไม่พบทรัพย์สินที่ใช้งานอยู่ให้ตรวจนับ' };
+
+  const now = new Date();
+  const roundId = Utilities.getUuid();
+  const buddhistYear = now.getFullYear() + 543;
+  const yy = String(buddhistYear).slice(-2);
+  let maxSeq = 0;
+  for (let i = 1; i < roundValues.length; i++) {
+    const rn = String(roundValues[i][roundIdx.RunningNo] || '');
+    const m = rn.match(/^CHK\/(\d+)\/(\d+)$/);
+    if (m && m[2] === yy) { const n = parseInt(m[1], 10); if (!isNaN(n) && n > maxSeq) maxSeq = n; }
+  }
+  const runningNo = 'CHK/' + ('000' + (maxSeq + 1)).slice(-3) + '/' + yy;
+
+  const newRoundRow = roundValues[0].map(() => '');
+  newRoundRow[roundIdx.RoundID] = roundId;
+  newRoundRow[roundIdx.RunningNo] = runningNo;
+  newRoundRow[roundIdx.CreatedAt] = now;
+  newRoundRow[roundIdx.CreatedBy] = 'admin';
+  newRoundRow[roundIdx.Status] = 'Open';
+  newRoundRow[roundIdx.TotalItems] = activeAssets.length;
+  roundSh.appendRow(newRoundRow);
+
+  const itemSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ITEMS);
+  const itemHeaders = itemSh.getRange(1, 1, 1, itemSh.getLastColumn()).getValues()[0];
+  const itemIdx = indexMap_(itemHeaders);
+  const newItemRows = activeAssets.map(a => {
+    const row = itemHeaders.map(() => '');
+    row[itemIdx.RoundID] = roundId;
+    row[itemIdx.AssetID] = a.AssetID;
+    row[itemIdx.AssetName] = a.AssetName || '';
+    row[itemIdx.Department] = a.Department || '';
+    row[itemIdx.Status] = 'ยังไม่ตรวจ';
+    return row;
+  });
+  itemSh.getRange(itemSh.getLastRow() + 1, 1, newItemRows.length, itemHeaders.length).setValues(newItemRows);
+
+  logActivity_('', 'ADMIN_OPEN_ASSET_COUNT_ROUND', 'admin', 'เปิดรอบตรวจนับทรัพย์สิน ' + runningNo + ' ครอบคลุม ' + activeAssets.length + ' รายการ');
+  return { ok: true, data: { roundId: roundId, runningNo: runningNo, totalItems: activeAssets.length } };
+}
+
+// หารอบตรวจนับที่ "เปิดอยู่" รอบเดียว (ถ้ามี) — ใช้ร่วมกันทั้งฝั่ง Admin และผู้ใช้ทั่วไป
+function findOpenAssetCountRound_() {
+  const roundSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ROUNDS);
+  const roundValues = roundSh.getDataRange().getValues();
+  const roundIdx = indexMap_(roundValues[0]);
+  for (let i = 1; i < roundValues.length; i++) {
+    if (roundValues[i][roundIdx.Status] === 'Open') {
+      return { rowNum: i + 1, obj: rowToObj_(roundValues[i], roundIdx) };
+    }
+  }
+  return null;
+}
+
+// ผู้ใช้ทั่วไปดูเฉพาะทรัพย์สินของหน่วยงานตัวเองในรอบที่เปิดอยู่ (ไม่ต้องเป็น Admin) — Admin เรียกแบบไม่ระบุ
+// department filter เห็นได้ทุกหน่วยงาน (ใช้หน้าเดียวกันดูภาพรวมได้ด้วย)
+function getMyAssetCountItems_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+
+  const round = findOpenAssetCountRound_();
+  if (!round) return { ok: true, data: { round: null, items: [] } };
+
+  const itemSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  const items = itemValues
+    .filter(r => String(r[itemIdx.RoundID]) === round.obj.RoundID)
+    .filter(r => user.role === 'admin' || canManageDept_(user, r[itemIdx.Department]))
+    .map(r => rowToObj_(r, itemIdx));
+
+  return { ok: true, data: { round: round.obj, items: items } };
+}
+
+// ทำเครื่องหมาย "พบ"/"ไม่พบ" ให้ทรัพย์สินที่ระบุ — รองรับเลือกหลายรายการพร้อมกัน (assetIds array) ทุกรายการได้สถานะ/
+// หมายเหตุเดียวกัน (ใช้เวลาติ๊ก "พบ" ทีละหลายชิ้นพร้อมกันตอนตรวจเสร็จไว) ตรวจสิทธิ์หน่วยงานทีละรายการ (ผู้ใช้ทั่วไปทำ
+// เครื่องหมายได้เฉพาะทรัพย์สินหน่วยงานตัวเอง) เขียนเป็นชุดเดียวไม่วนทีละแถว (ดู CLAUDE.md บทเรียนจากฟีเจอร์ "ส่งกลับ
+// ไปรอขาย" ที่เคยช้าจนเกิน timeout ของ Apps Script เมื่อเลือกหลายสิบรายการพร้อมกัน)
+function adminMarkAssetCountItems_(body) {
+  const user = getRequestingUser_(body.password);
+  if (!user) return { ok: false, error: 'รหัสผ่านไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' };
+  const roundId = String(body.roundId || '').trim();
+  if (!roundId) return { ok: false, error: 'กรุณาระบุรอบตรวจนับ' };
+  const assetIds = Array.isArray(body.assetIds) ? body.assetIds.map(id => String(id || '').trim()).filter(Boolean) : [];
+  if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการทรัพย์สินที่ต้องการทำเครื่องหมาย' };
+  const status = body.status === 'ไม่พบ' ? 'ไม่พบ' : 'พบ';
+  const note = String(body.note || '').trim();
+
+  const round = findOpenAssetCountRound_();
+  if (!round || round.obj.RoundID !== roundId) return { ok: false, error: 'รอบตรวจนับนี้ปิดไปแล้ว หรือไม่พบรอบนี้ กรุณาโหลดหน้าใหม่' };
+
+  const itemSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues[0]);
+  const askSet = {};
+  assetIds.forEach(id => { askSet[id] = true; });
+
+  const now = new Date();
+  const markedIds = [];
+  const deniedIds = [];
+  for (let i = 1; i < itemValues.length; i++) {
+    const r = itemValues[i];
+    if (String(r[itemIdx.RoundID]) !== roundId) continue;
+    const assetId = String(r[itemIdx.AssetID]);
+    if (!askSet[assetId]) continue;
+    if (user.role !== 'admin' && !canManageDept_(user, r[itemIdx.Department])) { deniedIds.push(assetId); continue; }
+    itemSh.getRange(i + 1, itemIdx.Status + 1).setValue(status);
+    itemSh.getRange(i + 1, itemIdx.Note + 1).setValue(note);
+    itemSh.getRange(i + 1, itemIdx.CheckedBy + 1).setValue(user.username || '');
+    itemSh.getRange(i + 1, itemIdx.CheckedAt + 1).setValue(now);
+    markedIds.push(assetId);
+  }
+
+  if (!markedIds.length) return { ok: false, error: deniedIds.length ? 'ไม่มีสิทธิ์ทำเครื่องหมายรายการที่เลือก (ไม่ใช่หน่วยงานของคุณ)' : 'ไม่พบรายการที่ระบุในรอบนี้' };
+  logActivity_('', 'ADMIN_MARK_ASSET_COUNT', user.username || 'unknown', 'ทำเครื่องหมาย "' + status + '" ให้ทรัพย์สิน ' + markedIds.length + ' รายการ ในรอบตรวจนับ ' + round.obj.RunningNo + ': ' + markedIds.join(', ') + (note ? ' (หมายเหตุ: ' + note + ')' : ''));
+  return { ok: true, data: { markedCount: markedIds.length, markedIds: markedIds, deniedCount: deniedIds.length } };
+}
+
+// Admin ดูรายงานสรุปรอบตรวจนับ (ดูได้ทั้งตอนรอบยังเปิดอยู่ เป็น live progress และหลังปิดรอบแล้ว เป็นรายงานสรุปสุดท้าย)
+// แบ่งตามหน่วยงาน (ทั้งหมด/พบ/ไม่พบ/ยังไม่ตรวจ) พร้อมรายชื่อรายการ "ไม่พบ" เต็มๆ ให้ Admin ไปตามสอบถามต่อ — ไม่
+// เปลี่ยนสถานะทรัพย์สินอัตโนมัติใดๆ ทั้งสิ้น (แค่รายงานให้ดู Admin ไปตัดสินใจเองว่าจะดำเนินการอย่างไรต่อ) และรวมสรุป
+// รายการที่ไม่ตรงกับบัญชีภายนอก (SyncFlag จาก adminSyncFromSource_ ที่มีอยู่แล้ว) มาแสดงในหน้าเดียวกันด้วย ไม่ได้
+// สร้างกลไกเทียบบัญชีใหม่ซ้ำซ้อน แค่สรุปผลจากของเดิมมาให้เห็นในที่เดียวกับรายงานตรวจนับ
+function adminGetAssetCountReport_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const roundId = String(body.roundId || '').trim();
+
+  let roundObj = null;
+  if (roundId) {
+    const roundSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ROUNDS);
+    const roundValues = roundSh.getDataRange().getValues();
+    const roundIdx = indexMap_(roundValues.shift());
+    for (let i = 0; i < roundValues.length; i++) {
+      if (String(roundValues[i][roundIdx.RoundID]) === roundId) { roundObj = rowToObj_(roundValues[i], roundIdx); break; }
+    }
+    if (!roundObj) return { ok: false, error: 'ไม่พบรอบตรวจนับนี้' };
+  } else {
+    const open = findOpenAssetCountRound_();
+    if (!open) return { ok: false, error: 'ไม่พบรอบตรวจนับที่เปิดอยู่ กรุณาระบุ roundId ของรอบที่ต้องการดูย้อนหลัง' };
+    roundObj = open.obj;
+  }
+
+  const itemSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ITEMS);
+  const itemValues = itemSh.getDataRange().getValues();
+  const itemIdx = indexMap_(itemValues.shift());
+  const byDept = {};
+  const notFoundItems = [];
+  itemValues.forEach(r => {
+    if (String(r[itemIdx.RoundID]) !== roundObj.RoundID) return;
+    const dept = String(r[itemIdx.Department] || '(ไม่ระบุหน่วยงาน)');
+    if (!byDept[dept]) byDept[dept] = { total: 0, found: 0, notFound: 0, unchecked: 0 };
+    byDept[dept].total++;
+    const status = r[itemIdx.Status];
+    if (status === 'พบ') byDept[dept].found++;
+    else if (status === 'ไม่พบ') {
+      byDept[dept].notFound++;
+      notFoundItems.push({ AssetID: r[itemIdx.AssetID], AssetName: r[itemIdx.AssetName], Department: dept, Note: r[itemIdx.Note] || '', CheckedBy: r[itemIdx.CheckedBy] || '', CheckedAt: r[itemIdx.CheckedAt] || '' });
+    } else byDept[dept].unchecked++;
+  });
+
+  const syncMismatches = getAssetsRaw_()
+    .filter(a => a.SyncFlag === 'Mismatch' || a.SyncFlag === 'New')
+    .map(a => ({ AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department, SyncFlag: a.SyncFlag, SyncNote: a.SyncNote || '' }));
+
+  return { ok: true, data: { round: roundObj, byDepartment: byDept, notFoundItems: notFoundItems, syncMismatches: syncMismatches } };
+}
+
+// รายชื่อรอบตรวจนับทั้งหมด (เปิด+ปิดแล้ว) เรียงล่าสุดก่อน — ให้ Admin เลือกดูรายงานย้อนหลังของรอบที่ปิดไปแล้วได้
+function adminGetAssetCountRounds_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const roundSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ROUNDS);
+  const roundValues = roundSh.getDataRange().getValues();
+  const roundIdx = indexMap_(roundValues.shift());
+  const rounds = roundValues.map(r => rowToObj_(r, roundIdx)).sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
+  return { ok: true, data: rounds };
+}
+
+function adminCloseAssetCountRound_(body) {
+  if (!checkAdminPassword_(body.password)) return { ok: false, error: 'รหัสผ่าน Admin ไม่ถูกต้อง' };
+  const round = findOpenAssetCountRound_();
+  if (!round) return { ok: false, error: 'ไม่พบรอบตรวจนับที่เปิดอยู่' };
+
+  const roundSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ROUNDS);
+  const roundValues = roundSh.getDataRange().getValues();
+  const roundIdx = indexMap_(roundValues[0]);
+  roundSh.getRange(round.rowNum, roundIdx.Status + 1).setValue('Closed');
+  roundSh.getRange(round.rowNum, roundIdx.ClosedAt + 1).setValue(new Date());
+  roundSh.getRange(round.rowNum, roundIdx.ClosedBy + 1).setValue('admin');
+
+  logActivity_('', 'ADMIN_CLOSE_ASSET_COUNT_ROUND', 'admin', 'ปิดรอบตรวจนับทรัพย์สิน ' + round.obj.RunningNo);
+  return { ok: true, data: { roundId: round.obj.RoundID, runningNo: round.obj.RunningNo } };
 }
 
 // ============================================================
