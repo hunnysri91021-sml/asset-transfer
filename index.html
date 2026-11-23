@@ -4190,6 +4190,12 @@ function renderAssetCount(root){
       <h2>รายการทรัพย์สินที่ต้องตรวจนับ${isAdmin ? ' (ทุกหน่วยงาน)' : ' (หน่วยงานของคุณ)'}</h2>
       <div class="toolbar no-print">
         <input type="text" id="countSearch" placeholder="ค้นหารหัส / ชื่อทรัพย์สิน..." style="max-width:220px;">
+        <select id="countStatusFilter" style="max-width:160px;">
+          <option value="">ทุกสถานะ</option>
+          <option value="พบ">✅ พบ</option>
+          <option value="ไม่พบ">❌ ไม่พบ</option>
+          <option value="ยังไม่ตรวจ">ยังไม่ตรวจ</option>
+        </select>
         <button class="btn btn-secondary btn-sm" id="btnCountItemsExport" style="margin-left:auto;">⬇ Export Excel</button>
       </div>
       <div id="countItemsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
@@ -4204,6 +4210,7 @@ function renderAssetCount(root){
   `;
 
   document.getElementById('countSearch').oninput = renderItemsTable;
+  document.getElementById('countStatusFilter').onchange = renderItemsTable;
   document.getElementById('btnCountItemsExport').onclick = exportCountItems;
   if(isAdmin){
     document.getElementById('btnOpenCountRound').onclick = openRound;
@@ -4248,7 +4255,11 @@ function renderAssetCount(root){
 
   function filteredItems(){
     const qq = (document.getElementById('countSearch').value||'').trim().toLowerCase();
-    return items.filter(a => !qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1);
+    const statusFilter = document.getElementById('countStatusFilter').value;
+    return items.filter(a =>
+      (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1) &&
+      (!statusFilter || (a.Status||'ยังไม่ตรวจ') === statusFilter)
+    );
   }
 
   function exportCountItems(){
