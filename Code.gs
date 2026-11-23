@@ -4447,12 +4447,25 @@ function getMyAssetCountItems_(body) {
   const itemSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemIdx = indexMap_(itemValues.shift());
+  const imageMap = assetImageMap_();
   const items = itemValues
     .filter(r => String(r[itemIdx.RoundID]) === round.obj.RoundID)
     .filter(r => user.role === 'admin' || canManageDept_(user, r[itemIdx.Department]))
-    .map(r => rowToObj_(r, itemIdx));
+    .map(r => {
+      const obj = rowToObj_(r, itemIdx);
+      obj.DisplayImage = imageMap[String(obj.AssetID)] || '';
+      return obj;
+    });
 
   return { ok: true, data: { round: round.obj, items: items } };
+}
+
+// ภาพปัจจุบันของทรัพย์สิน (ดึงจาก Assets sheet สด ไม่ได้ snapshot ไว้ตอนเปิดรอบ) ใช้ให้คนตรวจนับเห็นรูปประกอบ
+// รหัส/ชื่อตอนตรวจของจริง — คืนเป็น map AssetID -> DisplayImage (ImageURLOverride || ImageURL)
+function assetImageMap_() {
+  const map = {};
+  getAssetsRaw_().forEach(a => { map[String(a.AssetID)] = a.DisplayImage || ''; });
+  return map;
 }
 
 // ทำเครื่องหมาย "พบ"/"ไม่พบ" ให้ทรัพย์สินที่ระบุ — รองรับเลือกหลายรายการพร้อมกัน (assetIds array) ทุกรายการได้สถานะ/
@@ -4525,6 +4538,10 @@ function adminGetAssetCountReport_(body) {
     roundObj = open.obj;
   }
 
+  const allAssets = getAssetsRaw_();
+  const imageMap = {};
+  allAssets.forEach(a => { imageMap[String(a.AssetID)] = a.DisplayImage || ''; });
+
   const itemSh = getSS_().getSheetByName(SHEETS.ASSET_COUNT_ITEMS);
   const itemValues = itemSh.getDataRange().getValues();
   const itemIdx = indexMap_(itemValues.shift());
@@ -4539,13 +4556,13 @@ function adminGetAssetCountReport_(body) {
     if (status === 'พบ') byDept[dept].found++;
     else if (status === 'ไม่พบ') {
       byDept[dept].notFound++;
-      notFoundItems.push({ AssetID: r[itemIdx.AssetID], AssetName: r[itemIdx.AssetName], Department: dept, Note: r[itemIdx.Note] || '', CheckedBy: r[itemIdx.CheckedBy] || '', CheckedAt: r[itemIdx.CheckedAt] || '' });
+      notFoundItems.push({ AssetID: r[itemIdx.AssetID], AssetName: r[itemIdx.AssetName], Department: dept, Note: r[itemIdx.Note] || '', CheckedBy: r[itemIdx.CheckedBy] || '', CheckedAt: r[itemIdx.CheckedAt] || '', DisplayImage: imageMap[String(r[itemIdx.AssetID])] || '' });
     } else byDept[dept].unchecked++;
   });
 
-  const syncMismatches = getAssetsRaw_()
+  const syncMismatches = allAssets
     .filter(a => a.SyncFlag === 'Mismatch' || a.SyncFlag === 'New')
-    .map(a => ({ AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department, SyncFlag: a.SyncFlag, SyncNote: a.SyncNote || '' }));
+    .map(a => ({ AssetID: a.AssetID, AssetName: a.AssetName, Department: a.Department, SyncFlag: a.SyncFlag, SyncNote: a.SyncNote || '', DisplayImage: a.DisplayImage || '' }));
 
   return { ok: true, data: { round: roundObj, byDepartment: byDept, notFoundItems: notFoundItems, syncMismatches: syncMismatches } };
 }
