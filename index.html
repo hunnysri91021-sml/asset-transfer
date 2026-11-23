@@ -4343,11 +4343,14 @@ function renderAssetCount(root){
   function markSelected(status){
     const ids = [...selectedIds];
     if(!ids.length) return;
-    let note = '';
+    const payload = { action:'adminMarkAssetCountItems', password: STATE.adminPassword, roundId: round.RoundID, assetIds: ids, status };
     if(status==='ไม่พบ'){
-      note = prompt('หมายเหตุ (เช่น หาไม่เจอในคลัง / ย้ายไปที่อื่นโดยไม่แจ้ง) — ไม่บังคับ') || '';
+      // ไม่ใส่ note (กดยกเลิก prompt) = ไม่แตะหมายเหตุเดิมของแต่ละรายการ ไม่ใช่ล้างทิ้งเป็นค่าว่าง
+      const note = prompt('หมายเหตุ (เช่น หาไม่เจอในคลัง / ย้ายไปที่อื่นโดยไม่แจ้ง) — ไม่บังคับ ถ้ากดยกเลิกจะไม่แก้ไขหมายเหตุเดิม');
+      if(note !== null) payload.note = note;
     }
-    apiPost({ action:'adminMarkAssetCountItems', password: STATE.adminPassword, roundId: round.RoundID, assetIds: ids, status, note }).then(res=>{
+    // สถานะ "พบ" ไม่มีการถามหมายเหตุ — ไม่ส่ง note เลย เพื่อไม่ให้ไปล้างหมายเหตุที่เคยใส่ไว้ก่อนหน้า
+    apiPost(payload).then(res=>{
       if(!res.ok){ toast(res.error||'ทำเครื่องหมายไม่สำเร็จ','err'); return; }
       toast('ทำเครื่องหมาย "'+status+'" สำเร็จ '+res.data.markedCount+' รายการ','ok');
       load();

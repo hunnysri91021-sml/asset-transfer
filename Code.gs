@@ -4481,7 +4481,10 @@ function adminMarkAssetCountItems_(body) {
   if (!assetIds.length) return { ok: false, error: 'กรุณาระบุรายการทรัพย์สินที่ต้องการทำเครื่องหมาย' };
   const keepStatus = !!body.keepStatus; // true = แก้ไขแค่หมายเหตุ ไม่เปลี่ยนสถานะ "พบ"/"ไม่พบ" เดิม
   const status = body.status === 'ไม่พบ' ? 'ไม่พบ' : 'พบ';
-  const note = String(body.note || '').trim();
+  // ไม่ส่ง note มาเลย (undefined) = ไม่แตะหมายเหตุเดิม เช่นตอนกด "ทำเครื่องหมายว่าพบ" แบบ bulk เฉยๆ
+  // (เดิมบั๊ก: เขียนเป็นค่าว่างทับหมายเหตุเดิมเสมอ ทำให้หมายเหตุที่เพิ่งใส่ไว้หายไปถ้าถูกติ๊กมาร์คซ้ำ)
+  const noteProvided = body.note !== undefined;
+  const note = noteProvided ? String(body.note || '').trim() : '';
 
   const round = findOpenAssetCountRound_();
   if (!round || round.obj.RoundID !== roundId) return { ok: false, error: 'รอบตรวจนับนี้ปิดไปแล้ว หรือไม่พบรอบนี้ กรุณาโหลดหน้าใหม่' };
@@ -4502,7 +4505,7 @@ function adminMarkAssetCountItems_(body) {
     if (!askSet[assetId]) continue;
     if (user.role !== 'admin' && !canManageDept_(user, r[itemIdx.Department])) { deniedIds.push(assetId); continue; }
     if (!keepStatus) itemSh.getRange(i + 1, itemIdx.Status + 1).setValue(status);
-    itemSh.getRange(i + 1, itemIdx.Note + 1).setValue(note);
+    if (noteProvided) itemSh.getRange(i + 1, itemIdx.Note + 1).setValue(note);
     itemSh.getRange(i + 1, itemIdx.CheckedBy + 1).setValue(user.username || '');
     itemSh.getRange(i + 1, itemIdx.CheckedAt + 1).setValue(now);
     markedIds.push(assetId);
