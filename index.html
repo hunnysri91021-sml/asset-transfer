@@ -4196,6 +4196,7 @@ function renderAssetCount(root){
           <option value="ไม่พบ">❌ ไม่พบ</option>
           <option value="ยังไม่ตรวจ">ยังไม่ตรวจ</option>
         </select>
+        ${isAdmin ? `<select id="countDeptFilter" style="max-width:180px;"><option value="">ทุกหน่วยงาน</option></select>` : ''}
         <button class="btn btn-secondary btn-sm" id="btnCountItemsExport" style="margin-left:auto;">⬇ Export Excel</button>
       </div>
       <div id="countItemsCount" style="font-size:13px;color:var(--muted);margin:8px 0;">รวม 0 รายการ</div>
@@ -4211,6 +4212,7 @@ function renderAssetCount(root){
 
   document.getElementById('countSearch').oninput = renderItemsTable;
   document.getElementById('countStatusFilter').onchange = renderItemsTable;
+  if(isAdmin) document.getElementById('countDeptFilter').onchange = renderItemsTable;
   document.getElementById('btnCountItemsExport').onclick = exportCountItems;
   if(isAdmin){
     document.getElementById('btnOpenCountRound').onclick = openRound;
@@ -4224,10 +4226,22 @@ function renderAssetCount(root){
       round = res.data.round;
       items = res.data.items || [];
       selectedIds.clear();
+      if(isAdmin) populateDeptFilterOptions();
       renderBanner();
       renderItemsTable();
       if(isAdmin) loadReport();
     });
+  }
+
+  // สร้างตัวเลือกหน่วยงานในตัวกรองจากรายการที่โหลดมาจริง (ไม่ใช่รายชื่อหน่วยงานทั้งระบบ) และคงค่าที่เลือกไว้เดิม
+  // ไว้ข้ามการ reload ทุกครั้งที่มาร์ค/บันทึกหมายเหตุ ไม่งั้นตัวกรองจะรีเซ็ตกลับเป็น "ทุกหน่วยงาน" ทุกครั้งที่กดอะไรสักอย่าง
+  function populateDeptFilterOptions(){
+    const deptSel = document.getElementById('countDeptFilter');
+    if(!deptSel) return;
+    const current = deptSel.value;
+    const depts = [...new Set(items.map(a=>a.Department).filter(Boolean))].sort();
+    deptSel.innerHTML = '<option value="">ทุกหน่วยงาน</option>' + depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('');
+    if(depts.indexOf(current)!==-1) deptSel.value = current;
   }
 
   function renderBanner(){
@@ -4256,9 +4270,12 @@ function renderAssetCount(root){
   function filteredItems(){
     const qq = (document.getElementById('countSearch').value||'').trim().toLowerCase();
     const statusFilter = document.getElementById('countStatusFilter').value;
+    const deptFilterEl = document.getElementById('countDeptFilter');
+    const deptFilter = deptFilterEl ? deptFilterEl.value : '';
     return items.filter(a =>
       (!qq || String(a.AssetID).toLowerCase().indexOf(qq)!==-1 || String(a.AssetName).toLowerCase().indexOf(qq)!==-1) &&
-      (!statusFilter || (a.Status||'ยังไม่ตรวจ') === statusFilter)
+      (!statusFilter || (a.Status||'ยังไม่ตรวจ') === statusFilter) &&
+      (!deptFilter || a.Department === deptFilter)
     );
   }
 
