@@ -4311,7 +4311,7 @@ function renderAssetCount(root){
     const host = document.getElementById('countItemsTableHost');
     if(!round) return;
     const rows = filteredItems();
-    document.getElementById('countItemsCount').textContent = 'รวม '+rows.length+' รายการ ('+items.filter(a=>a.Status==='พบ').length+' พบ, '+items.filter(a=>a.Status==='ไม่พบ').length+' ไม่พบ, '+items.filter(a=>a.Status==='ยังไม่ตรวจ').length+' ยังไม่ตรวจ)';
+    document.getElementById('countItemsCount').textContent = 'รวม '+rows.length+' รายการ ('+rows.filter(a=>a.Status==='พบ').length+' พบ, '+rows.filter(a=>a.Status==='ไม่พบ').length+' ไม่พบ, '+rows.filter(a=>a.Status==='ยังไม่ตรวจ').length+' ยังไม่ตรวจ)';
     [...selectedIds].forEach(id=>{ if(!rows.some(r=>r.AssetID===id)) selectedIds.delete(id); });
     const roundClosed = round.Status !== 'Open';
     if(!rows.length){ host.innerHTML = '<div class="empty">ไม่พบทรัพย์สินที่ตรงกับตัวกรอง</div>'; updateBulkBar(); return; }
